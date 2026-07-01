@@ -1,3 +1,7 @@
+export const config = {
+  runtime: 'nodejs'
+}
+
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -23,7 +27,7 @@ export default async function handler(req, res) {
 
   } catch (err) {
     return res.status(500).json({
-      error: err.message || String(err)
+      error: err.message
     })
   }
 }
