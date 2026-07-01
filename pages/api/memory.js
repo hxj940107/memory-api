@@ -6,10 +6,21 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
-  const { data, error } = await supabase
-    .from('memories')
-    .select('*')
-    .limit(10)
+  try {
+    const { data, error } = await supabase
+      .from('memories')
+      .select('*')
+      .limit(10)
 
-  res.status(200).json({ data, error })
+    if (error) {
+      return res.status(500).json({ error })
+    }
+
+    return res.status(200).json(data)
+
+  } catch (err) {
+    return res.status(500).json({
+      error: err.message || String(err)
+    })
+  }
 }
