@@ -1,7 +1,3 @@
-export const config = {
-  runtime: 'nodejs'
-}
-
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -11,22 +7,28 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   try {
-    const result = await supabase
+    // 默认用户
+    const user_id = req.query.user_id || 'small_c'
+
+    const { data, error } = await supabase
       .from('memories')
       .select('*')
-      .limit(10)
+      .eq('user_id', user_id)
+      .order('created_at', { ascending: false })
+      .limit(20)
 
-    // 🔴 关键：把完整结果打出来
-    return res.status(200).json({
-      data: result.data,
-      error: result.error,
-      status: result.status
-    })
+    if (error) {
+      return res.status(500).json({
+        error: error.message,
+        details: error
+      })
+    }
+
+    return res.status(200).json(data)
 
   } catch (err) {
     return res.status(500).json({
-      crash: err.message,
-      stack: err.stack
+      error: err.message
     })
   }
 }
