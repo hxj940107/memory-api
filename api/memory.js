@@ -11,23 +11,22 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   try {
-    const { data, error } = await supabase
+    const result = await supabase
       .from('memories')
       .select('*')
-      .limit(20)
+      .limit(10)
 
-    if (error) {
-      return res.status(500).json({
-        error: error.message,
-        details: error
-      })
-    }
-
-    return res.status(200).json(data)
+    // 🔴 关键：把完整结果打出来
+    return res.status(200).json({
+      data: result.data,
+      error: result.error,
+      status: result.status
+    })
 
   } catch (err) {
     return res.status(500).json({
-      error: err.message
+      crash: err.message,
+      stack: err.stack
     })
   }
 }
