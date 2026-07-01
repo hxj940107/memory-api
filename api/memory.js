@@ -7,28 +7,28 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   try {
-    // 默认用户
     const user_id = req.query.user_id || 'small_c'
 
     const { data, error } = await supabase
       .from('memories')
-      .select('*')
+      .select('content, metadata, created_at')
       .eq('user_id', user_id)
       .order('created_at', { ascending: false })
-      .limit(20)
+      .limit(5)
 
     if (error) {
-      return res.status(500).json({
-        error: error.message,
-        details: error
-      })
+      return res.status(500).json({ error })
     }
 
-    return res.status(200).json(data)
+    // 🧠 自动总结（轻量版，不用AI模型，节省token）
+    const summary = data.map(m => m.content).join(' | ')
+
+    return res.status(200).json({
+      summary,
+      memories: data
+    })
 
   } catch (err) {
-    return res.status(500).json({
-      error: err.message
-    })
+    return res.status(500).json({ error: err.message })
   }
 }
