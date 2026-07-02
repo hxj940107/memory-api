@@ -16,12 +16,9 @@ async function getSummary(user_id) {
 
 // 保存聊天记录
 async function saveMessage(user_id, role, content, conversation_id) {
-
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
       role,
@@ -29,28 +26,22 @@ async function saveMessage(user_id, role, content, conversation_id) {
       conversation_id
     })
   })
-
 }
 
 // 保存长期记忆
 async function saveMemory(user_id, content) {
-
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
       content
     })
   })
-
 }
 
 // Claude
 async function callLLM(prompt) {
-
   const res = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -62,43 +53,44 @@ async function callLLM(prompt) {
       body: JSON.stringify({
         model: "anthropic/claude-3-sonnet",
         messages: [
-          {
-            role: "user",
-            content: prompt
-          }
+          { role: "user", content: prompt }
         ]
       })
     }
   )
 
   const data = await res.json()
-
   return data.choices?.[0]?.message?.content || ""
-
 }
 
 export default async function handler(req, res) {
 
   try {
 
+    // ❗只允许 POST
+    if (req.method !== "POST") {
+      return res.status(405).json({
+        error: "Only POST allowed"
+      })
+    }
+
     const {
       user_id = "small_c",
       message,
       conversation_id
-    } = req.body
+    } = req.body || {}
 
-    // 如果没有传 conversation_id，就自动创建一个
+    if (!message) {
+      return res.status(400).json({
+        error: "message is required"
+      })
+    }
+
     const chatId =
-      conversation_id ||
-      "chat_" + Date.now()
+      conversation_id || "chat_" + Date.now()
 
     // 保存用户消息
-    await saveMessage(
-      user_id,
-      "user",
-      message,
-      chatId
-    )
+    await saveMessage(user_id, "user", message, chatId)
 
     // 获取长期记忆
     const memory = await getSummary(user_id)
@@ -109,10 +101,6 @@ export default async function handler(req, res) {
 用户长期记忆：
 
 ${memory.summary || "暂无长期记忆"}
-
-重要信息：
-
-${(memory.important || []).join("\n")}
 
 用户：
 
@@ -125,18 +113,10 @@ ${message}
     const reply = await callLLM(prompt)
 
     // 保存 AI 回复
-    await saveMessage(
-      user_id,
-      "assistant",
-      reply,
-      chatId
-    )
+    await saveMessage(user_id, "assistant", reply, chatId)
 
-    // AI 判断是否值得长期记忆
-    await saveMemory(
-      user_id,
-      message
-    )
+    // 保存长期记忆
+    await saveMemory(user_id, message)
 
     return res.status(200).json({
       reply,
@@ -151,5 +131,4 @@ ${message}
     })
 
   }
-
 }
