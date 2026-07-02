@@ -5,75 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Memory Chat</title>
 
+<link rel="stylesheet" href="/chat.css">
+
 <style>
-*{box-sizing:border-box;}
 body{
     margin:0;
-    background:#f5f5f5;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
-}
-.container{
-    width:100%;
-    max-width:900px;
-    margin:30px auto;
-    background:white;
-    border-radius:16px;
-    overflow:hidden;
-    box-shadow:0 8px 30px rgba(0,0,0,.08);
-}
-.header{
-    padding:18px 24px;
-    font-size:20px;
-    font-weight:700;
-    border-bottom:1px solid #eee;
-}
-#chat{
-    height:600px;
-    overflow-y:auto;
-    padding:25px;
-    background:#fafafa;
-}
-.message{
-    display:flex;
-    margin-bottom:18px;
-}
-.message.user{justify-content:flex-end;}
-.message.ai{justify-content:flex-start;}
-.bubble{
-    max-width:75%;
-    padding:14px 18px;
-    border-radius:18px;
-    line-height:1.6;
-    white-space:pre-wrap;
-}
-.user .bubble{
-    background:#0b57d0;
-    color:white;
-}
-.ai .bubble{
-    background:white;
-    border:1px solid #ddd;
-}
-.bottom{
-    display:flex;
-    gap:10px;
-    padding:18px;
-    border-top:1px solid #eee;
-}
-input{
-    flex:1;
-    font-size:16px;
-    padding:14px;
-    border-radius:12px;
-    border:1px solid #ccc;
-}
-button{
-    width:100px;
-    border:none;
-    border-radius:12px;
-    background:#0b57d0;
-    color:white;
-    cursor:pointer;
 }
 </style>
 
@@ -81,93 +17,141 @@ button{
 
 <body>
 
-<div class="container">
+<div class="app">
 
-<div class="header">🧠 AI Memory Chat</div>
+    <!-- 左侧会话 -->
+    <div class="sidebar">
+        <div class="logo">🧠 AI Chat</div>
 
-<div id="chat"></div>
+        <div class="new-chat" onclick="location.reload()">
+            + 新对话
+        </div>
 
-<div class="bottom">
-<input id="input" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendMessage()">
-<button onclick="sendMessage()">发送</button>
-</div>
+        <div id="conversation-list" class="conversation-list"></div>
+    </div>
+
+    <!-- 主聊天 -->
+    <div class="main">
+
+        <div class="header">
+            AI Memory Chat
+        </div>
+
+        <div id="chat" class="chat"></div>
+
+        <div class="bottom">
+            <input id="input" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendMessage()">
+            <button onclick="sendMessage()">发送</button>
+        </div>
+
+    </div>
 
 </div>
 
 <script>
 
-const API_CHAT = "https://memory-api-beta.vercel.app/api/chat";
-const API_HISTORY = "https://memory-api-beta.vercel.app/api/history";
-const USER_ID = "small_c";
+const API_CHAT="https://memory-api-beta.vercel.app/api/chat";
+const API_HISTORY="https://memory-api-beta.vercel.app/api/history";
+const API_CONVERSATIONS="https://memory-api-beta.vercel.app/api/conversations";
 
-const chat = document.getElementById("chat");
+const USER_ID="small_c";
 
-// 渲染消息
-function render(role, text){
-    const row = document.createElement("div");
-    row.className = "message " + role;
+const chat=document.getElementById("chat");
+const list=document.getElementById("conversation-list");
+const input=document.getElementById("input");
 
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
+let currentAssistantBubble=null;
 
-    bubble.innerText = (role === "user" ? "你: " : "AI: ") + text;
+// ===== UI =====
+
+function addMessage(role,text){
+
+    const row=document.createElement("div");
+    row.className="message "+role;
+
+    const bubble=document.createElement("div");
+    bubble.className="bubble";
+
+    bubble.textContent=text;
 
     row.appendChild(bubble);
     chat.appendChild(row);
-    chat.scrollTop = chat.scrollHeight;
+
+    chat.scrollTop=chat.scrollHeight;
+
+    return bubble;
 }
 
-// 加载云端历史
+// ===== 历史 =====
+
 async function loadHistory(){
-    try{
-        const res = await fetch(API_HISTORY + "?user_id=" + USER_ID);
-        const data = await res.json();
 
-        data.forEach(item=>{
-            render(item.metadata?.role || "ai", item.content);
-        });
+    chat.innerHTML="";
 
-    }catch(e){
-        console.log("history load error", e);
-    }
+    const res=await fetch(API_HISTORY+"?user_id="+USER_ID);
+    const data=await res.json();
+
+    data.forEach(m=>{
+        const role=m.metadata?.role || "ai";
+        addMessage(role==="user"?"user":"ai",m.content);
+    });
 }
 
-// 发送消息
+// ===== 会话列表 =====
+
+async function loadConversations(){
+
+    const res=await fetch(API_CONVERSATIONS+"?user_id="+USER_ID);
+    const data=await res.json();
+
+    list.innerHTML="";
+
+    data.forEach(c=>{
+
+        const div=document.createElement("div");
+        div.className="conversation";
+        div.textContent=c.title;
+
+        div.onclick=()=>{
+            loadHistory();
+        };
+
+        list.appendChild(div);
+    });
+}
+
+// ===== 发送 =====
+
 async function sendMessage(){
 
-    const input = document.getElementById("input");
-    const text = input.value.trim();
+    const text=input.value.trim();
     if(!text) return;
 
-    render("user", text);
-    input.value = "";
+    addMessage("user",text);
+    input.value="";
 
-    render("ai", "正在思考...");
+    currentAssistantBubble=addMessage("ai","正在思考...");
 
-    try{
+    const res=await fetch(API_CHAT,{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+            user_id:USER_ID,
+            message:text
+        })
+    });
 
-        const res = await fetch(API_CHAT,{
-            method:"POST",
-            headers:{
-                "Content-Type":"application/json"
-            },
-            body:JSON.stringify({
-                user_id:USER_ID,
-                message:text
-            })
-        });
+    const data=await res.json();
 
-        const data = await res.json();
-
-        render("ai", data.reply || "无回复");
-
-    }catch(e){
-        render("ai", "错误：" + e.message);
-    }
+    currentAssistantBubble.textContent=data.reply || "无回复";
 }
 
-// 初始化
+// ===== init =====
+
 loadHistory();
+loadConversations();
 
 </script>
 
