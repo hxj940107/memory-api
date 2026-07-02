@@ -5,13 +5,47 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 获取长期记忆
+// 直接读取长期记忆（不再请求 /api/summarize-memory）
 async function getSummary(user_id) {
-  const res = await fetch(
-    `${process.env.BASE_URL}/api/summarize-memory?user_id=${user_id}`
-  )
 
-  return await res.json()
+  const { data, error } = await supabase
+    .from("memories")
+    .select("content, metadata, created_at")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const high = []
+  const recent = []
+  const tags = new Set()
+
+  ;(data || []).forEach(m => {
+
+    if (m.metadata?.importance === "high") {
+      high.push(m.content)
+    }
+
+    if (recent.length < 5) {
+      recent.push(m.content)
+    }
+
+    if (m.metadata?.type) {
+      tags.add(m.metadata.type)
+    }
+
+  })
+
+  return {
+    total: data?.length || 0,
+    important: high,
+    recent,
+    tags: [...tags],
+    summary: [...new Set([...high, ...recent])].join(" | ")
+  }
+
 }
 
 // 保存聊天记录
@@ -48,7 +82,7 @@ async function saveMemory(user_id, content) {
 
 }
 
-// Claude 调用
+// Claude
 async function callLLM(prompt) {
 
   const res = await fetch(
@@ -73,12 +107,10 @@ async function callLLM(prompt) {
 
   const data = await res.json()
 
-  // ⭐ 关键：打印完整返回（用于排查）
   console.log("OPENROUTER RESPONSE:", JSON.stringify(data, null, 2))
 
-  const reply = data?.choices?.[0]?.message?.content
+  return data?.choices?.[0]?.message?.content || "（无回复：模型未返回内容）"
 
-  return reply || "（无回复：模型未返回内容）"
 }
 
 export default async function handler(req, res) {
@@ -103,12 +135,10 @@ export default async function handler(req, res) {
       })
     }
 
-    const chatId = conversation_id || "chat_" + Date.now()
+    const chatId = conversation_id || ("chat_" + Date.now())
 
-    // 保存用户消息
     await saveMessage(user_id, "user", message, chatId)
 
-    // 获取记忆
     const memory = await getSummary(user_id)
 
     const prompt = `
@@ -125,19 +155,16 @@ ${message}
 请自然回答，不要说"根据记忆"。
 `
 
-    // 调用模型
     const reply = await callLLM(prompt)
 
-    // 保存 AI 回复
     await saveMessage(user_id, "assistant", reply, chatId)
 
-    // 写入记忆
     await saveMemory(user_id, message)
 
     return res.status(200).json({
       reply,
       conversation_id: chatId,
-      memory_used: memory.total || 0
+      memory_used: memory.total
     })
 
   } catch (err) {
@@ -149,4 +176,5 @@ ${message}
     })
 
   }
+
 }
