@@ -5,43 +5,65 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 🧠 简单压缩（先不用LLM，后面可升级）
 function summarize(memories) {
-  const high = memories
-    .filter(m => m.metadata?.importance === 'high')
-    .map(m => m.content)
 
-  const normal = memories
-    .slice(0, 5)
-    .map(m => m.content)
+  const high = [];
+  const recent = [];
+  const tags = new Set();
+
+  memories.forEach(m => {
+
+    if (m.metadata?.importance === "high") {
+      high.push(m.content);
+    }
+
+    if (recent.length < 5) {
+      recent.push(m.content);
+    }
+
+    if (m.metadata?.type) {
+      tags.add(m.metadata.type);
+    }
+
+  });
 
   return {
-    high_memory: high,
-    short_memory: normal,
-    summary: [...high, ...normal].join(' | ')
-  }
+    total: memories.length,
+    important: high,
+    recent: recent,
+    tags: [...tags],
+    summary: [...new Set([...high, ...recent])].join(" | ")
+  };
 }
 
 export default async function handler(req, res) {
+
   try {
-    const user_id = req.query.user_id || 'small_c'
+
+    const user_id = req.query.user_id || "small_c";
 
     const { data, error } = await supabase
-      .from('memories')
-      .select('content, metadata, created_at')
-      .eq('user_id', user_id)
-      .order('created_at', { ascending: false })
-      .limit(10)
+      .from("memories")
+      .select("content, metadata, created_at")
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false });
 
     if (error) {
-      return res.status(500).json({ error })
+      return res.status(500).json({
+        error: error.message
+      });
     }
 
-    const result = summarize(data)
+    const result = summarize(data || []);
 
-    return res.status(200).json(result)
+    return res.status(200).json(result);
 
   } catch (err) {
-    return res.status(500).json({ error: err.message })
+
+    return res.status(500).json({
+      error: err.message
+    });
+
   }
+
 }
