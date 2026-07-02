@@ -1,86 +1,201 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <title>AI Memory Chat</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      max-width: 600px;
-      margin: 40px auto;
-    }
-    #chat {
-      border: 1px solid #ddd;
-      padding: 10px;
-      height: 420px;
-      overflow-y: auto;
-      margin-bottom: 10px;
-      background: #fafafa;
-    }
-    .msg {
-      margin: 6px 0;
-      padding: 6px;
-    }
-    .user {
-      color: #1a73e8;
-    }
-    .ai {
-      color: #188038;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Memory Chat</title>
+
+<style>
+*{
+    box-sizing:border-box;
+}
+
+body{
+    margin:0;
+    background:#f5f5f5;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
+}
+
+.container{
+    width:100%;
+    max-width:900px;
+    margin:30px auto;
+    background:white;
+    border-radius:16px;
+    overflow:hidden;
+    box-shadow:0 8px 30px rgba(0,0,0,.08);
+}
+
+.header{
+    padding:18px 24px;
+    font-size:20px;
+    font-weight:700;
+    border-bottom:1px solid #eee;
+}
+
+#chat{
+    height:600px;
+    overflow-y:auto;
+    padding:25px;
+    background:#fafafa;
+}
+
+.message{
+    display:flex;
+    margin-bottom:18px;
+}
+
+.message.user{
+    justify-content:flex-end;
+}
+
+.message.ai{
+    justify-content:flex-start;
+}
+
+.bubble{
+    max-width:75%;
+    padding:14px 18px;
+    border-radius:18px;
+    line-height:1.6;
+    white-space:pre-wrap;
+    word-break:break-word;
+}
+
+.user .bubble{
+    background:#0b57d0;
+    color:white;
+}
+
+.ai .bubble{
+    background:white;
+    border:1px solid #ddd;
+}
+
+.bottom{
+    display:flex;
+    gap:10px;
+    padding:18px;
+    border-top:1px solid #eee;
+}
+
+input{
+    flex:1;
+    font-size:16px;
+    padding:14px;
+    border-radius:12px;
+    border:1px solid #ccc;
+}
+
+button{
+    width:100px;
+    border:none;
+    border-radius:12px;
+    background:#0b57d0;
+    color:white;
+    cursor:pointer;
+    font-size:15px;
+}
+
+button:hover{
+    opacity:.9;
+}
+
+.loading{
+    color:#888;
+    font-style:italic;
+}
+</style>
+
 </head>
 
 <body>
 
-  <h2>🧠 AI Memory Chat</h2>
+<div class="container">
 
-  <div id="chat"></div>
+<div class="header">
+🧠 AI Memory Chat
+</div>
 
-  <input id="input" placeholder="输入消息..." style="width: 75%;" />
-  <button onclick="sendMessage()">发送</button>
+<div id="chat"></div>
 
-  <script>
-    const API_URL = "https://memory-api-beta.vercel.app/api/chat";
-    const user_id = "small_c";
+<div class="bottom">
+<input
+id="input"
+placeholder="输入消息..."
+onkeydown="if(event.key==='Enter')sendMessage()">
+<button onclick="sendMessage()">发送</button>
+</div>
 
-    function addMsg(role, text) {
-      const chat = document.getElementById("chat");
-      const div = document.createElement("div");
-      div.className = "msg " + role;
-      div.innerText = (role === "user" ? "你: " : "AI: ") + text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
+</div>
 
-    async function sendMessage() {
-      const input = document.getElementById("input");
-      const text = input.value.trim();
-      if (!text) return;
+<script>
 
-      addMsg("user", text);
-      input.value = "";
+const API="https://memory-api-beta.vercel.app/api/chat";
+const USER_ID="small_c";
 
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            user_id: user_id,
-            message: text
-          })
+const chat=document.getElementById("chat");
+
+function addBubble(role,text,id=null){
+
+    const row=document.createElement("div");
+    row.className="message "+role;
+
+    const bubble=document.createElement("div");
+    bubble.className="bubble";
+
+    if(id) bubble.id=id;
+
+    bubble.textContent=text;
+
+    row.appendChild(bubble);
+
+    chat.appendChild(row);
+
+    chat.scrollTop=chat.scrollHeight;
+
+}
+
+async function sendMessage(){
+
+    const input=document.getElementById("input");
+
+    const message=input.value.trim();
+
+    if(!message) return;
+
+    addBubble("user",message);
+
+    input.value="";
+
+    addBubble("ai","正在思考...","loading");
+
+    try{
+
+        const res=await fetch(API,{
+            method:"POST",
+            headers:{
+                "Content-Type":"application/json"
+            },
+            body:JSON.stringify({
+                user_id:USER_ID,
+                message:message
+            })
         });
 
-        const data = await res.json();
+        const data=await res.json();
 
-        addMsg("ai", data.reply || "没有回复");
+        document.getElementById("loading").textContent=data.reply;
 
-      } catch (err) {
-        addMsg("ai", "错误: " + err.message);
-      }
+    }catch(e){
+
+        document.getElementById("loading").textContent="发生错误："+e.message;
+
     }
-  </script>
+
+}
+
+</script>
 
 </body>
 </html>
