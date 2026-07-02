@@ -1,72 +1,86 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>AI Memory Chat</title>
   <style>
     body {
-      font-family: Arial;
-      max-width: 700px;
-      margin: 0 auto;
-      padding: 20px;
+      font-family: sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
     }
     #chat {
       border: 1px solid #ddd;
       padding: 10px;
-      height: 400px;
+      height: 420px;
       overflow-y: auto;
       margin-bottom: 10px;
+      background: #fafafa;
     }
     .msg {
-      margin: 10px 0;
+      margin: 6px 0;
+      padding: 6px;
     }
-    .user { color: blue; }
-    .ai { color: green; }
+    .user {
+      color: #1a73e8;
+    }
+    .ai {
+      color: #188038;
+    }
   </style>
 </head>
 
 <body>
+
   <h2>🧠 AI Memory Chat</h2>
 
   <div id="chat"></div>
 
-  <input id="input" placeholder="输入消息..." style="width:80%">
-  <button onclick="send()">发送</button>
+  <input id="input" placeholder="输入消息..." style="width: 75%;" />
+  <button onclick="sendMessage()">发送</button>
 
   <script>
-    const API = "https://memory-api-beta.vercel.app/api/chat";
+    const API_URL = "https://memory-api-beta.vercel.app/api/chat";
     const user_id = "small_c";
 
-    const chat = document.getElementById("chat");
-
     function addMsg(role, text) {
+      const chat = document.getElementById("chat");
       const div = document.createElement("div");
       div.className = "msg " + role;
-      div.innerText = role + ": " + text;
+      div.innerText = (role === "user" ? "你: " : "AI: ") + text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    async function send() {
+    async function sendMessage() {
       const input = document.getElementById("input");
-      const message = input.value;
+      const text = input.value.trim();
+      if (!text) return;
+
+      addMsg("user", text);
       input.value = "";
 
-      addMsg("user", message);
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            user_id: user_id,
+            message: text
+          })
+        });
 
-      const res = await fetch(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id,
-          message
-        })
-      });
+        const data = await res.json();
 
-      const data = await res.json();
+        addMsg("ai", data.reply || "没有回复");
 
-      addMsg("ai", data.reply);
+      } catch (err) {
+        addMsg("ai", "错误: " + err.message);
+      }
     }
   </script>
+
 </body>
 </html>
