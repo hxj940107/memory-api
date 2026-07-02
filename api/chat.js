@@ -9,7 +9,7 @@ const supabase = createClient(
 async function getMemory(user_id) {
   const { data } = await supabase
     .from('memories')
-    .select('content, metadata')
+    .select('content')
     .eq('user_id', user_id)
     .order('created_at', { ascending: false })
     .limit(5)
@@ -17,31 +17,25 @@ async function getMemory(user_id) {
   return data || []
 }
 
-// 🧠 写入记忆
+// 🧠 写记忆
 async function saveMemory(user_id, content) {
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user_id,
-      content,
-      metadata: { type: 'chat' }
-    })
+    body: JSON.stringify({ user_id, content })
   })
 }
 
-// 🧠 Claude（这里你后面接 API Key）
-async function callClaude(prompt) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+// 🧠 OpenRouter 调用
+async function callLLM(prompt) {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.CLAUDE_API_KEY,
-      "anthropic-version": "2023-06-01"
+      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "claude-3-sonnet-20240229",
-      max_tokens: 500,
+      model: "anthropic/claude-3-haiku",
       messages: [
         { role: "user", content: prompt }
       ]
@@ -49,37 +43,34 @@ async function callClaude(prompt) {
   })
 
   const data = await res.json()
-  return data.content?.[0]?.text || ""
+  return data.choices?.[0]?.message?.content || ""
 }
 
 export default async function handler(req, res) {
   try {
     const { user_id = "small_c", message } = req.body
 
-    // ① 查记忆
+    // ① 读记忆
     const memory = await getMemory(user_id)
+    const memoryText = memory.map(m => m.content).join("\n")
 
-    const memoryText = memory
-      .map(m => m.content)
-      .join("\n")
-
-    // ② 构建 prompt
+    // ② prompt
     const prompt = `
 你是一个有长期记忆的AI。
 
-用户历史记忆：
+历史记忆：
 ${memoryText}
 
-用户当前输入：
+用户：
 ${message}
 
-请结合记忆回答用户。
+请结合记忆回答。
 `
 
-    // ③ Claude 回复
-    const reply = await callClaude(prompt)
+    // ③ AI回答
+    const reply = await callLLM(prompt)
 
-    // ④ 自动存记忆
+    // ④ 写入记忆
     await saveMemory(user_id, message)
 
     return res.status(200).json({
