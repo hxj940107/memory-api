@@ -15,7 +15,8 @@ async function getSummary(user_id) {
 }
 
 // 保存聊天记录
-async function saveMessage(user_id, role, content) {
+async function saveMessage(user_id, role, content, conversation_id) {
+
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: {
@@ -25,13 +26,15 @@ async function saveMessage(user_id, role, content) {
       user_id,
       role,
       content,
-      conversation_id: "default"
+      conversation_id
     })
   })
+
 }
 
 // 保存长期记忆
 async function saveMemory(user_id, content) {
+
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: {
@@ -42,6 +45,7 @@ async function saveMemory(user_id, content) {
       content
     })
   })
+
 }
 
 // Claude
@@ -79,13 +83,24 @@ export default async function handler(req, res) {
 
     const {
       user_id = "small_c",
-      message
+      message,
+      conversation_id
     } = req.body
 
-    // ① 保存用户消息
-    await saveMessage(user_id, "user", message)
+    // 如果没有传 conversation_id，就自动创建一个
+    const chatId =
+      conversation_id ||
+      "chat_" + Date.now()
 
-    // ② 获取长期记忆
+    // 保存用户消息
+    await saveMessage(
+      user_id,
+      "user",
+      message,
+      chatId
+    )
+
+    // 获取长期记忆
     const memory = await getSummary(user_id)
 
     const prompt = `
@@ -106,17 +121,26 @@ ${message}
 请自然回答，不要说"根据记忆"。
 `
 
-    // ③ Claude 回复
+    // Claude 回复
     const reply = await callLLM(prompt)
 
-    // ④ 保存 AI 回复
-    await saveMessage(user_id, "assistant", reply)
+    // 保存 AI 回复
+    await saveMessage(
+      user_id,
+      "assistant",
+      reply,
+      chatId
+    )
 
-    // ⑤ AI 判断是否值得长期记忆
-    await saveMemory(user_id, message)
+    // AI 判断是否值得长期记忆
+    await saveMemory(
+      user_id,
+      message
+    )
 
     return res.status(200).json({
       reply,
+      conversation_id: chatId,
       memory_used: memory.total || 0
     })
 
