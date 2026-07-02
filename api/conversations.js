@@ -6,38 +6,49 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
+
   try {
-    const user_id = req.query.user_id || 'small_c'
+
+    const user_id = req.query.user_id || "small_c"
 
     const { data, error } = await supabase
-      .from('memories')
-      .select('created_at')
-      .eq('user_id', user_id)
-      .order('created_at', { ascending: false })
+      .from("messages")
+      .select("conversation_id, created_at")
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
 
     if (error) {
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({
+        error: error.message
+      })
     }
 
-    const groups = {}
+    const map = {}
 
     data.forEach(item => {
-      const date = item.created_at.slice(0, 10)
 
-      if (!groups[date]) {
-        groups[date] = {
-          id: date,
-          title: date,
+      if (!map[item.conversation_id]) {
+
+        map[item.conversation_id] = {
+          id: item.conversation_id,
+          title: item.conversation_id,
           created_at: item.created_at
         }
+
       }
+
     })
 
-    return res.status(200).json(Object.values(groups))
+    return res.status(200).json(
+      Object.values(map)
+    )
 
   } catch (err) {
+
     return res.status(500).json({
       error: err.message
     })
+
   }
+
 }
