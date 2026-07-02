@@ -5,82 +5,110 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 🧠 获取记忆
-async function getMemory(user_id) {
-  const { data } = await supabase
-    .from('memories')
-    .select('content')
-    .eq('user_id', user_id)
-    .order('created_at', { ascending: false })
-    .limit(5)
+// 获取压缩后的记忆
+async function getSummary(user_id) {
 
-  return data || []
+  const res = await fetch(
+    `${process.env.BASE_URL}/api/summarize-memory?user_id=${user_id}`
+  )
+
+  return await res.json()
+
 }
 
-// 🧠 写记忆
+// 写入记忆
 async function saveMemory(user_id, content) {
-  await fetch(`${process.env.BASE_URL}/api/add-memory`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id, content })
-  })
-}
 
-// 🧠 OpenRouter 调用
-async function callLLM(prompt) {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: "anthropic/claude-3-haiku",
-      messages: [
-        { role: "user", content: prompt }
-      ]
+      user_id,
+      content,
+      metadata: {
+        role: "user"
+      }
     })
   })
 
+}
+
+// OpenRouter
+async function callLLM(prompt) {
+
+  const res = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-3-haiku",
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      })
+    }
+  )
+
   const data = await res.json()
+
   return data.choices?.[0]?.message?.content || ""
+
 }
 
 export default async function handler(req, res) {
+
   try {
-    const { user_id = "small_c", message } = req.body
 
-    // ① 读记忆
-    const memory = await getMemory(user_id)
-    const memoryText = memory.map(m => m.content).join("\n")
+    const {
+      user_id = "small_c",
+      message
+    } = req.body
 
-    // ② prompt
+    // 获取压缩记忆
+    const memory = await getSummary(user_id)
+
     const prompt = `
-你是一个有长期记忆的AI。
+你是一位长期陪伴用户的AI助手。
 
-历史记忆：
-${memoryText}
+下面是用户的重要长期记忆：
 
-用户：
+${memory.summary || "暂无长期记忆"}
+
+重要信息：
+
+${(memory.important || []).join("\n")}
+
+用户当前消息：
+
 ${message}
 
-请结合记忆回答。
+请结合长期记忆自然回答，不要刻意提起"根据记忆"。
 `
 
-    // ③ AI回答
     const reply = await callLLM(prompt)
 
-    // ④ 写入记忆
     await saveMemory(user_id, message)
 
     return res.status(200).json({
       reply,
-      memory_used: memory.length
+      memory_used: memory.total || 0
     })
 
   } catch (err) {
+
     return res.status(500).json({
       error: err.message
     })
+
   }
+
 }
