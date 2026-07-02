@@ -53,11 +53,11 @@ export default async function handler(req, res) {
   "save": false
 }
 
-如果适合，必须只返回**原句改写成一句话事实**：
+如果适合，必须只返回：
 
 {
   "save": true,
-  "memory": "一句非常短的事实总结（必须来自原句，不允许扩展）"
+  "memory": "一句非常短的事实总结"
 }
 
 ---
@@ -88,7 +88,7 @@ ${message}
 
     const data = await response.json()
 
-    const text = data?.choices?.[0]?.message?.content
+    let text = data?.choices?.[0]?.message?.content
 
     if (!text) {
       return res.status(500).json({
@@ -96,6 +96,13 @@ ${message}
         raw: data
       })
     }
+
+    text = text
+      .trim()
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim()
 
     let result
 
