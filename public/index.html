@@ -6,16 +6,12 @@
 <title>AI Memory Chat</title>
 
 <style>
-*{
-    box-sizing:border-box;
-}
-
+*{box-sizing:border-box;}
 body{
     margin:0;
     background:#f5f5f5;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
 }
-
 .container{
     width:100%;
     max-width:900px;
@@ -25,60 +21,45 @@ body{
     overflow:hidden;
     box-shadow:0 8px 30px rgba(0,0,0,.08);
 }
-
 .header{
     padding:18px 24px;
     font-size:20px;
     font-weight:700;
     border-bottom:1px solid #eee;
 }
-
 #chat{
     height:600px;
     overflow-y:auto;
     padding:25px;
     background:#fafafa;
 }
-
 .message{
     display:flex;
     margin-bottom:18px;
 }
-
-.message.user{
-    justify-content:flex-end;
-}
-
-.message.ai{
-    justify-content:flex-start;
-}
-
+.message.user{justify-content:flex-end;}
+.message.ai{justify-content:flex-start;}
 .bubble{
     max-width:75%;
     padding:14px 18px;
     border-radius:18px;
     line-height:1.6;
     white-space:pre-wrap;
-    word-break:break-word;
 }
-
 .user .bubble{
     background:#0b57d0;
     color:white;
 }
-
 .ai .bubble{
     background:white;
     border:1px solid #ddd;
 }
-
 .bottom{
     display:flex;
     gap:10px;
     padding:18px;
     border-top:1px solid #eee;
 }
-
 input{
     flex:1;
     font-size:16px;
@@ -86,7 +67,6 @@ input{
     border-radius:12px;
     border:1px solid #ccc;
 }
-
 button{
     width:100px;
     border:none;
@@ -94,11 +74,6 @@ button{
     background:#0b57d0;
     color:white;
     cursor:pointer;
-    font-size:15px;
-}
-
-button:hover{
-    opacity:.9;
 }
 </style>
 
@@ -108,17 +83,12 @@ button:hover{
 
 <div class="container">
 
-<div class="header">
-🧠 AI Memory Chat
-</div>
+<div class="header">🧠 AI Memory Chat</div>
 
 <div id="chat"></div>
 
 <div class="bottom">
-<input
-id="input"
-placeholder="输入消息..."
-onkeydown="if(event.key==='Enter')sendMessage()">
+<input id="input" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendMessage()">
 <button onclick="sendMessage()">发送</button>
 </div>
 
@@ -126,112 +96,77 @@ onkeydown="if(event.key==='Enter')sendMessage()">
 
 <script>
 
-const API="https://memory-api-beta.vercel.app/api/chat";
-const USER_ID="small_c";
+const API_CHAT = "https://memory-api-beta.vercel.app/api/chat";
+const API_HISTORY = "https://memory-api-beta.vercel.app/api/history";
+const USER_ID = "small_c";
 
-const STORAGE_KEY="chat_history";
+const chat = document.getElementById("chat");
 
-const chat=document.getElementById("chat");
+// 渲染消息
+function render(role, text){
+    const row = document.createElement("div");
+    row.className = "message " + role;
 
-let history=[];
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
 
-function saveHistory(){
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(history));
-}
-
-function loadHistory(){
-
-    const saved=localStorage.getItem(STORAGE_KEY);
-
-    if(!saved) return;
-
-    history=JSON.parse(saved);
-
-    history.forEach(item=>{
-        renderBubble(item.role,item.text);
-    });
-
-}
-
-function renderBubble(role,text,id=null){
-
-    const row=document.createElement("div");
-    row.className="message "+role;
-
-    const bubble=document.createElement("div");
-    bubble.className="bubble";
-
-    if(id) bubble.id=id;
-
-    bubble.textContent=text;
+    bubble.innerText = (role === "user" ? "你: " : "AI: ") + text;
 
     row.appendChild(bubble);
-
     chat.appendChild(row);
-
-    chat.scrollTop=chat.scrollHeight;
-
+    chat.scrollTop = chat.scrollHeight;
 }
 
-function addBubble(role,text){
+// 加载云端历史
+async function loadHistory(){
+    try{
+        const res = await fetch(API_HISTORY + "?user_id=" + USER_ID);
+        const data = await res.json();
 
-    history.push({
-        role,
-        text
-    });
+        data.forEach(item=>{
+            render(item.metadata?.role || "ai", item.content);
+        });
 
-    saveHistory();
-
-    renderBubble(role,text);
-
+    }catch(e){
+        console.log("history load error", e);
+    }
 }
 
+// 发送消息
 async function sendMessage(){
 
-    const input=document.getElementById("input");
+    const input = document.getElementById("input");
+    const text = input.value.trim();
+    if(!text) return;
 
-    const message=input.value.trim();
+    render("user", text);
+    input.value = "";
 
-    if(!message) return;
-
-    addBubble("user",message);
-
-    input.value="";
-
-    renderBubble("ai","正在思考...","loading");
+    render("ai", "正在思考...");
 
     try{
 
-        const res=await fetch(API,{
+        const res = await fetch(API_CHAT,{
             method:"POST",
             headers:{
                 "Content-Type":"application/json"
             },
             body:JSON.stringify({
                 user_id:USER_ID,
-                message
+                message:text
             })
         });
 
-        const data=await res.json();
+        const data = await res.json();
 
-        document.getElementById("loading").textContent=data.reply;
+        render("ai", data.reply || "无回复");
 
-        history.push({
-            role:"ai",
-            text:data.reply
-        });
-
-        saveHistory();
-
-    }catch(err){
-
-        document.getElementById("loading").textContent="发生错误："+err.message;
-
+    }catch(e){
+        render("ai", "错误：" + e.message);
     }
-
 }
 
+// 初始化
 loadHistory();
 
 </script>
