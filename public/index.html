@@ -100,11 +100,6 @@ button{
 button:hover{
     opacity:.9;
 }
-
-.loading{
-    color:#888;
-    font-style:italic;
-}
 </style>
 
 </head>
@@ -134,9 +129,31 @@ onkeydown="if(event.key==='Enter')sendMessage()">
 const API="https://memory-api-beta.vercel.app/api/chat";
 const USER_ID="small_c";
 
+const STORAGE_KEY="chat_history";
+
 const chat=document.getElementById("chat");
 
-function addBubble(role,text,id=null){
+let history=[];
+
+function saveHistory(){
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(history));
+}
+
+function loadHistory(){
+
+    const saved=localStorage.getItem(STORAGE_KEY);
+
+    if(!saved) return;
+
+    history=JSON.parse(saved);
+
+    history.forEach(item=>{
+        renderBubble(item.role,item.text);
+    });
+
+}
+
+function renderBubble(role,text,id=null){
 
     const row=document.createElement("div");
     row.className="message "+role;
@@ -156,6 +173,19 @@ function addBubble(role,text,id=null){
 
 }
 
+function addBubble(role,text){
+
+    history.push({
+        role,
+        text
+    });
+
+    saveHistory();
+
+    renderBubble(role,text);
+
+}
+
 async function sendMessage(){
 
     const input=document.getElementById("input");
@@ -168,7 +198,7 @@ async function sendMessage(){
 
     input.value="";
 
-    addBubble("ai","正在思考...","loading");
+    renderBubble("ai","正在思考...","loading");
 
     try{
 
@@ -179,7 +209,7 @@ async function sendMessage(){
             },
             body:JSON.stringify({
                 user_id:USER_ID,
-                message:message
+                message
             })
         });
 
@@ -187,13 +217,22 @@ async function sendMessage(){
 
         document.getElementById("loading").textContent=data.reply;
 
-    }catch(e){
+        history.push({
+            role:"ai",
+            text:data.reply
+        });
 
-        document.getElementById("loading").textContent="发生错误："+e.message;
+        saveHistory();
+
+    }catch(err){
+
+        document.getElementById("loading").textContent="发生错误："+err.message;
 
     }
 
 }
+
+loadHistory();
 
 </script>
 
