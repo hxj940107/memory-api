@@ -8,7 +8,7 @@ export default async function handler(req, res) {
       })
     }
 
-    const { message } = req.body || {}
+    const { user_id, message } = req.body || {}
 
     if (!message) {
       return res.status(400).json({
@@ -17,43 +17,52 @@ export default async function handler(req, res) {
     }
 
     const prompt = `
-你是一名AI长期记忆管理器。
+你是一个“长期记忆提取器”。
 
-判断下面这句话是否值得作为长期记忆。
+你的任务非常严格：
 
-只记长期稳定的信息，例如：
-- 兴趣爱好
-- 职业
-- 学习目标
-- 饮食习惯
-- 长期计划
-- 人际关系
-- 长期偏好
+👉 只能从用户输入中提取“明确事实”
+👉 不能推理
+👉 不能总结性评价
+👉 不能扩展
+👉 不能润色
+👉 不能加入任何新信息
 
-不要记：
-- 打招呼
-- 临时聊天
-- 一次性的事情
-- 情绪
-- 闲聊
+---
 
-如果值得记：
+【允许记录的内容】
+- 用户明确说出的事实
+- 用户的明确偏好
+- 用户的明确行为
+- 用户的明确状态
 
-返回 JSON：
+---
 
-{
-  "save": true,
-  "memory": "一句简洁的长期记忆"
-}
+【禁止】
+- 性格描述（例如：友善、聪明）
+- 推测用户意图
+- 总结用户生活
+- 扩展信息
+- 任何没有在原句出现的信息
 
-如果不值得：
+---
+
+如果不适合长期记忆，返回：
 
 {
   "save": false
 }
 
-用户：
+如果适合，必须只返回**原句改写成一句话事实**：
 
+{
+  "save": true,
+  "memory": "一句非常短的事实总结（必须来自原句，不允许扩展）"
+}
+
+---
+
+用户输入：
 ${message}
 `
 
@@ -66,7 +75,7 @@ ${message}
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "anthropic/claude-3-haiku",
+          model: "anthropic/claude-sonnet-4.6",
           messages: [
             {
               role: "user",
@@ -79,7 +88,9 @@ ${message}
 
     const data = await response.json()
 
-    if (!data.choices?.[0]?.message?.content) {
+    const text = data?.choices?.[0]?.message?.content
+
+    if (!text) {
       return res.status(500).json({
         error: "No response from model",
         raw: data
@@ -89,11 +100,11 @@ ${message}
     let result
 
     try {
-      result = JSON.parse(data.choices[0].message.content)
+      result = JSON.parse(text)
     } catch (e) {
       return res.status(500).json({
         error: "JSON parse failed",
-        raw: data.choices[0].message.content
+        raw: text
       })
     }
 
