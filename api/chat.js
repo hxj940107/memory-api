@@ -60,7 +60,7 @@ async function callLLM(prompt) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3-haiku",
+        model: "anthropic/claude-3-sonnet",
         messages: [
           {
             role: "user",
