@@ -5,20 +5,33 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 获取压缩后的记忆
+// 获取长期记忆
 async function getSummary(user_id) {
-
   const res = await fetch(
     `${process.env.BASE_URL}/api/summarize-memory?user_id=${user_id}`
   )
 
   return await res.json()
-
 }
 
-// 写入记忆
-async function saveMemory(user_id, content) {
+// 保存聊天记录
+async function saveMessage(user_id, role, content) {
+  await fetch(`${process.env.BASE_URL}/api/add-message`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      user_id,
+      role,
+      content,
+      conversation_id: "default"
+    })
+  })
+}
 
+// 保存长期记忆
+async function saveMemory(user_id, content) {
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: {
@@ -26,16 +39,12 @@ async function saveMemory(user_id, content) {
     },
     body: JSON.stringify({
       user_id,
-      content,
-      metadata: {
-        role: "user"
-      }
+      content
     })
   })
-
 }
 
-// OpenRouter
+// Claude
 async function callLLM(prompt) {
 
   const res = await fetch(
@@ -73,13 +82,16 @@ export default async function handler(req, res) {
       message
     } = req.body
 
-    // 获取压缩记忆
+    // ① 保存用户消息
+    await saveMessage(user_id, "user", message)
+
+    // ② 获取长期记忆
     const memory = await getSummary(user_id)
 
     const prompt = `
 你是一位长期陪伴用户的AI助手。
 
-下面是用户的重要长期记忆：
+用户长期记忆：
 
 ${memory.summary || "暂无长期记忆"}
 
@@ -87,15 +99,20 @@ ${memory.summary || "暂无长期记忆"}
 
 ${(memory.important || []).join("\n")}
 
-用户当前消息：
+用户：
 
 ${message}
 
-请结合长期记忆自然回答，不要刻意提起"根据记忆"。
+请自然回答，不要说"根据记忆"。
 `
 
+    // ③ Claude 回复
     const reply = await callLLM(prompt)
 
+    // ④ 保存 AI 回复
+    await saveMessage(user_id, "assistant", reply)
+
+    // ⑤ AI 判断是否值得长期记忆
     await saveMemory(user_id, message)
 
     return res.status(200).json({
