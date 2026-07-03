@@ -7,43 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取人格（最高优先级）
+// 读取人格
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 获取记忆
-async function getSummary(user_id) {
-
-  const { data, error } = await supabase
-    .from("memories")
-    .select("content, metadata, created_at")
-    .eq("user_id", user_id)
-    .order("created_at", { ascending: false })
-
-  if (error) throw new Error(error.message)
-
-  const important = []
-  const recent = []
-
-  for (const m of data || []) {
-
-    if (m.metadata?.importance === "high") {
-      important.push(m.content)
-    }
-
-    if (recent.length < 5) {
-      recent.push(m.content)
-    }
-  }
-
-  return {
-    summary: [...new Set([...important, ...recent])].join(" | ")
-  }
-}
-
-// 保存 message
+// 保存消息
 async function saveMessage(user_id, role, content, conversation_id) {
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
@@ -57,7 +27,7 @@ async function saveMessage(user_id, role, content, conversation_id) {
   })
 }
 
-// 保存 memory
+// 保存记忆
 async function saveMemory(user_id, content) {
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
@@ -68,6 +38,34 @@ async function saveMemory(user_id, content) {
       metadata: { importance: "high" }
     })
   })
+}
+
+// 🧠 相关记忆检索（省token核心）
+async function getRelevantMemory(user_id, message) {
+
+  const { data: memories } = await supabase
+    .from("memories")
+    .select("content, metadata")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false })
+
+  if (!memories) return ""
+
+  const keywords = message.toLowerCase().split(" ")
+
+  const relevant = memories
+    .filter(m =>
+      keywords.some(k =>
+        m.content.toLowerCase().includes(k)
+      )
+    )
+    .slice(0, 6)
+
+  const fallback = memories.slice(0, 5)
+
+  const final = (relevant.length > 0 ? relevant : fallback)
+
+  return final.map(m => m.content).join(" | ")
 }
 
 // 调用模型
@@ -115,23 +113,21 @@ export default async function handler(req, res) {
 
     await saveMessage(user_id, "user", message, chatId)
 
-    const memory = await getSummary(user_id)
+    // 🧠 只取相关记忆（核心优化）
+    const memoryText = await getRelevantMemory(user_id, message)
 
     const messages = [
-      // 🔥 人格层（绝对最高优先级）
       {
         role: "system",
         content: systemPrompt
       },
-
-      // 🔥 记忆层（辅助但不覆盖人格）
       {
         role: "system",
         content: `
-【长期记忆】
-${memory.summary || "暂无"}
+【长期记忆（相关）】
+${memoryText || "暂无长期记忆"}
 
-【当前用户输入】
+【用户输入】
 ${message}
         `
       }
