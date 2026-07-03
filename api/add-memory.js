@@ -13,37 +13,37 @@ async function judgeMemory(content) {
 
 长期记忆包括：
 
-- 用户的喜好
-- 用户的厌恶
-- 性格特点
-- 长期目标
-- 重要事件
-- 人际关系
-- 持续性的情绪
-- 对小C的重要信息
+- 用户长期喜欢或讨厌的东西
+- 用户稳定的习惯
+- 用户的重要背景
+- 用户的重要经历
+- 用户长期目标
+- 用户持续性的担忧
+- 用户的重要关系
+- 会影响以后聊天方式的信息
 
 不要保存：
 
+- 打招呼
 - 日常闲聊
-- 问候
+- 一次性的安排
 - 临时情绪
-- 一次性的事情
 - 没有长期价值的信息
 
-如果值得保存：
-
-返回 JSON：
+如果值得保存，请返回：
 
 {
- "save": true,
- "memory": "整理后的长期记忆"
+  "save": true,
+  "memory": "一句20字以内的长期事实"
 }
 
-否则：
+否则返回：
 
 {
- "save": false
+  "save": false
 }
+
+只返回 JSON，不要解释。
 
 内容：
 
@@ -60,9 +60,6 @@ ${content}
       },
       body: JSON.stringify({
         model: "anthropic/claude-sonnet-4.6",
-        response_format: {
-          type: "json_object"
-        },
         messages: [
           {
             role: "user",
@@ -75,12 +72,24 @@ ${content}
 
   const data = await res.json()
 
+  let text = data?.choices?.[0]?.message?.content || ""
+
+  text = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
+
   try {
-    return JSON.parse(
-      data.choices[0].message.content
-    )
-  } catch {
-    return { save: false }
+    return JSON.parse(text)
+  } catch (e) {
+
+    console.error("Memory Parse Error:", text)
+
+    return {
+      save: false
+    }
   }
 }
 
@@ -100,7 +109,6 @@ export default async function handler(req, res) {
     })
   }
 
-  // 去重
   const { data: existed } = await supabase
     .from("memories")
     .select("id")
@@ -115,12 +123,25 @@ export default async function handler(req, res) {
     })
   }
 
-  await supabase
+  const { error } = await supabase
     .from("memories")
     .insert({
       user_id,
-      content: result.memory
+      content: result.memory,
+      metadata: {
+        role: "memory",
+        source: "ai",
+        importance: "high"
+      }
     })
+
+  if (error) {
+    console.error(error)
+    return res.status(500).json({
+      saved: false,
+      error: error.message
+    })
+  }
 
   return res.json({
     saved: true,
