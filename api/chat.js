@@ -7,13 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取 system prompt（小C人格）
+// 读取 system prompt
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 获取长期记忆
+// 获取长期记忆（强化版）
 async function getSummary(user_id) {
 
   const { data, error } = await supabase
@@ -24,14 +24,14 @@ async function getSummary(user_id) {
 
   if (error) throw new Error(error.message)
 
-  const high = []
+  const important = []
   const recent = []
   const tags = new Set()
 
-  ;(data || []).forEach(m => {
+  for (const m of data || []) {
 
     if (m.metadata?.importance === "high") {
-      high.push(m.content)
+      important.push(m.content)
     }
 
     if (recent.length < 5) {
@@ -42,26 +42,25 @@ async function getSummary(user_id) {
       tags.add(m.metadata.type)
     }
 
-  })
+  }
+
+  const summary = [...new Set([...important, ...recent])]
 
   return {
     total: data?.length || 0,
-    important: high,
+    important,
     recent,
     tags: [...tags],
-    summary: [...new Set([...high, ...recent])].join(" | ")
+    summary: summary.join(" | ")
   }
-
 }
 
-// 保存聊天记录
+// 保存聊天
 async function saveMessage(user_id, role, content, conversation_id) {
 
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
       role,
@@ -72,23 +71,24 @@ async function saveMessage(user_id, role, content, conversation_id) {
 
 }
 
-// 保存长期记忆
+// 保存 memory（强化：标记重要性）
 async function saveMemory(user_id, content) {
 
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
-      content
+      content,
+      metadata: {
+        importance: "high"
+      }
     })
   })
 
 }
 
-// 调用 Claude（OpenRouter）
+// 调用模型
 async function callLLM(prompt) {
 
   const res = await fetch(
@@ -140,6 +140,12 @@ export default async function handler(req, res) {
 
     const memory = await getSummary(user_id)
 
+    // 🔥 强化记忆（优先重要记忆）
+    const strongMemory =
+      memory.important.length > 0
+        ? memory.important.join(" | ")
+        : memory.summary
+
     const prompt = `
 ${systemPrompt}
 
@@ -147,7 +153,7 @@ ${systemPrompt}
 
 用户长期记忆：
 
-${memory.summary || "暂无长期记忆"}
+${strongMemory || "暂无长期记忆"}
 
 ---
 
