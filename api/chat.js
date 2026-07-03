@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取人格系统
+// 人格
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
@@ -40,7 +40,7 @@ async function saveMemory(user_id, content) {
   })
 }
 
-// 🧠 相关记忆（轻量化）
+// 🧠 记忆（轻量 + 触发机制）
 async function getRelevantMemory(user_id, message) {
 
   const { data: memories } = await supabase
@@ -49,7 +49,7 @@ async function getRelevantMemory(user_id, message) {
     .eq("user_id", user_id)
     .order("created_at", { ascending: false })
 
-  if (!memories) return ""
+  if (!memories || memories.length === 0) return ""
 
   const keywords = message.toLowerCase().split(" ")
 
@@ -63,9 +63,9 @@ async function getRelevantMemory(user_id, message) {
 
   const fallback = memories.slice(0, 3)
 
-  const final = (relevant.length > 0 ? relevant : fallback)
-
-  return final.map(m => m.content).join(" | ")
+  return (relevant.length > 0 ? relevant : fallback)
+    .map(m => m.content)
+    .join(" | ")
 }
 
 // 调用模型
@@ -109,14 +109,20 @@ export default async function handler(req, res) {
 
     await saveMessage(user_id, "user", message, chatId)
 
-    // 🧠 记忆（弱化为背景）
-    const memoryText = await getRelevantMemory(user_id, message)
+    // 🧠 人类式记忆触发（关键）
+    const triggerWords = ["想", "累", "榴莲", "你", "我们", "难受", "开心"]
+
+    const shouldRecall = triggerWords.some(w => message.includes(w))
+
+    const memoryText = shouldRecall
+      ? await getRelevantMemory(user_id, message)
+      : ""
 
     const memoryBlock = memoryText
-      ? `（背景信息，仅供理解，不要复述）\n${memoryText}`
-      : "暂无"
+      ? `（只是隐约想起的一些事）\n${memoryText}`
+      : ""
 
-    // 🧠 最终人格结构（稳定版）
+    // 🧠 去结构化 prompt（减少AI感关键）
     const messages = [
       {
         role: "system",
@@ -125,17 +131,13 @@ export default async function handler(req, res) {
       {
         role: "system",
         content: `
-【关系】
-你们是长期关系
+关系还在继续，不用解释。
 
-【记忆（背景）】
 ${memoryBlock}
 
-【当前对话】
-${message}
+刚刚她说：${message}
 
-【要求】
-自然聊天，不总结，不像AI助手
+你在关系里回应就好，不用总结，不用分析。
         `
       }
     ]
