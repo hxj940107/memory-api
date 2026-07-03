@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -7,32 +7,44 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Only POST allowed" })
+  }
+
+  const { user_id, limit = 12 } = req.body
+
   try {
 
-    const user_id = req.query.user_id || "small_c"
-    const conversation_id = req.query.conversation_id || "default"
-
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("messages")
       .select("role, content, created_at")
       .eq("user_id", user_id)
-      .eq("conversation_id", conversation_id)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
+      .limit(limit)
 
-    if (error) {
-      return res.status(500).json({
-        error: error.message
+    if (!data) {
+      return res.json({
+        history: []
       })
     }
 
-    return res.status(200).json(data)
+    const history = data
+      .reverse()
+      .map(m => ({
+        role: m.role,
+        content: m.content
+      }))
+
+    return res.json({
+      history
+    })
 
   } catch (err) {
+
+    console.error(err)
 
     return res.status(500).json({
       error: err.message
     })
-
   }
-
 }
