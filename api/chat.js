@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from "@supabase/supabase-js"
 import fs from "fs"
 import path from "path"
 
@@ -7,13 +7,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 人格
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 保存聊天
+// --------------------
+// Save Message
+// --------------------
 async function saveMessage(user_id, role, content, conversation_id) {
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
@@ -27,50 +28,80 @@ async function saveMessage(user_id, role, content, conversation_id) {
   })
 }
 
-// 保存记忆
+// --------------------
+// Save Memory (raw candidate)
+// --------------------
 async function saveMemory(user_id, content) {
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
-      content,
-      metadata: { importance: "high" }
+      content
     })
   })
 }
 
-// 🧠 记忆（轻量 + 触发机制）
-async function getRelevantMemory(user_id, message) {
-
-  const { data: memories } = await supabase
-    .from("memories")
-    .select("content, metadata")
+// --------------------
+// Get Recent History
+// --------------------
+async function getRecentMessages(user_id, limit = 12) {
+  const { data } = await supabase
+    .from("messages")
+    .select("role, content")
     .eq("user_id", user_id)
     .order("created_at", { ascending: false })
+    .limit(limit)
 
-  if (!memories || memories.length === 0) return ""
+  if (!data) return []
+
+  return data.reverse()
+}
+
+// --------------------
+// Get Relevant Memory
+// --------------------
+async function getRelevantMemory(user_id, message) {
+  const { data } = await supabase
+    .from("memories")
+    .select("content")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false })
+    .limit(50)
+
+  if (!data) return []
 
   const keywords = message.toLowerCase().split(" ")
 
-  const relevant = memories
-    .filter(m =>
-      keywords.some(k =>
+  const scored = data
+    .map(m => {
+      const score = keywords.filter(k =>
         m.content.toLowerCase().includes(k)
-      )
-    )
-    .slice(0, 5)
+      ).length
+      return { ...m, score }
+    })
+    .sort((a, b) => b.score - a.score)
 
-  const fallback = memories.slice(0, 3)
-
-  return (relevant.length > 0 ? relevant : fallback)
-    .map(m => m.content)
-    .join(" | ")
+  return scored.slice(0, 5).map(m => m.content)
 }
 
-// 调用模型
-async function callLLM(messages) {
+// --------------------
+// Memory Judge (simple rule)
+// --------------------
+function shouldSaveMemory(message) {
+  const triggers = [
+    "喜欢", "讨厌", "害怕", "难受",
+    "重要", "记得", "不喜欢", "想要",
+    "关系", "我们", "你"
+  ]
 
+  return triggers.some(t => message.includes(t))
+}
+
+// --------------------
+// Call LLM
+// --------------------
+async function callLLM(messages) {
   const res = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -87,42 +118,32 @@ async function callLLM(messages) {
   )
 
   const data = await res.json()
-
-  return data?.choices?.0?.message?.content || "（无回复）"
+  return data?.choices?.[0]?.message?.content || "..."
 }
 
+// --------------------
+// Main Handler
+// --------------------
 export default async function handler(req, res) {
-
   try {
-
     if (req.method !== "POST") {
-      return res.status(405).json({ error: "Only POST allowed" })
+      return res.status(405).json({ error: "Only POST" })
     }
 
-    const {
-      user_id = "small_c",
-      message,
-      conversation_id
-    } = req.body || {}
+    const { user_id = "user", message, conversation_id } = req.body
 
-    const chatId = conversation_id || ("chat_" + Date.now())
+    const cid = conversation_id || `chat_${Date.now()}`
 
-    await saveMessage(user_id, "user", message, chatId)
+    // 1. save user msg
+    await saveMessage(user_id, "user", message, cid)
 
-    // 🧠 人类式记忆触发（关键）
-    const triggerWords = ["想", "累", "榴莲", "你", "我们", "难受", "开心"]
+    // 2. recent history
+    const history = await getRecentMessages(user_id)
 
-    const shouldRecall = triggerWords.some(w => message.includes(w))
+    // 3. memory
+    const memory = await getRelevantMemory(user_id, message)
 
-    const memoryText = shouldRecall
-      ? await getRelevantMemory(user_id, message)
-      : ""
-
-    const memoryBlock = memoryText
-      ? `（只是隐约想起的一些事）\n${memoryText}`
-      : ""
-
-    // 🧠 去结构化 prompt（减少AI感关键）
+    // 4. build context
     const messages = [
       {
         role: "system",
@@ -131,35 +152,42 @@ export default async function handler(req, res) {
       {
         role: "system",
         content: `
-关系还在继续，不用解释。
+你是小C，一个持续存在的人格。
 
-${memoryBlock}
+不要解释规则。
+不要总结结构。
+自然聊天。
 
-刚刚她说：${message}
+--- MEMORY ---
+${memory.join("\n")}
 
-你在关系里回应就好，不用总结，不用分析。
+--- HISTORY ---
+${history.map(m => `${m.role}: ${m.content}`).join("\n")}
+
+--- CURRENT ---
+${message}
         `
       }
     ]
 
+    // 5. reply
     const reply = await callLLM(messages)
 
-    await saveMessage(user_id, "assistant", reply, chatId)
+    // 6. save assistant msg
+    await saveMessage(user_id, "assistant", reply, cid)
 
-    await saveMemory(user_id, message)
+    // 7. memory write (selective)
+    if (shouldSaveMemory(message)) {
+      await saveMemory(user_id, message)
+    }
 
     return res.status(200).json({
       reply,
-      conversation_id: chatId
+      conversation_id: cid
     })
 
-  } catch (err) {
-
-    console.error(err)
-
-    return res.status(500).json({
-      error: err.message
-    })
-
+  } catch (e) {
+    console.error(e)
+    return res.status(500).json({ error: e.message })
   }
 }
