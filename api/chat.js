@@ -62,27 +62,59 @@ async function getRecentMessages(user_id, limit = 12) {
 // Get Relevant Memory
 // --------------------
 async function getRelevantMemory(user_id, message) {
+
   const { data } = await supabase
     .from("memories")
-    .select("content")
+    .select("content, metadata, created_at")
     .eq("user_id", user_id)
-    .order("created_at", { ascending: false })
-    .limit(50)
 
-  if (!data) return []
+  if (!data || data.length === 0) {
+    return []
+  }
 
-  const keywords = message.toLowerCase().split(" ")
+  const keywords = message
+    .toLowerCase()
+    .replace(/[^\u4e00-\u9fa5a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
 
-  const scored = data
-    .map(m => {
-      const score = keywords.filter(k =>
-        m.content.toLowerCase().includes(k)
-      ).length
-      return { ...m, score }
+  const scored = data.map(memory => {
+
+    let score = 0
+
+    const text = (memory.content || "").toLowerCase()
+
+    keywords.forEach(k => {
+      if (text.includes(k)) score += 3
     })
-    .sort((a, b) => b.score - a.score)
 
-  return scored.slice(0, 5).map(m => m.content)
+    if (memory.metadata?.importance === "high") {
+      score += 5
+    }
+
+    if (memory.metadata?.source === "ai") {
+      score += 2
+    }
+
+    if (memory.created_at) {
+      const days =
+        (Date.now() - new Date(memory.created_at).getTime()) /
+        1000 / 60 / 60 / 24
+
+      score += Math.max(0, 2 - days / 30)
+    }
+
+    return {
+      ...memory,
+      score
+    }
+
+  })
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(m => m.content)
 }
 
 // --------------------
