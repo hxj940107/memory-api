@@ -1,11 +1,19 @@
 import { createClient } from '@supabase/supabase-js'
+import fs from "fs"
+import path from "path"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 直接读取长期记忆（不再请求 /api/summarize-memory）
+// 读取 system prompt（小C人格）
+const systemPrompt = fs.readFileSync(
+  path.join(process.cwd(), "prompt/system.md"),
+  "utf-8"
+)
+
+// 获取长期记忆
 async function getSummary(user_id) {
 
   const { data, error } = await supabase
@@ -14,9 +22,7 @@ async function getSummary(user_id) {
     .eq("user_id", user_id)
     .order("created_at", { ascending: false })
 
-  if (error) {
-    throw new Error(error.message)
-  }
+  if (error) throw new Error(error.message)
 
   const high = []
   const recent = []
@@ -82,7 +88,7 @@ async function saveMemory(user_id, content) {
 
 }
 
-// Claude
+// 调用 Claude（OpenRouter）
 async function callLLM(prompt) {
 
   const res = await fetch(
@@ -107,10 +113,7 @@ async function callLLM(prompt) {
 
   const data = await res.json()
 
-  console.log("OPENROUTER RESPONSE:", JSON.stringify(data, null, 2))
-
-  return data?.choices?.[0]?.message?.content || "（无回复：模型未返回内容）"
-
+  return data?.choices?.[0]?.message?.content || "（无回复）"
 }
 
 export default async function handler(req, res) {
@@ -118,9 +121,7 @@ export default async function handler(req, res) {
   try {
 
     if (req.method !== "POST") {
-      return res.status(405).json({
-        error: "Only POST allowed"
-      })
+      return res.status(405).json({ error: "Only POST allowed" })
     }
 
     const {
@@ -130,9 +131,7 @@ export default async function handler(req, res) {
     } = req.body || {}
 
     if (!message) {
-      return res.status(400).json({
-        error: "message is required"
-      })
+      return res.status(400).json({ error: "message is required" })
     }
 
     const chatId = conversation_id || ("chat_" + Date.now())
@@ -142,17 +141,19 @@ export default async function handler(req, res) {
     const memory = await getSummary(user_id)
 
     const prompt = `
-你是一位长期陪伴用户的AI助手。
+${systemPrompt}
+
+---
 
 用户长期记忆：
 
 ${memory.summary || "暂无长期记忆"}
 
-用户：
+---
+
+用户输入：
 
 ${message}
-
-请自然回答，不要说"根据记忆"。
 `
 
     const reply = await callLLM(prompt)
@@ -169,7 +170,7 @@ ${message}
 
   } catch (err) {
 
-    console.error("CHAT ERROR:", err)
+    console.error(err)
 
     return res.status(500).json({
       error: err.message
