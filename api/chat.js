@@ -210,7 +210,23 @@ ${message}
 
     // 7. memory write (selective)
     if (shouldSaveMemory(message)) {
-      await saveMemory(user_id, message)
+      try {
+  const res = await fetch("/api/add-memory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id,
+      content: message
+    })
+  })
+
+  const data = await res.json()
+
+  console.log("memory result:", data)
+
+} catch (err) {
+  console.error("memory failed:", err)
+}
     }
 
     return res.status(200).json({
