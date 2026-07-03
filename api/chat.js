@@ -7,13 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取人格
+// 读取人格系统（最高优先级）
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 保存消息
+// 保存聊天记录
 async function saveMessage(user_id, role, content, conversation_id) {
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
@@ -40,7 +40,7 @@ async function saveMemory(user_id, content) {
   })
 }
 
-// 🧠 相关记忆检索（省token核心）
+// 🧠 记忆检索（稳定版本）
 async function getRelevantMemory(user_id, message) {
 
   const { data: memories } = await supabase
@@ -113,9 +113,10 @@ export default async function handler(req, res) {
 
     await saveMessage(user_id, "user", message, chatId)
 
-    // 🧠 只取相关记忆（核心优化）
+    // 🧠 取相关记忆
     const memoryText = await getRelevantMemory(user_id, message)
 
+    // 🔥 最终人格稳定结构（关键）
     const messages = [
       {
         role: "system",
@@ -124,11 +125,17 @@ export default async function handler(req, res) {
       {
         role: "system",
         content: `
-【长期记忆（相关）】
-${memoryText || "暂无长期记忆"}
+【关系状态】
+你们是长期关系，不是任务问答
 
-【用户输入】
+【长期记忆】
+${memoryText || "暂无"}
+
+【当前对话】
 ${message}
+
+【规则】
+保持自然语气，不要像AI助手，不要总结式回答
         `
       }
     ]
