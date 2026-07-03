@@ -7,13 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取 system prompt
+// 读取 system prompt（人格）
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 获取长期记忆（强化版）
+// 获取 memory
 async function getSummary(user_id) {
 
   const { data, error } = await supabase
@@ -41,7 +41,6 @@ async function getSummary(user_id) {
     if (m.metadata?.type) {
       tags.add(m.metadata.type)
     }
-
   }
 
   const summary = [...new Set([...important, ...recent])]
@@ -55,7 +54,7 @@ async function getSummary(user_id) {
   }
 }
 
-// 保存聊天
+// 保存 message
 async function saveMessage(user_id, role, content, conversation_id) {
 
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
@@ -71,7 +70,7 @@ async function saveMessage(user_id, role, content, conversation_id) {
 
 }
 
-// 保存 memory（强化：标记重要性）
+// 保存 memory
 async function saveMemory(user_id, content) {
 
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
@@ -89,7 +88,7 @@ async function saveMemory(user_id, content) {
 }
 
 // 调用模型
-async function callLLM(prompt) {
+async function callLLM(messages) {
 
   const res = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -101,12 +100,7 @@ async function callLLM(prompt) {
       },
       body: JSON.stringify({
         model: "anthropic/claude-sonnet-4.6",
-        messages: [
-          {
-            role: "user",
-            content: prompt
-          }
-        ]
+        messages
       })
     }
   )
@@ -140,29 +134,30 @@ export default async function handler(req, res) {
 
     const memory = await getSummary(user_id)
 
-    // 🔥 强化记忆（优先重要记忆）
     const strongMemory =
       memory.important.length > 0
         ? memory.important.join(" | ")
         : memory.summary
 
-    const prompt = `
-${systemPrompt}
-
----
-
+    // 🔥 关键：人格 + 记忆 + 用户输入拆分为 system/user
+    const messages = [
+      {
+        role: "system",
+        content: systemPrompt
+      },
+      {
+        role: "user",
+        content: `
 用户长期记忆：
-
 ${strongMemory || "暂无长期记忆"}
 
----
-
 用户输入：
-
 ${message}
-`
+        `
+      }
+    ]
 
-    const reply = await callLLM(prompt)
+    const reply = await callLLM(messages)
 
     await saveMessage(user_id, "assistant", reply, chatId)
 
@@ -183,5 +178,4 @@ ${message}
     })
 
   }
-
 }
