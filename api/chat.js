@@ -7,13 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取 system prompt（人格）
+// 读取人格（最高优先级）
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 获取 memory
+// 获取记忆
 async function getSummary(user_id) {
 
   const { data, error } = await supabase
@@ -26,7 +26,6 @@ async function getSummary(user_id) {
 
   const important = []
   const recent = []
-  const tags = new Set()
 
   for (const m of data || []) {
 
@@ -37,26 +36,15 @@ async function getSummary(user_id) {
     if (recent.length < 5) {
       recent.push(m.content)
     }
-
-    if (m.metadata?.type) {
-      tags.add(m.metadata.type)
-    }
   }
 
-  const summary = [...new Set([...important, ...recent])]
-
   return {
-    total: data?.length || 0,
-    important,
-    recent,
-    tags: [...tags],
-    summary: summary.join(" | ")
+    summary: [...new Set([...important, ...recent])].join(" | ")
   }
 }
 
 // 保存 message
 async function saveMessage(user_id, role, content, conversation_id) {
-
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -67,24 +55,19 @@ async function saveMessage(user_id, role, content, conversation_id) {
       conversation_id
     })
   })
-
 }
 
 // 保存 memory
 async function saveMemory(user_id, content) {
-
   await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
       content,
-      metadata: {
-        importance: "high"
-      }
+      metadata: { importance: "high" }
     })
   })
-
 }
 
 // 调用模型
@@ -134,24 +117,21 @@ export default async function handler(req, res) {
 
     const memory = await getSummary(user_id)
 
-    const strongMemory =
-      memory.important.length > 0
-        ? memory.important.join(" | ")
-        : memory.summary
-
-    // 🔥 关键：人格 + 记忆 + 用户输入拆分为 system/user
     const messages = [
+      // 🔥 人格层（绝对最高优先级）
       {
         role: "system",
         content: systemPrompt
       },
-      {
-        role: "user",
-        content: `
-用户长期记忆：
-${strongMemory || "暂无长期记忆"}
 
-用户输入：
+      // 🔥 记忆层（辅助但不覆盖人格）
+      {
+        role: "system",
+        content: `
+【长期记忆】
+${memory.summary || "暂无"}
+
+【当前用户输入】
 ${message}
         `
       }
@@ -165,8 +145,7 @@ ${message}
 
     return res.status(200).json({
       reply,
-      conversation_id: chatId,
-      memory_used: memory.total
+      conversation_id: chatId
     })
 
   } catch (err) {
