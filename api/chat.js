@@ -7,13 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// 读取人格系统（最高优先级）
+// 读取人格系统
 const systemPrompt = fs.readFileSync(
   path.join(process.cwd(), "prompt/system.md"),
   "utf-8"
 )
 
-// 保存聊天记录
+// 保存聊天
 async function saveMessage(user_id, role, content, conversation_id) {
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
@@ -40,7 +40,7 @@ async function saveMemory(user_id, content) {
   })
 }
 
-// 🧠 记忆检索（稳定版本）
+// 🧠 相关记忆（轻量化）
 async function getRelevantMemory(user_id, message) {
 
   const { data: memories } = await supabase
@@ -59,9 +59,9 @@ async function getRelevantMemory(user_id, message) {
         m.content.toLowerCase().includes(k)
       )
     )
-    .slice(0, 6)
+    .slice(0, 5)
 
-  const fallback = memories.slice(0, 5)
+  const fallback = memories.slice(0, 3)
 
   const final = (relevant.length > 0 ? relevant : fallback)
 
@@ -88,7 +88,7 @@ async function callLLM(messages) {
 
   const data = await res.json()
 
-  return data?.choices?.[0]?.message?.content || "（无回复）"
+  return data?.choices?.0?.message?.content || "（无回复）"
 }
 
 export default async function handler(req, res) {
@@ -105,18 +105,18 @@ export default async function handler(req, res) {
       conversation_id
     } = req.body || {}
 
-    if (!message) {
-      return res.status(400).json({ error: "message is required" })
-    }
-
     const chatId = conversation_id || ("chat_" + Date.now())
 
     await saveMessage(user_id, "user", message, chatId)
 
-    // 🧠 取相关记忆
+    // 🧠 记忆（弱化为背景）
     const memoryText = await getRelevantMemory(user_id, message)
 
-    // 🔥 最终人格稳定结构（关键）
+    const memoryBlock = memoryText
+      ? `（背景信息，仅供理解，不要复述）\n${memoryText}`
+      : "暂无"
+
+    // 🧠 最终人格结构（稳定版）
     const messages = [
       {
         role: "system",
@@ -125,17 +125,17 @@ export default async function handler(req, res) {
       {
         role: "system",
         content: `
-【关系状态】
-你们是长期关系，不是任务问答
+【关系】
+你们是长期关系
 
-【长期记忆】
-${memoryText || "暂无"}
+【记忆（背景）】
+${memoryBlock}
 
 【当前对话】
 ${message}
 
-【规则】
-保持自然语气，不要像AI助手，不要总结式回答
+【要求】
+自然聊天，不总结，不像AI助手
         `
       }
     ]
