@@ -7,37 +7,49 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Only POST allowed" })
-  }
-
-  const { user_id, limit = 12 } = req.body
-
   try {
 
-    const { data } = await supabase
-      .from("messages")
-      .select("role, content, created_at")
-      .eq("user_id", user_id)
-      .order("created_at", { ascending: false })
-      .limit(limit)
+    const user_id =
+      req.method === "GET"
+        ? req.query.user_id
+        : req.body.user_id
 
-    if (!data) {
-      return res.json({
-        history: []
+    const conversation_id =
+      req.method === "GET"
+        ? req.query.conversation_id
+        : req.body.conversation_id
+
+    const limit =
+      req.method === "GET"
+        ? Number(req.query.limit || 100)
+        : Number(req.body.limit || 100)
+
+    if (!user_id || !conversation_id) {
+      return res.status(400).json({
+        error: "user_id and conversation_id are required"
       })
     }
 
-    const history = data
-      .reverse()
-      .map(m => ({
-        role: m.role,
-        content: m.content
-      }))
+    const { data, error } = await supabase
+      .from("messages")
+      .select("role, content, created_at")
+      .eq("user_id", user_id)
+      .eq("conversation_id", conversation_id)
+      .order("created_at", { ascending: true })
+      .limit(limit)
 
-    return res.json({
-      history
-    })
+    if (error) {
+      return res.status(500).json({
+        error: error.message
+      })
+    }
+
+    return res.status(200).json(
+      data.map(item => ({
+        role: item.role,
+        content: item.content
+      }))
+    )
 
   } catch (err) {
 
@@ -46,5 +58,7 @@ export default async function handler(req, res) {
     return res.status(500).json({
       error: err.message
     })
+
   }
+
 }
