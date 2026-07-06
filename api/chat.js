@@ -183,7 +183,15 @@ ${message}
     const reply = await callLLM(messages)
 
     // 6. save assistant
-    await saveMessage(user_id, "assistant", reply, cid)
+await saveMessage(user_id, "assistant", reply, cid)
+
+await supabase
+  .from("user_state")
+  .upsert({
+    user_id,
+    last_conversation: cid,
+    updated_at: new Date().toISOString()
+  })
 
     // 7. memory write
     console.log("shouldSaveMemory =", shouldSaveMemory(message), message)
