@@ -13,6 +13,11 @@ const systemPrompt = fs.readFileSync(
 )
 
 // --------------------
+// MEMORY CACHE (NEW)
+// --------------------
+const memoryCache = new Map()
+
+// --------------------
 // Save Message
 // --------------------
 async function saveMessage(user_id, role, content, conversation_id) {
@@ -54,27 +59,43 @@ async function getRecentMessages(user_id, limit = 12) {
     .limit(limit)
 
   if (!data) return []
-
   return data.reverse()
 }
 
 // --------------------
-// Get Relevant Memory
+// MEMORY (NEW LOGIC)
 // --------------------
-async function getRelevantMemory(user_id, message) {
+async function getMemorySmart(user_id, message, conversation_id) {
+  const key = `${user_id}:${conversation_id}`
+
+  // 1. cache hit → no API call
+  if (memoryCache.has(key)) {
+    return memoryCache.get(key)
+  }
+
+  // 2. first time → call breath-hook
   try {
-    const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/breath-hook")
+    const res = await fetch(
+      "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
+    )
+
     if (!res.ok) return []
+
     const txt = await res.text()
-    return txt ? [txt] : []
+    const memory = txt ? [txt] : []
+
+    // 3. save cache
+    memoryCache.set(key, memory)
+
+    return memory
   } catch (err) {
-    console.error("ombre memory failed:", err)
+    console.error("memory failed:", err)
     return []
   }
 }
 
 // --------------------
-// Memory Judge (simple rule)
+// Memory Judge
 // --------------------
 function shouldSaveMemory(message) {
   const triggers = [
@@ -106,7 +127,7 @@ async function callLLM(messages) {
   )
 
   const data = await res.json()
-  return data?.choices?.[0]?.message?.content || "..."
+  return data?.choices?.0?.message?.content || "..."
 }
 
 // --------------------
@@ -125,11 +146,11 @@ export default async function handler(req, res) {
     // 1. save user msg
     await saveMessage(user_id, "user", message, cid)
 
-    // 2. recent history
+    // 2. history
     const history = await getRecentMessages(user_id)
 
-    // 3. memory
-    const memory = await getRelevantMemory(user_id, message)
+    // 3. memory (NEW SMART)
+    const memory = await getMemorySmart(user_id, message, cid)
 
     // 4. build context
     const messages = [
@@ -161,37 +182,26 @@ ${message}
     // 5. reply
     const reply = await callLLM(messages)
 
-    // 6. save assistant msg
+    // 6. save assistant
     await saveMessage(user_id, "assistant", reply, cid)
 
-    // 7. memory write (selective)
+    // 7. memory write
     console.log("shouldSaveMemory =", shouldSaveMemory(message), message)
 
     if (shouldSaveMemory(message)) {
       try {
-
-        console.log(">>> POST /hold-hook")
-
-        const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            content: message
-          })
-        })
-
-        console.log("hold status =", res.status)
-
-        const data = await res.json()
-
-        console.log("hold result =", data)
-
+        await fetch(
+          "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: message
+            })
+          }
+        )
       } catch (err) {
-
         console.error("hold-hook failed:", err)
-
       }
     }
 
@@ -199,11 +209,8 @@ ${message}
       reply,
       conversation_id: cid
     })
-
   } catch (e) {
     console.error(e)
-    return res.status(500).json({
-      error: e.message
-    })
+    return res.status(500).json({ error: e.message })
   }
 }
