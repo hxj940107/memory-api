@@ -62,59 +62,15 @@ async function getRecentMessages(user_id, limit = 12) {
 // Get Relevant Memory
 // --------------------
 async function getRelevantMemory(user_id, message) {
-
-  const { data } = await supabase
-    .from("memories")
-    .select("content, metadata, created_at")
-    .eq("user_id", user_id)
-
-  if (!data || data.length === 0) {
+  try {
+    const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/breath-hook")
+    if (!res.ok) return []
+    const txt = await res.text()
+    return txt ? [txt] : []
+  } catch (err) {
+    console.error("ombre memory failed:", err)
     return []
   }
-
-  const keywords = message
-    .toLowerCase()
-    .replace(/[^\u4e00-\u9fa5a-z0-9 ]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-
-  const scored = data.map(memory => {
-
-    let score = 0
-
-    const text = (memory.content || "").toLowerCase()
-
-    keywords.forEach(k => {
-      if (text.includes(k)) score += 3
-    })
-
-    if (memory.metadata?.importance === "high") {
-      score += 5
-    }
-
-    if (memory.metadata?.source === "ai") {
-      score += 2
-    }
-
-    if (memory.created_at) {
-      const days =
-        (Date.now() - new Date(memory.created_at).getTime()) /
-        1000 / 60 / 60 / 24
-
-      score += Math.max(0, 2 - days / 30)
-    }
-
-    return {
-      ...memory,
-      score
-    }
-
-  })
-
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map(m => m.content)
 }
 
 // --------------------
@@ -211,7 +167,7 @@ ${message}
     // 7. memory write (selective)
     if (shouldSaveMemory(message)) {
       try {
-  const res = await fetch("/api/add-memory", {
+  const res = await fetch(`${process.env.BASE_URL}/api/add-memory`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
