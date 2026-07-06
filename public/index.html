@@ -51,7 +51,8 @@ const API_CONVERSATIONS="/api/conversations";
 
 const USER_ID="small_c";
 
-let CONVERSATION_ID=null;
+let CONVERSATION_ID =
+localStorage.getItem("last_conversation");
 
 const chat=document.getElementById("chat");
 const list=document.getElementById("conversation-list");
@@ -78,6 +79,11 @@ function addMessage(role,text){
 function startNewChat(){
 
     CONVERSATION_ID="chat_"+Date.now();
+
+    localStorage.setItem(
+        "last_conversation",
+        CONVERSATION_ID
+    );
 
     chat.innerHTML="";
 
@@ -127,13 +133,18 @@ async function loadConversations(){
 
         div.textContent=item.title;
 
-        div.onclick=()=>{
+      div.onclick=()=>{
 
-            CONVERSATION_ID=item.id;
+    CONVERSATION_ID=item.id;
 
-            loadHistory();
+    localStorage.setItem(
+        "last_conversation",
+        CONVERSATION_ID
+    );
 
-        };
+    loadHistory();
+
+};
 
         list.appendChild(div);
 
@@ -183,13 +194,18 @@ async function sendMessage(){
 
     loading.textContent=data.reply||"无回复";
 
-    loadConversations();
+    await loadConversations();
 
 }
 
-loadConversations();
+loadConversations().then(()=>{
+
+    if(CONVERSATION_ID){
+
+        loadHistory();
+
+    }
+
+});
 
 </script>
-
-</body>
-</html>
