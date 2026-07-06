@@ -165,24 +165,34 @@ ${message}
     await saveMessage(user_id, "assistant", reply, cid)
 
     // 7. memory write (selective)
+    console.log("shouldSaveMemory =", shouldSaveMemory(message), message)
+
     if (shouldSaveMemory(message)) {
       try {
-  const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id,
-      content: message
-    })
-  })
 
-  const data = await res.json()
+        console.log(">>> POST /hold-hook")
 
-  console.log("memory result:", data)
+        const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            content: message
+          })
+        })
 
-} catch (err) {
-  console.error("memory failed:", err)
-}
+        console.log("hold status =", res.status)
+
+        const data = await res.json()
+
+        console.log("hold result =", data)
+
+      } catch (err) {
+
+        console.error("hold-hook failed:", err)
+
+      }
     }
 
     return res.status(200).json({
@@ -192,6 +202,8 @@ ${message}
 
   } catch (e) {
     console.error(e)
-    return res.status(500).json({ error: e.message })
+    return res.status(500).json({
+      error: e.message
+    })
   }
 }
