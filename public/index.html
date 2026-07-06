@@ -49,6 +49,8 @@ const API_CHAT="/api/chat";
 const API_HISTORY="/api/history";
 const API_CONVERSATIONS="/api/conversations";
 
+const API_USER_STATE="/api/user-state";
+
 const USER_ID="small_c";
 
 let CONVERSATION_ID =
@@ -202,15 +204,42 @@ async function sendMessage(){
 
 }
 
-loadConversations().then(()=>{
+(async ()=>{
+
+    try{
+
+        const res=await fetch(
+            API_USER_STATE+"?user_id="+USER_ID
+        );
+
+        if(res.ok){
+
+            const state=await res.json();
+
+            if(state.last_conversation){
+
+                CONVERSATION_ID=state.last_conversation;
+
+                localStorage.setItem(
+                    "last_conversation",
+                    CONVERSATION_ID
+                );
+
+            }
+
+        }
+
+    }catch(e){}
+
+    await loadConversations();
 
     if(CONVERSATION_ID){
 
-        loadHistory();
+        await loadHistory();
 
     }
 
-});
+})();
 
 </script>
 
