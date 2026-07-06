@@ -12,8 +12,8 @@ export default async function handler(req, res) {
     const user_id = req.query.user_id || "small_c"
 
     const { data, error } = await supabase
-      .from("messages")
-      .select("conversation_id, created_at, title")
+      .from("conversations")
+      .select("conversation_id, title, created_at")
       .eq("user_id", user_id)
       .order("created_at", { ascending: false })
 
@@ -23,26 +23,12 @@ export default async function handler(req, res) {
       })
     }
 
-    const map = {}
-
-    data.forEach(item => {
-
-      if (!map[item.conversation_id]) {
-
-        map[item.conversation_id] = {
-          id: item.conversation_id,
-          title: item.title || item.conversation_id,
-          created_at: item.created_at,
-          latest: false
-        }
-
-      }
-
-    })
-
-    const conversations = Object
-      .values(map)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    const conversations = (data || []).map(item => ({
+      id: item.conversation_id,
+      title: item.title || item.conversation_id,
+      created_at: item.created_at,
+      latest: false
+    }))
 
     if (conversations.length > 0) {
       conversations[0].latest = true
