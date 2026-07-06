@@ -41,25 +41,34 @@ export default async function handler(req, res) {
       })
     }
 
-    // 创建 conversation（如果不存在）
-    const title =
-      (content || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 20) || "新对话"
-
-    await supabase
+    // 创建 conversation（仅第一次创建）
+    const { data: exists } = await supabase
       .from("conversations")
-      .upsert(
-        {
+      .select("conversation_id")
+      .eq("conversation_id", conversation_id)
+      .maybeSingle()
+
+    if (!exists) {
+
+      const title =
+        (content || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 20) || "新对话"
+
+      const { error: conversationError } = await supabase
+        .from("conversations")
+        .insert({
           conversation_id,
           user_id,
           title
-        },
-        {
-          onConflict: "conversation_id"
-        }
-      )
+        })
+
+      if (conversationError) {
+        console.error(conversationError)
+      }
+
+    }
 
     return res.status(200).json({
       success: true,
