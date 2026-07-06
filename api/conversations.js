@@ -13,7 +13,7 @@ export default async function handler(req, res) {
 
     const { data, error } = await supabase
       .from("messages")
-      .select("conversation_id, created_at")
+      .select("conversation_id, created_at, title")
       .eq("user_id", user_id)
       .order("created_at", { ascending: false })
 
