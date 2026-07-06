@@ -160,10 +160,14 @@ async function sendMessage(){
 
     if(!CONVERSATION_ID){
 
-        CONVERSATION_ID="chat_"+Date.now();
+    CONVERSATION_ID="chat_"+Date.now();
 
-    }
+    localStorage.setItem(
+        "last_conversation",
+        CONVERSATION_ID
+    );
 
+}
     addMessage("user",text);
 
     input.value="";
@@ -209,3 +213,6 @@ loadConversations().then(()=>{
 });
 
 </script>
+
+</body>
+</html>
