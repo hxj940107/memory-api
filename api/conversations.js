@@ -31,7 +31,7 @@ export default async function handler(req, res) {
 
         map[item.conversation_id] = {
           id: item.conversation_id,
-          title: item.conversation_id,
+          title: item.title || item.conversation_id,
           created_at: item.created_at,
           latest: false
         }
