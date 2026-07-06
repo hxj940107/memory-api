@@ -22,6 +22,7 @@ export default async function handler(req, res) {
       conversation_id = "default"
     } = req.body
 
+    // 保存消息
     const { data, error } = await supabase
       .from("messages")
       .insert([
@@ -39,6 +40,26 @@ export default async function handler(req, res) {
         error: error.message
       })
     }
+
+    // 创建 conversation（如果不存在）
+    const title =
+      (content || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 20) || "新对话"
+
+    await supabase
+      .from("conversations")
+      .upsert(
+        {
+          conversation_id,
+          user_id,
+          title
+        },
+        {
+          onConflict: "conversation_id"
+        }
+      )
 
     return res.status(200).json({
       success: true,
