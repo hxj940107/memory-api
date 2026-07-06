@@ -32,16 +32,23 @@ export default async function handler(req, res) {
         map[item.conversation_id] = {
           id: item.conversation_id,
           title: item.conversation_id,
-          created_at: item.created_at
+          created_at: item.created_at,
+          latest: false
         }
 
       }
 
     })
 
-    return res.status(200).json(
-      Object.values(map)
-    )
+    const conversations = Object
+      .values(map)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+
+    if (conversations.length > 0) {
+      conversations[0].latest = true
+    }
+
+    return res.status(200).json(conversations)
 
   } catch (err) {
 
