@@ -32,7 +32,7 @@ async function saveMessage(user_id, role, content, conversation_id) {
 // Save Memory (raw candidate)
 // --------------------
 async function saveMemory(user_id, content) {
-  await fetch(`${process.env.BASE_URL}/api/add-memory`, {
+  await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -167,7 +167,7 @@ ${message}
     // 7. memory write (selective)
     if (shouldSaveMemory(message)) {
       try {
-  const res = await fetch(`${process.env.BASE_URL}/api/add-memory`, {
+  const res = await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
