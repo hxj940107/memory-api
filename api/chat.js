@@ -129,9 +129,11 @@ async function callLLM(messages) {
   const data = await res.json()
 
   return {
-    reply: "[TOKEN-TEST-1]\n" + (data?.choices?.[0]?.message?.content || "..."),
-    usage: data?.usage || {},
-    raw: data
+    reply:
+    `[MEMORY:${JSON.stringify(messages).length}]\n` +
+    (data?.choices?.[0]?.message?.content || "..."),
+  usage: data?.usage || {},
+  raw: data
   }
 }
 // --------------------
