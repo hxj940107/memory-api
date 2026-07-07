@@ -83,9 +83,8 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
     const txt = await res.text()
 
-    // 临时测试：只保留前 1000 个字符
     const memory = txt
-      ? [txt.slice(0, 1000)]
+      ? [txt]
       : []
 
     // 3. save cache
