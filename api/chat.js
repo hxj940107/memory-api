@@ -130,7 +130,12 @@ async function callLLM(messages) {
 
   return {
     reply:
-    `[MEMORY:${JSON.stringify(messages).length}]\n` +
+  `[SYSTEM:${systemPrompt.length}]
+[MEMORY:${JSON.stringify(memory).length}]
+[HISTORY:${JSON.stringify(history).length}]
+[TOTAL:${JSON.stringify(messages).length}]
+
+` +
     (data?.choices?.[0]?.message?.content || "..."),
   usage: data?.usage || {},
   raw: data
