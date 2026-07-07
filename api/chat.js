@@ -157,6 +157,9 @@ export default async function handler(req, res) {
     // 3. memory (NEW SMART)
     const memory = await getMemorySmart(user_id, message, cid)
 
+console.log("Memory Count:", memory.length)
+console.log(memory)
+
     // 4. build context
     const messages = [
   {
