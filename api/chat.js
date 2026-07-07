@@ -156,15 +156,18 @@ export default async function handler(req, res) {
     // 3. memory (NEW SMART)
 const memory = await getMemorySmart(user_id, message, cid)
 
-    // 4. build context
-    const messages = [
+// 4. build context
+
+console.log("MEMORY LENGTH:", JSON.stringify(memory).length)
+console.log("HISTORY LENGTH:", JSON.stringify(history).length)
+console.log("SYSTEM LENGTH:", systemPrompt.length)
+
+const messages = [
   {
     role: "system",
     content: systemPrompt
   },
-
   ...history,
-
   {
     role: "system",
     content: `长期记忆（仅在自然相关时使用）：
@@ -172,7 +175,6 @@ const memory = await getMemorySmart(user_id, message, cid)
 ${memory.join("\n")}
 `
   },
-
   {
     role: "user",
     content: message
