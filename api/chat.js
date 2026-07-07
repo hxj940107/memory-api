@@ -185,7 +185,13 @@ ${message}
     ]
 
     // 5. reply
-    const reply = await callLLM(messages)
+const llm = await callLLM(messages)
+
+const reply = llm.reply
+
+console.log("\n========== Prompt Inspector ==========")
+console.log(llm.usage)
+console.log("======================================\n")
 
     // 6. save assistant
     await saveMessage(user_id, "assistant", reply, cid)
