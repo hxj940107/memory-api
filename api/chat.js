@@ -129,16 +129,9 @@ async function callLLM(messages) {
   const data = await res.json()
 
   return {
-    reply:
-  `[SYSTEM:${systemPrompt.length}]
-[MEMORY:${JSON.stringify(memory).length}]
-[HISTORY:${JSON.stringify(history).length}]
-[TOTAL:${JSON.stringify(messages).length}]
-
-` +
-    (data?.choices?.[0]?.message?.content || "..."),
-  usage: data?.usage || {},
-  raw: data
+    reply: data?.choices?.[0]?.message?.content || "...",
+    usage: data?.usage || {},
+    raw: data
   }
 }
 // --------------------
