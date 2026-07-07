@@ -111,8 +111,6 @@ function shouldSaveMemory(message) {
 // Call LLM
 // --------------------
 async function callLLM(messages) {
-  console.log("CHAT VERSION: TOKEN-TEST-1")
-
   const res = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -130,13 +128,12 @@ async function callLLM(messages) {
 
   const data = await res.json()
 
-return {
-  reply: data?.choices?.[0]?.message?.content || "...",
-  usage: data?.usage || {},
-  raw: data
+  return {
+    reply: "[TOKEN-TEST-1]\n" + (data?.choices?.[0]?.message?.content || "..."),
+    usage: data?.usage || {},
+    raw: data
+  }
 }
-}
-
 // --------------------
 // Main Handler
 // --------------------
