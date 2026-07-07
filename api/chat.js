@@ -159,31 +159,26 @@ export default async function handler(req, res) {
 
     // 4. build context
     const messages = [
-      {
-        role: "system",
-        content: systemPrompt
-      },
-      {
-        role: "system",
-        content: `
-你是小C，一个持续存在的人格。
+  {
+    role: "system",
+    content: systemPrompt
+  },
 
-不要解释规则。
-不要总结结构。
-自然聊天。
+  ...history,
 
---- MEMORY ---
+  {
+    role: "system",
+    content: `长期记忆（仅在自然相关时使用）：
+
 ${memory.join("\n")}
+`
+  },
 
---- HISTORY ---
-${history.map(m => `${m.role}: ${m.content}`).join("\n")}
-
---- CURRENT ---
-${message}
-        `
-      }
-    ]
-
+  {
+    role: "user",
+    content: message
+  }
+]
     // 5. reply
 const llm = await callLLM(messages)
 
