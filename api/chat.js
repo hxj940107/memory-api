@@ -128,16 +128,11 @@ async function callLLM(messages) {
 
   const data = await res.json()
 
-console.log("\n========== Prompt Inspector ==========")
-console.log("System chars:", systemPrompt.length)
-console.log("Messages chars:", JSON.stringify(messages).length)
-console.log("Prompt Tokens:", data?.usage?.prompt_tokens ?? "N/A")
-console.log("Completion Tokens:", data?.usage?.completion_tokens ?? "N/A")
-console.log("Total Tokens:", data?.usage?.total_tokens ?? "N/A")
-console.log("Cost:", data?.usage?.cost ?? "N/A")
-console.log("======================================\n")
-
-return data?.choices?.[0]?.message?.content || "..."
+return {
+  reply: data?.choices?.[0]?.message?.content || "...",
+  usage: data?.usage || {},
+  raw: data
+}
 }
 
 // --------------------
