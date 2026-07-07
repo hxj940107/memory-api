@@ -155,7 +155,9 @@ export default async function handler(req, res) {
     const history = await getRecentMessages(user_id)
 
     // 3. memory (NEW SMART)
-    const memory = await getMemorySmart(user_id, message, cid)
+    const memory = [
+  "测试 Memory"
+]
 
 console.log("Memory Count:", memory.length)
 console.log(memory)
