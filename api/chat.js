@@ -157,7 +157,7 @@ export default async function handler(req, res) {
     const history = await getRecentMessages(user_id)
 
     // 3. memory (NEW SMART)
-const memory = await getMemorySmart(user_id, message, cid)
+    const memory = await getMemorySmart(user_id, message, cid)
 
 // 4. build context
 
@@ -219,8 +219,8 @@ if (shouldSaveMemory(message)) {
   try {
     const lastUser = [...history]
       .reverse()
-      .find(m => m.role === "user")
-
+      .filter(m => m.role === "user")
+      .slice(1)[0]
     if (lastUser) {
       await fetch(
         "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
