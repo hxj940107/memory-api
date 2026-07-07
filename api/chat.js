@@ -182,9 +182,20 @@ ${memory.join("\n")}
     content: message
   }
 ]
-    // 5. reply
-const llm = await callLLM(messages)
 
+// ===== Prompt Inspector =====
+console.log("\n===== FINAL MESSAGES =====")
+
+messages.forEach((m, i) => {
+  console.log(
+    `${i}. ${m.role} | ${m.content.length} chars`
+  )
+})
+
+console.log("==========================\n")
+
+// 5. reply
+const llm = await callLLM(messages)
 const reply = llm.reply
 
 console.log("\n========== Prompt Inspector ==========")
