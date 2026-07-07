@@ -82,7 +82,11 @@ async function getMemorySmart(user_id, message, conversation_id) {
     if (!res.ok) return []
 
     const txt = await res.text()
-    const memory = txt ? [txt] : []
+
+    // 临时测试：只保留前 1000 个字符
+    const memory = txt
+      ? [txt.slice(0, 1000)]
+      : []
 
     // 3. save cache
     memoryCache.set(key, memory)
@@ -93,7 +97,6 @@ async function getMemorySmart(user_id, message, conversation_id) {
     return []
   }
 }
-
 // --------------------
 // Memory Judge
 // --------------------
