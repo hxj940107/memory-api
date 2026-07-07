@@ -101,9 +101,10 @@ async function getMemorySmart(user_id, message, conversation_id) {
 // --------------------
 function shouldSaveMemory(message) {
   const triggers = [
-    "喜欢", "讨厌", "害怕", "难受",
-    "重要", "记得", "不喜欢", "想要",
-    "关系", "我们", "你"
+    "这个记一下",
+    "刚刚这个记一下",
+    "上一条记一下",
+    "记住刚刚那个"
   ]
 
   return triggers.some(t => message.includes(t))
@@ -213,27 +214,33 @@ console.log("======================================\n")
         last_conversation: cid,
         updated_at: new Date().toISOString()
       })
-
     // 7. memory write
-    console.log("shouldSaveMemory =", shouldSaveMemory(message), message)
+if (shouldSaveMemory(message)) {
+  try {
+    const lastUser = [...history]
+      .reverse()
+      .find(m => m.role === "user")
 
-    if (shouldSaveMemory(message)) {
-      try {
-        await fetch(
-          "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: message
-            })
-          }
-        )
-      } catch (err) {
-        console.error("hold-hook failed:", err)
-      }
+    if (lastUser) {
+      await fetch(
+        "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            content: lastUser.content
+          })
+        }
+      )
+
+      console.log("Saved memory:", lastUser.content)
     }
-
+  } catch (err) {
+    console.error("hold-hook failed:", err)
+  }
+}
     return res.status(200).json({
       reply,
       conversation_id: cid
