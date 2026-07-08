@@ -21,8 +21,8 @@ export default async function handler(req, res) {
 
     const limit =
       req.method === "GET"
-        ? Number(req.query.limit || 100)
-        : Number(req.body.limit || 100)
+        ? Number(req.query.limit || 1000)
+        : Number(req.body.limit || 1000)
 
     if (!user_id || !conversation_id) {
       return res.status(400).json({
