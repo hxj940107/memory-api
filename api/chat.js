@@ -50,11 +50,12 @@ async function saveMemory(user_id, content) {
 // --------------------
 // Get Recent History
 // --------------------
-async function getRecentMessages(user_id, limit = 6) {
+async function getRecentMessages(user_id, conversation_id, limit = 6) {
   const { data } = await supabase
     .from("messages")
     .select("role, content")
     .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
     .order("created_at", { ascending: false })
     .limit(limit)
 
@@ -154,7 +155,7 @@ export default async function handler(req, res) {
     await saveMessage(user_id, "user", message, cid)
 
     // 2. history
-    const history = await getRecentMessages(user_id)
+    const history = await getRecentMessages(user_id, cid)
 
     // 3. memory (NEW SMART)
     const memory = await getMemorySmart(user_id, message, cid)
