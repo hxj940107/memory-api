@@ -163,6 +163,7 @@ export default async function handler(req, res) {
     if (history.length <= 1) {
       memory = await getMemorySmart(user_id, message, cid)
     }
+    console.log("MEMORY LOAD CHECK:", history.length)
 
 // 4. build context
 
