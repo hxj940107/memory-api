@@ -68,7 +68,7 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
 // --------------------
 async function getMemorySmart(user_id, message, conversation_id) {
 
-  const key = `${user_id}:${conversation_id}`
+  const key = `${user_id}`
 
 
   let pinMemory = []
