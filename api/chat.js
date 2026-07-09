@@ -50,7 +50,7 @@ async function saveMemory(user_id, content) {
 // --------------------
 // Get Recent History
 // --------------------
-async function getRecentMessages(user_id, conversation_id, limit = 6) {
+async function getRecentMessages(user_id, conversation_id, limit = 20) {
   const { data } = await supabase
     .from("messages")
     .select("role, content")
