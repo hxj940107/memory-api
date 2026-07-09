@@ -71,71 +71,115 @@ async function getMemorySmart(user_id, message, conversation_id) {
   const key = `${user_id}:${conversation_id}`
 
 
-  // 1. cache hit → no API call
+  let pinMemory = []
+
+
+  // ==========================
+  // 1. PIN memory cache
+  // ==========================
   if (memoryCache.has(key)) {
-    return memoryCache.get(key)
+
+    pinMemory = memoryCache.get(key)
+
+  } else {
+
+    try {
+
+      const pinRes = await fetch(
+        "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
+      )
+
+
+      if (pinRes.ok) {
+
+        const pinTxt = await pinRes.text()
+
+        if (pinTxt) {
+          pinMemory = [pinTxt]
+        }
+
+      }
+
+
+      // only cache PIN
+      memoryCache.set(
+        key,
+        pinMemory
+      )
+
+
+    } catch (err) {
+
+      console.error(
+        "pin memory failed:",
+        err
+      )
+
+    }
+
   }
+
+
+
+  // ==========================
+  // 2. dynamic memory
+  // always search
+  // ==========================
+
+  let dynamicMemory = []
 
 
   try {
 
-    // 2. load pin memory
-    const pinRes = await fetch(
-      "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
-    )
-
-
-    const pinTxt = pinRes.ok
-      ? await pinRes.text()
-      : ""
-
-
-    // 3. load dynamic memory
     const searchRes = await fetch(
       "https://ombre-brain-production-ab16.up.railway.app/memory-search?query="
       + encodeURIComponent(message)
     )
 
 
-    const searchTxt = searchRes.ok
-      ? await searchRes.text()
-      : ""
+    if (searchRes.ok) {
 
+      const searchTxt = await searchRes.text()
 
-    console.log("PIN MEMORY:", pinTxt)
+      if (searchTxt) {
+        dynamicMemory = [searchTxt]
+      }
 
-    console.log("DYNAMIC MEMORY:", searchTxt)
-
-
-
-    const memory = []
-
-
-    if (pinTxt) {
-      memory.push(pinTxt)
     }
-
-
-    if (searchTxt) {
-      memory.push(searchTxt)
-    }
-
-
-
-    // 4. save cache
-    memoryCache.set(key, memory)
-
-
-    return memory
 
 
   } catch (err) {
 
-    console.error("memory failed:", err)
-
-    return []
+    console.error(
+      "dynamic memory failed:",
+      err
+    )
 
   }
+
+
+
+  console.log(
+    "PIN MEMORY:",
+    pinMemory
+  )
+
+
+  console.log(
+    "DYNAMIC MEMORY:",
+    dynamicMemory
+  )
+
+
+
+  // ==========================
+  // 3. merge
+  // ==========================
+
+  return [
+    ...pinMemory,
+    ...dynamicMemory
+  ]
 
 }
 // --------------------
