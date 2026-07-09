@@ -67,6 +67,7 @@ async function getRecentMessages(user_id, conversation_id, limit = 6) {
 // MEMORY (NEW LOGIC)
 // --------------------
 async function getMemorySmart(user_id, message, conversation_id) {
+
   const key = `${user_id}:${conversation_id}`
 
   // 1. cache hit → no API call
@@ -74,28 +75,42 @@ async function getMemorySmart(user_id, message, conversation_id) {
     return memoryCache.get(key)
   }
 
-  // 2. first time → call breath-hook
+
+  // 2. first time → search related memory
   try {
+
     const res = await fetch(
-      "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
+      "https://ombre-brain-production-ab16.up.railway.app/memory-search?query="
+      + encodeURIComponent(message)
     )
+
 
     if (!res.ok) return []
 
+
     const txt = await res.text()
+
 
     const memory = txt
       ? [txt]
       : []
 
+
     // 3. save cache
     memoryCache.set(key, memory)
 
+
     return memory
+
+
   } catch (err) {
+
     console.error("memory failed:", err)
+
     return []
+
   }
+
 }
 // --------------------
 // Memory Judge
