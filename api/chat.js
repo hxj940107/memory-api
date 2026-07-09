@@ -179,10 +179,6 @@ const messages = [
 ${memory.join("\n")}
 `
   },
-  {
-    role: "user",
-    content: message
-  }
 ]
 
 // ===== Prompt Inspector =====
