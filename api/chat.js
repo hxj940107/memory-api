@@ -70,34 +70,59 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
   const key = `${user_id}:${conversation_id}`
 
+
   // 1. cache hit → no API call
   if (memoryCache.has(key)) {
     return memoryCache.get(key)
   }
 
 
-  // 2. first time → search related memory
   try {
 
-    const res = await fetch(
+    // 2. load pin memory
+    const pinRes = await fetch(
+      "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
+    )
+
+
+    const pinTxt = pinRes.ok
+      ? await pinRes.text()
+      : ""
+
+
+    // 3. load dynamic memory
+    const searchRes = await fetch(
       "https://ombre-brain-production-ab16.up.railway.app/memory-search?query="
       + encodeURIComponent(message)
     )
 
 
-    if (!res.ok) return []
+    const searchTxt = searchRes.ok
+      ? await searchRes.text()
+      : ""
 
 
-    const txt = await res.text()
-    
-    console.log("MEMORY RESULT:", txt)
+    console.log("PIN MEMORY:", pinTxt)
 
-    const memory = txt
-      ? [txt]
-      : []
+    console.log("DYNAMIC MEMORY:", searchTxt)
 
 
-    // 3. save cache
+
+    const memory = []
+
+
+    if (pinTxt) {
+      memory.push(pinTxt)
+    }
+
+
+    if (searchTxt) {
+      memory.push(searchTxt)
+    }
+
+
+
+    // 4. save cache
     memoryCache.set(key, memory)
 
 
