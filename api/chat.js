@@ -190,16 +190,15 @@ console.log("SYSTEM LENGTH:", systemPrompt.length)
 const messages = [
   {
     role: "system",
-    content: systemPrompt
-  },
-  ...history,
-  {
-    role: "system",
-    content: `长期记忆（仅在自然相关时使用）：
+    content: 
+`${systemPrompt}
+
+长期记忆（仅在自然相关时使用）：
 
 ${memory.join("\n")}
 `
   },
+  ...history
 ]
 
 // ===== Prompt Inspector =====
