@@ -130,6 +130,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
 
   try {
+    console.log("DYNAMIC QUERY:", message)
 
     const searchRes = await fetch(
       "https://ombre-brain-production-ab16.up.railway.app/memory-search?query="
