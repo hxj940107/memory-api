@@ -89,7 +89,8 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
 
     const txt = await res.text()
-
+    
+    console.log("MEMORY RESULT:", txt)
 
     const memory = txt
       ? [txt]
