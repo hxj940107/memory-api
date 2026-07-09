@@ -80,7 +80,6 @@ async function getMemorySmart(user_id, message, conversation_id) {
   if (memoryCache.has(key)) {
 
     pinMemory = memoryCache.get(key)
-    console.log("PIN CACHE HIT:", pinMemory)
 
   } else {
 
