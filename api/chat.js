@@ -242,21 +242,39 @@ console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 
+// ==========================
+// Future Summary Layer
+// ==========================
+
+const summaryMemory = "";
+
 const messages = [
   {
     role: "system",
-    content: `${systemPrompt}
+    content: `${systemPrompt}`
+  },
 
-核心长期记忆（用户设定的重要关系、规则、人格）：
+  {
+    role: "system",
+    content: `【Identity｜人格层】
 
 ${pinMemory.join("\n")}`
   },
+
   {
     role: "system",
-    content: `相关记忆（根据当前对话动态召回）：
+    content: `【Summary｜长期摘要】
+
+${summaryMemory}`
+  },
+
+  {
+    role: "system",
+    content: `【Memory｜相关长期记忆】
 
 ${dynamicMemory.join("\n")}`
   },
+
   ...history
 ]
 
