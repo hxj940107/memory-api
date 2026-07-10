@@ -23,10 +23,34 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===== 暂时写一个测试摘要 =====
+    // ==========================
+    // 读取最近20条聊天
+    // ==========================
 
-    const summary =
-      "【测试 Summary】这里以后会由 AI 自动生成。";
+    const {
+      data: messages,
+      error: messageError
+    } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("conversation_id", conversation_id)
+      .order("created_at", { ascending: true })
+      .limit(20);
+
+    if (messageError) {
+      return res.status(500).json({
+        error: messageError.message
+      });
+    }
+
+    // ==========================
+    // 暂时直接保存聊天内容
+    // 下一步再交给 Claude 总结
+    // ==========================
+
+    const summary = (messages || [])
+      .map(m => `${m.role}: ${m.content}`)
+      .join("\n");
 
     const { error } = await supabase
       .from("conversation_summary")
