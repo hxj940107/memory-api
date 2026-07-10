@@ -68,121 +68,98 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
 // --------------------
 async function getMemorySmart(user_id, message, conversation_id) {
 
-  const key = `${user_id}`
+  const key = `${user_id}`;
 
-
-  let pinMemory = []
-
+  let pinMemory = [];
+  let dynamicMemory = [];
 
   // ==========================
   // 1. PIN memory cache
   // ==========================
   if (memoryCache.has(key)) {
-    console.log("PIN CACHE HIT")
 
-    pinMemory = memoryCache.get(key)
-    console.log("PIN CACHE MISS")
+    console.log("PIN CACHE HIT");
+
+    pinMemory = memoryCache.get(key);
 
   } else {
+
+    console.log("PIN CACHE MISS");
 
     try {
 
       const pinRes = await fetch(
         "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
-      )
-
+      );
 
       if (pinRes.ok) {
 
-        const pinTxt = await pinRes.text()
+        const pinTxt = await pinRes.text();
 
         if (pinTxt) {
-          pinMemory = [pinTxt]
+          pinMemory = [pinTxt];
         }
 
       }
 
-
       // only cache PIN
-      memoryCache.set(
-        key,
-        pinMemory
-      )
-
+      memoryCache.set(key, pinMemory);
 
     } catch (err) {
 
       console.error(
         "pin memory failed:",
         err
-      )
+      );
 
     }
 
   }
-
-
 
   // ==========================
   // 2. dynamic memory
   // always search
   // ==========================
 
-  let dynamicMemory = []
-
-
   try {
-    console.log("DYNAMIC QUERY:", message)
+
+    console.log("DYNAMIC QUERY:", message);
 
     const searchRes = await fetch(
-      "https://ombre-brain-production-ab16.up.railway.app/memory-search?query="
-      + encodeURIComponent(message)
-    )
-
+      "https://ombre-brain-production-ab16.up.railway.app/memory-search?query=" +
+      encodeURIComponent(message)
+    );
 
     if (searchRes.ok) {
 
-      const searchTxt = await searchRes.text()
+      const searchTxt = await searchRes.text();
 
       if (searchTxt) {
-        dynamicMemory = [searchTxt]
+        dynamicMemory = [searchTxt];
       }
 
     }
-
 
   } catch (err) {
 
     console.error(
       "dynamic memory failed:",
       err
-    )
+    );
 
   }
 
+  console.log("PIN MEMORY:", pinMemory);
+  console.log("DYNAMIC MEMORY:", dynamicMemory);
 
+  // ==========================
+  // 3. return separately
+  // ==========================
 
-  console.log(
-    "PIN MEMORY:",
-    pinMemory
-  )
-
-
-  console.log(
-    "DYNAMIC MEMORY:",
+  return {
+    pinMemory,
     dynamicMemory
-  )
-
-
-
-  // ==========================
-  // 3. merge
-  // ==========================
-
-  return [
-    ...pinMemory,
-    ...dynamicMemory
-  ]
+  };
 
 }
 // --------------------
@@ -245,49 +222,40 @@ export default async function handler(req, res) {
     // 2. history
     const history = await getRecentMessages(user_id, cid)
 
-    // 3. memory (NEW SMART)
-    let memory = []
+// 3. memory (NEW SMART)
 
-    memory = await getMemorySmart(
-      user_id,
-      message,
-      cid
-    )
-    console.log("MEMORY LOAD CHECK:", history.length)
+const {
+  pinMemory,
+  dynamicMemory
+} = await getMemorySmart(
+  user_id,
+  message,
+  cid
+)
+
+console.log("MEMORY LOAD CHECK:", history.length)
 
 // 4. build context
 
-console.log("MEMORY LENGTH:", JSON.stringify(memory).length)
+console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
+console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
-
-const pinMemory = memory.filter(
-  item => item.includes("📌")
-)
-
-const dynamicMemory = memory.filter(
-  item => !item.includes("📌")
-)
 
 const messages = [
   {
     role: "system",
-    content:
-`${systemPrompt}
+    content: `${systemPrompt}
 
 核心长期记忆（用户设定的重要关系、规则、人格）：
 
-${pinMemory.join("\n")}
-
-`
+${pinMemory.join("\n")}`
   },
   {
     role: "system",
-    content:
-`相关记忆（根据当前对话动态召回）：
+    content: `相关记忆（根据当前对话动态召回）：
 
-${dynamicMemory.join("\n")}
-`
+${dynamicMemory.join("\n")}`
   },
   ...history
 ]
