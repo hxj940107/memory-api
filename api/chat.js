@@ -50,7 +50,7 @@ async function saveMemory(user_id, content) {
 // --------------------
 // Get Recent History
 // --------------------
-async function getRecentMessages(user_id, conversation_id, limit = 10) {
+async function getRecentMessages(user_id, conversation_id, limit = 20) {
   const { data } = await supabase
     .from("messages")
     .select("role, content")
@@ -261,15 +261,32 @@ console.log("MEMORY LENGTH:", JSON.stringify(memory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 
+const pinMemory = memory.filter(
+  item => item.includes("📌")
+)
+
+const dynamicMemory = memory.filter(
+  item => !item.includes("📌")
+)
+
 const messages = [
   {
     role: "system",
-    content: 
+    content:
 `${systemPrompt}
 
-长期记忆（仅在自然相关时使用）：
+核心长期记忆（用户设定的重要关系、规则、人格）：
 
-${memory.join("\n")}
+${pinMemory.join("\n")}
+
+`
+  },
+  {
+    role: "system",
+    content:
+`相关记忆（根据当前对话动态召回）：
+
+${dynamicMemory.join("\n")}
 `
   },
   ...history
