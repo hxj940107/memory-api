@@ -182,7 +182,7 @@ export default async function handler(req, res) {
     const latestTime =
       messages[messages.length - 1].created_at;
 
-    const { error } = await supabase
+    const result = await supabase
       .from("conversation_summary")
       .upsert(
         {
@@ -195,7 +195,9 @@ export default async function handler(req, res) {
           onConflict: "conversation_id"
         }
       );
-
+    console.log("UPSERT RESULT:");
+    console.log(result);
+    
     if (error) {
       return res.status(500).json({
         error: error.message
