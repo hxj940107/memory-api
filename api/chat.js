@@ -230,6 +230,32 @@ if (history.length > 40) {
 
   console.log("ROLLING SUMMARY TRIGGERED");
 
+  try {
+
+    await fetch(
+      `${process.env.BASE_URL}/api/update-summary`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          conversation_id: cid
+        })
+      }
+    );
+
+    console.log("SUMMARY UPDATED");
+
+  } catch (err) {
+
+    console.error(
+      "update-summary failed:",
+      err
+    );
+
+  }
+
 }
 
 // 3. memory (NEW SMART)
