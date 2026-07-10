@@ -5,6 +5,74 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+async function updateSummaryWithClaude(oldSummary, newMessages) {
+
+  const prompt = `已有Summary：
+
+${oldSummary || "（暂无）"}
+
+--------
+
+新增聊天：
+
+${newMessages}
+
+--------
+
+请根据新增聊天更新已有Summary。
+
+要求：
+
+- 保留仍然重要的信息
+- 删除已经失效的信息
+- 不要重复
+- 保持连续上下文
+- 控制在300字以内
+
+输出格式：
+
+【人物】
+
+【事件】
+
+【关系】
+
+【计划】
+
+【待继续】`;
+
+  const res = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-haiku-4.5",
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(
+      data?.error?.message || "Claude Summary Failed"
+    );
+  }
+
+  return data.choices[0].message.content.trim();
+
+}
+
 export default async function handler(req, res) {
 
   try {
@@ -32,7 +100,7 @@ export default async function handler(req, res) {
       error: summaryError
     } = await supabase
       .from("conversation_summary")
-      .select("summary, last_summarized_at")
+      .select("summary,last_summarized_at")
       .eq("conversation_id", conversation_id)
       .maybeSingle();
 
@@ -43,7 +111,8 @@ export default async function handler(req, res) {
     }
 
     const oldSummary = summaryRow?.summary || "";
-    const lastSummarizedAt = summaryRow?.last_summarized_at;
+    const lastSummarizedAt =
+      summaryRow?.last_summarized_at;
 
     // ==========================
     // 读取新增聊天
@@ -51,12 +120,17 @@ export default async function handler(req, res) {
 
     let query = supabase
       .from("messages")
-      .select("role, content, created_at")
+      .select("role,content,created_at")
       .eq("conversation_id", conversation_id)
-      .order("created_at", { ascending: true });
+      .order("created_at", {
+        ascending: true
+      });
 
     if (lastSummarizedAt) {
-      query = query.gt("created_at", lastSummarizedAt);
+      query = query.gt(
+        "created_at",
+        lastSummarizedAt
+      );
     }
 
     const {
@@ -71,24 +145,35 @@ export default async function handler(req, res) {
     }
 
     if (!messages || messages.length === 0) {
+
       return res.status(200).json({
         success: true,
         message: "No new messages."
       });
+
     }
 
     // ==========================
-    // 暂时直接拼接
-    // 下一步这里改成 Claude
+    // 新增聊天
     // ==========================
 
-    const newContent = messages
+    const newMessages = messages
       .map(m => `${m.role}: ${m.content}`)
       .join("\n");
 
-    const summary = oldSummary
-      ? `${oldSummary}\n${newContent}`
-      : newContent;
+    // ==========================
+    // Claude 更新 Summary
+    // ==========================
+
+    const summary =
+      await updateSummaryWithClaude(
+        oldSummary,
+        newMessages
+      );
+
+    // ==========================
+    // 保存
+    // ==========================
 
     const latestTime =
       messages[messages.length - 1].created_at;
