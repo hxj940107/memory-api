@@ -198,9 +198,9 @@ export default async function handler(req, res) {
     console.log("UPSERT RESULT:");
     console.log(result);
     
-    if (error) {
+    if (result.error) {
       return res.status(500).json({
-        error: error.message
+        error: result.error.message
       });
     }
 
