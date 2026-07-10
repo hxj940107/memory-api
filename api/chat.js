@@ -226,7 +226,15 @@ const history = await getRecentMessages(user_id, cid, 20)
 // Rolling Summary Trigger
 // ==========================
 
-if (history.length > 40) {
+const { count: messageCount } = await supabase
+  .from("messages")
+  .select("*", {
+    count: "exact",
+    head: true
+  })
+  .eq("conversation_id", cid);
+
+if (messageCount > 40) {
 
   console.log("ROLLING SUMMARY TRIGGERED");
 
