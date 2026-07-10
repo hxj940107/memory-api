@@ -216,11 +216,21 @@ export default async function handler(req, res) {
 
     const cid = conversation_id || `chat_${Date.now()}`
 
-    // 1. save user msg
-    await saveMessage(user_id, "user", message, cid)
+// 1. save user msg
+await saveMessage(user_id, "user", message, cid)
 
-    // 2. history
-    const history = await getRecentMessages(user_id, cid)
+// 2. history
+const history = await getRecentMessages(user_id, cid)
+
+// ==========================
+// Rolling Summary Trigger
+// ==========================
+
+if (history.length > 40) {
+
+  console.log("ROLLING SUMMARY TRIGGERED");
+
+}
 
 // 3. memory (NEW SMART)
 
