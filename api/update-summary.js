@@ -62,6 +62,10 @@ ${newMessages}
   );
 
   const data = await res.json();
+  console.log("STATUS:", res.status);
+  console.log("OPENROUTER:");
+  console.log(JSON.stringify(data, null, 2));
+  console.log("END");
 
   if (!res.ok) {
     throw new Error(
