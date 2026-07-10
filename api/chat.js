@@ -282,7 +282,23 @@ console.log("SYSTEM LENGTH:", systemPrompt.length)
 // Future Summary Layer
 // ==========================
 
-const summaryMemory = "";
+let summaryMemory = "";
+
+try {
+
+  const { data } = await supabase
+    .from("conversation_summary")
+    .select("summary")
+    .eq("conversation_id", cid)
+    .maybeSingle();
+
+  summaryMemory = data?.summary || "";
+
+} catch (err) {
+
+  console.error("summary load failed:", err);
+
+}
 
 const messages = [
   {
