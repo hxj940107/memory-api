@@ -68,6 +68,8 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
 // MEMORY (NEW LOGIC)
 // --------------------
 async function getMemorySmart(user_id, message, conversation_id) {
+  console.log("CONVERSATION ID:", conversation_id);
+  console.log("CACHE KEYS:", [...memorySearchCache.keys()]);
 
   const key = `${user_id}`;
 
