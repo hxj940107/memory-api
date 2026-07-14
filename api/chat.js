@@ -143,6 +143,7 @@ if (memorySearchCache.has(conversation_id)) {
     if (searchRes.ok) {
 
       const searchTxt = await searchRes.text();
+      console.log("SEARCH RESULT:", JSON.stringify(searchTxt));
 
       if (searchTxt) {
         dynamicMemory = [searchTxt];
