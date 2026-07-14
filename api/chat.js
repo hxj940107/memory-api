@@ -16,6 +16,7 @@ const systemPrompt = fs.readFileSync(
 // MEMORY CACHE (NEW)
 // --------------------
 const memoryCache = new Map()
+const memorySearchCache = new Map()
 
 // --------------------
 // Save Message
