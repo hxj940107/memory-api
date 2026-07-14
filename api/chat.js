@@ -120,55 +120,57 @@ async function getMemorySmart(user_id, message, conversation_id) {
   }
 
   // ==========================
-// 2. dynamic memory cache
-// ==========================
+  // 2. dynamic memory cache
+  // ==========================
 
-if (memorySearchCache.has(conversation_id)) {
+  if (memorySearchCache.has(conversation_id)) {
 
-  console.log("MEMORY SEARCH CACHE HIT");
+    console.log("MEMORY SEARCH CACHE HIT");
 
-  dynamicMemory = memorySearchCache.get(conversation_id);
+    dynamicMemory = memorySearchCache.get(conversation_id);
 
-} else {
+  } else {
 
-  console.log("MEMORY SEARCH CACHE MISS");
+    console.log("MEMORY SEARCH CACHE MISS");
 
-  try {
+    try {
 
-    console.log("DYNAMIC QUERY:", message);
+      console.log("DYNAMIC QUERY:", message);
 
-    const searchRes = await fetch(
-      "https://ombre-brain-production-ab16.up.railway.app/memory-search?query=" +
-      encodeURIComponent(message)
-    );
+      const searchRes = await fetch(
+        "https://ombre-brain-production-ab16.up.railway.app/memory-search?query=" +
+        encodeURIComponent(message)
+      );
 
-    if (searchRes.ok) {
+      console.log("SEARCH STATUS:", searchRes.status);
 
       const searchTxt = await searchRes.text();
+
       console.log("SEARCH RESULT:", JSON.stringify(searchTxt));
 
-      if (searchTxt) {
+      if (searchRes.ok && searchTxt) {
+
         dynamicMemory = [searchTxt];
 
-        // 写入 Cache
         memorySearchCache.set(
           conversation_id,
           dynamicMemory
         );
+
+        console.log("CACHE SAVED:", conversation_id);
+
       }
+
+    } catch (err) {
+
+      console.error(
+        "dynamic memory failed:",
+        err
+      );
 
     }
 
-  } catch (err) {
-
-    console.error(
-      "dynamic memory failed:",
-      err
-    );
-
   }
-
-}
 
   console.log("PIN MEMORY:", pinMemory);
   console.log("DYNAMIC MEMORY:", dynamicMemory);
