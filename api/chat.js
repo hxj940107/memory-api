@@ -118,9 +118,18 @@ async function getMemorySmart(user_id, message, conversation_id) {
   }
 
   // ==========================
-  // 2. dynamic memory
-  // always search
-  // ==========================
+// 2. dynamic memory cache
+// ==========================
+
+if (memorySearchCache.has(conversation_id)) {
+
+  console.log("MEMORY SEARCH CACHE HIT");
+
+  dynamicMemory = memorySearchCache.get(conversation_id);
+
+} else {
+
+  console.log("MEMORY SEARCH CACHE MISS");
 
   try {
 
@@ -137,6 +146,12 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
       if (searchTxt) {
         dynamicMemory = [searchTxt];
+
+        // 写入 Cache
+        memorySearchCache.set(
+          conversation_id,
+          dynamicMemory
+        );
       }
 
     }
@@ -149,6 +164,8 @@ async function getMemorySmart(user_id, message, conversation_id) {
     );
 
   }
+
+}
 
   console.log("PIN MEMORY:", pinMemory);
   console.log("DYNAMIC MEMORY:", dynamicMemory);
