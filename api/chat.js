@@ -391,39 +391,54 @@ console.log("======================================\n")
         last_conversation: cid,
         updated_at: new Date().toISOString()
       })
-    // 7. memory write
-if (shouldSaveMemory(message)) {
-  try {
-    const lastUser = [...history]
-      .reverse()
-      .filter(m => m.role === "user")
-      .slice(1)[0]
-    if (lastUser) {
-      await fetch(
-        "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            content: lastUser.content
-          })
-        }
-      )
 
-      console.log("Saved memory:", lastUser.content)
+    // 7. memory write
+    if (shouldSaveMemory(message)) {
+      try {
+        const lastUser = [...history]
+          .reverse()
+          .filter(m => m.role === "user")
+          .slice(1)[0]
+
+        if (lastUser) {
+
+          const holdRes = await fetch(
+            "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                content: lastUser.content
+              })
+            }
+          )
+
+          if (holdRes.ok) {
+
+            memorySearchCache.delete(cid)
+
+            console.log("MEMORY SEARCH CACHE CLEARED:", cid)
+            console.log("Saved memory:", lastUser.content)
+
+          }
+
+        }
+
+      } catch (err) {
+        console.error("hold-hook failed:", err)
+      }
     }
-  } catch (err) {
-    console.error("hold-hook failed:", err)
-  }
-}
+
     return res.status(200).json({
       reply,
       conversation_id: cid
     })
+
   } catch (e) {
     console.error(e)
     return res.status(500).json({ error: e.message })
   }
 }
+
