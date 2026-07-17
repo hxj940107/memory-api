@@ -200,6 +200,48 @@ function shouldSaveMemory(message) {
 }
 
 // --------------------
+// Web Search
+// --------------------
+async function searchWeb(query) {
+
+  try {
+
+    const res = await fetch(
+      "https://api.tavily.com/search",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          api_key: process.env.TAVILY_API_KEY,
+          query,
+          max_results: 5
+        })
+      }
+    );
+
+    const data = await res.json();
+
+    if (!data.results) return "";
+
+    return data.results
+      .map(r =>
+        `标题：${r.title}\n内容：${r.content}`
+      )
+      .join("\n\n");
+
+  } catch (err) {
+
+    console.error("Web Search Error:", err);
+
+    return "";
+
+  }
+
+}
+
+// --------------------
 // Call LLM
 // --------------------
 async function callLLM(messages) {
@@ -300,6 +342,21 @@ const {
   cid
 )
 
+let webSearch = "";
+let userMessage = message;
+
+if (message.startsWith("/搜 ")) {
+
+  const query = message.replace("/搜 ", "");
+
+  console.log("WEB SEARCH:", query);
+
+  webSearch = await searchWeb(query);
+
+  userMessage = query;
+
+}
+
 console.log("MEMORY LOAD CHECK:", history.length)
 
 // 4. build context
@@ -358,7 +415,29 @@ ${summaryMemory}`
 ${dynamicMemory.join("\n")}`
   },
 
-  ...history
+  {
+    role: "system",
+    content: `【Web Search｜联网搜索】
+
+${webSearch}`
+  },
+
+  ...history.map((m, index, arr) => {
+
+    if (
+      index === arr.length - 1 &&
+      m.role === "user" &&
+      message.startsWith("/搜 ")
+    ) {
+      return {
+        ...m,
+        content: userMessage
+      };
+    }
+
+    return m;
+
+  })
 ]
 
 // ===== Prompt Inspector =====
