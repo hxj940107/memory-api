@@ -216,7 +216,9 @@ async function searchWeb(query) {
         body: JSON.stringify({
           api_key: process.env.TAVILY_API_KEY,
           query,
+          search_depth: "basic",
           max_results: 5
+          include_answer: true
         })
       }
     );
@@ -227,9 +229,13 @@ async function searchWeb(query) {
 
     return data.results
       .map(r =>
-        `标题：${r.title}\n内容：${r.content}`
+        `标题：${r.title}
+        内容：
+        ${r.content}
+        来源：
+        ${r.url}`
       )
-      .join("\n\n");
+      .join("\n\n------------------\n\n");
 
   } catch (err) {
 
@@ -350,6 +356,7 @@ if (message.startsWith("/搜 ")) {
   const query = message.replace("/搜 ", "");
 
   console.log("WEB SEARCH:", query);
+  console.log(webSearch);
 
   webSearch = await searchWeb(query);
 
