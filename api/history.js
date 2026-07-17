@@ -21,8 +21,13 @@ export default async function handler(req, res) {
 
     const limit =
       req.method === "GET"
-        ? Number(req.query.limit || 1000)
-        : Number(req.body.limit || 1000)
+        ? Number(req.query.limit || 50)
+        : Number(req.body.limit || 50)
+
+    const offset =
+      req.method === "GET"
+        ? Number(req.query.offset || 0)
+        : Number(req.body.offset || 0)
 
     if (!user_id || !conversation_id) {
       return res.status(400).json({
@@ -35,8 +40,8 @@ export default async function handler(req, res) {
       .select("role, content, created_at")
       .eq("user_id", user_id)
       .eq("conversation_id", conversation_id)
-      .order("created_at", { ascending: true })
-      .limit(limit)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1)
 
     if (error) {
       return res.status(500).json({
@@ -45,10 +50,12 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json(
-      data.map(item => ({
-        role: item.role,
-        content: item.content
-      }))
+      (data || [])
+        .reverse()
+        .map(item => ({
+          role: item.role,
+          content: item.content
+        }))
     )
 
   } catch (err) {
