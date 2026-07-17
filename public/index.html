@@ -56,6 +56,10 @@ const USER_ID="small_c";
 let CONVERSATION_ID =
 localStorage.getItem("last_conversation");
 
+let historyOffset = 0;
+const PAGE_SIZE = 50;
+let hasMoreHistory = true;
+
 const chat=document.getElementById("chat");
 const list=document.getElementById("conversation-list");
 const input=document.getElementById("input");
@@ -91,28 +95,74 @@ function startNewChat(){
 
 }
 
-async function loadHistory(){
+async function loadHistory(reset = true){
 
     if(!CONVERSATION_ID) return;
 
-    chat.innerHTML="";
+    if(reset){
 
-    const res=await fetch(
-        API_HISTORY+
-        "?user_id="+USER_ID+
-        "&conversation_id="+CONVERSATION_ID
+        historyOffset = 0;
+        hasMoreHistory = true;
+        chat.innerHTML = "";
+
+    }
+
+    if(!hasMoreHistory) return;
+
+    const res = await fetch(
+
+        API_HISTORY +
+        "?user_id=" + USER_ID +
+        "&conversation_id=" + CONVERSATION_ID +
+        "&limit=" + PAGE_SIZE +
+        "&offset=" + historyOffset
+
     );
 
-    const data=await res.json();
+    const data = await res.json();
 
-    data.forEach(item=>{
+    if(data.length < PAGE_SIZE){
 
-        addMessage(
-            item.role==="user" ? "user":"ai",
-            item.content
-        );
+        hasMoreHistory = false;
 
-    });
+    }
+
+    if(reset){
+
+        data.forEach(item=>{
+
+            addMessage(
+                item.role==="user" ? "user":"ai",
+                item.content
+            );
+
+        });
+
+    }else{
+
+        const oldHeight = chat.scrollHeight;
+
+        data.forEach(item=>{
+
+            const row=document.createElement("div");
+            row.className="message "+(item.role==="user"?"user":"ai");
+
+            const bubble=document.createElement("div");
+            bubble.className="bubble";
+            bubble.textContent=item.content;
+
+            row.appendChild(bubble);
+
+            chat.insertBefore(row,chat.firstChild);
+
+        });
+
+        chat.scrollTop =
+            chat.scrollHeight-oldHeight;
+
+    }
+
+    historyOffset += data.length;
 
 }
 
@@ -240,6 +290,16 @@ async function sendMessage(){
     }
 
 })();
+
+chat.addEventListener("scroll", async ()=>{
+
+    if(chat.scrollTop < 30 && hasMoreHistory){
+
+        await loadHistory(false);
+
+    }
+
+});
 
 </script>
 
