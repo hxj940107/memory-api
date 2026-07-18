@@ -434,7 +434,9 @@ ${webSearch}`
     if (
       index === arr.length - 1 &&
       m.role === "user" &&
-      message.startsWith("/搜 ")
+      
+      message.startsWith("/搜") ||
+      message.startsWith("搜 ")
     ) {
       return {
         ...m,
