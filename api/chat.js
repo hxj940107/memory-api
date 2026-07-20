@@ -79,6 +79,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
   // ==========================
   // 1. PIN memory cache
   // ==========================
+
   if (memoryCache.has(key)) {
 
     console.log("PIN CACHE HIT");
@@ -106,7 +107,10 @@ async function getMemorySmart(user_id, message, conversation_id) {
       }
 
       // only cache PIN
-      memoryCache.set(key, pinMemory);
+      memoryCache.set(
+        key,
+        pinMemory
+      );
 
     } catch (err) {
 
@@ -119,6 +123,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
   }
 
+
   // ==========================
   // 2. dynamic memory cache
   // ==========================
@@ -127,7 +132,9 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
     console.log("MEMORY SEARCH CACHE HIT");
 
-    dynamicMemory = memorySearchCache.get(conversation_id);
+    dynamicMemory = memorySearchCache.get(
+      conversation_id
+    );
 
   } else {
 
@@ -135,31 +142,69 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
     try {
 
-      console.log("DYNAMIC QUERY:", message);
+      console.log(
+        "DYNAMIC QUERY:",
+        message
+      );
+
 
       const searchRes = await fetch(
         "https://ombre-brain-production-ab16.up.railway.app/memory-search?query=" +
         encodeURIComponent(message)
       );
 
-      console.log("SEARCH STATUS:", searchRes.status);
+
+      console.log(
+        "SEARCH STATUS:",
+        searchRes.status
+      );
+
 
       const searchTxt = await searchRes.text();
 
-      console.log("SEARCH RESULT:", JSON.stringify(searchTxt));
+
+      console.log(
+        "SEARCH RESULT:",
+        JSON.stringify(searchTxt)
+      );
+
 
       if (searchRes.ok && searchTxt) {
 
-        dynamicMemory = [searchTxt];
+
+        // ==========================
+        // Memory Ranking V1
+        // Limit dynamic memory size
+        // ==========================
+
+        const MAX_MEMORY_LENGTH = 1000;
+
+
+        const trimmedMemory =
+          searchTxt.slice(
+            0,
+            MAX_MEMORY_LENGTH
+          );
+
+
+        dynamicMemory = [
+          trimmedMemory
+        ];
+
 
         memorySearchCache.set(
           conversation_id,
           dynamicMemory
         );
 
-        console.log("CACHE SAVED:", conversation_id);
+
+        console.log(
+          "CACHE SAVED:",
+          conversation_id
+        );
 
       }
+
 
     } catch (err) {
 
@@ -172,8 +217,24 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
   }
 
-  console.log("PIN MEMORY:", pinMemory);
-  console.log("DYNAMIC MEMORY:", dynamicMemory);
+
+  console.log(
+    "PIN MEMORY:",
+    pinMemory
+  );
+
+
+  console.log(
+    "DYNAMIC MEMORY:",
+    dynamicMemory
+  );
+
+
+  console.log(
+    "DYNAMIC MEMORY LENGTH:",
+    JSON.stringify(dynamicMemory).length
+  );
+
 
   // ==========================
   // 3. return separately
