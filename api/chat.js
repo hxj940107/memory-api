@@ -188,15 +188,83 @@ async function getMemorySmart(user_id, message, conversation_id) {
 // --------------------
 // Memory Judge
 // --------------------
-function shouldSaveMemory(message) {
-  const triggers = [
-    "这个记一下",
-    "刚刚这个记一下",
-    "上一条记一下",
-    "记住刚刚那个"
-  ]
+async function judgeMemory(content) {
 
-  return triggers.some(t => message.includes(t))
+  try {
+
+    const res = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "anthropic/claude-haiku-4.5",
+          messages: [
+            {
+              role: "system",
+              content: `
+你是长期记忆判断器。
+
+判断下面内容是否值得保存为长期记忆。
+
+值得保存：
+- 身份信息
+- 人物关系
+- 长期计划
+- 梦想
+- 喜好
+- 性格
+- 价值观
+- 长期困扰
+- 重要事件
+
+不要保存：
+- 寒暄
+- 日常闲聊
+- 一次性状态
+- 无意义内容
+
+只输出 JSON：
+
+{
+  "save": true,
+  "content": "整理后的长期记忆"
+}
+`
+            },
+            {
+              role: "user",
+              content
+            }
+          ]
+        })
+      }
+    )
+
+    const data = await res.json()
+
+    const text =
+      data?.choices?.[0]?.message?.content || "{}"
+
+    return JSON.parse(text)
+
+  } catch (err) {
+
+    console.error(
+      "memory judge failed:",
+      err
+    )
+
+    return {
+      save: false,
+      content: ""
+    }
+
+  }
+
 }
 
 // --------------------
@@ -495,7 +563,10 @@ console.log("======================================\n")
       })
 
     // 7. memory write
-    if (shouldSaveMemory(message)) {
+
+    const judgeResult = await judgeMemory(message)
+
+    if (judgeResult.save) {
       try {
         const lastUser = [...history]
           .reverse()
@@ -512,7 +583,7 @@ console.log("======================================\n")
                 "Content-Type": "application/json"
               },
               body: JSON.stringify({
-                content: lastUser.content
+                content: judgeResult.content
               })
             }
           )
