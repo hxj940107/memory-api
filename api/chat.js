@@ -259,6 +259,15 @@ async function judgeMemory(content, previousContent) {
   "save": true,
   "content": "整理后的长期记忆"
 }
+
+如果 save 为 false：
+content 必须为空字符串。
+例如：
+
+{
+  "save": false,
+  "content": ""
+}
 `
             },
             {
