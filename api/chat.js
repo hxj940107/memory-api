@@ -188,7 +188,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
 // --------------------
 // Memory Judge
 // --------------------
-async function judgeMemory(content) {
+async function judgeMemory(content, previousContent) {
 
   try {
 
@@ -237,13 +237,20 @@ async function judgeMemory(content) {
             },
             {
               role: "user",
-              content
+              content: `
+当前用户消息：
+
+${content}
+
+上一条用户消息：
+
+${previousContent}
+`
             }
           ]
         })
       }
     )
-
     const data = await res.json()
 
     let text =
@@ -568,7 +575,15 @@ console.log("======================================\n")
 
     // 7. memory write
 
-    const judgeResult = await judgeMemory(message)
+    const lastUserMessage = [...history]
+      .reverse()
+      .filter(m => m.role === "user")
+      .slice(1)[0]
+
+    const judgeResult = await judgeMemory(
+      message,
+      lastUserMessage?.content || ""
+    )
 
     if (judgeResult.save) {
       try {
