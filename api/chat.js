@@ -597,7 +597,7 @@ console.log("======================================\n")
             memorySearchCache.delete(cid)
 
             console.log("MEMORY SEARCH CACHE CLEARED:", cid)
-            console.log("Saved memory:", lastUser.content)
+            console.log("Saved memory:", judgeResult.content)
 
           }
 
