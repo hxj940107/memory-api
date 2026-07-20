@@ -85,14 +85,60 @@ function addMessage(role,text){
     const row=document.createElement("div");
     row.className="message "+role;
 
+
     const bubble=document.createElement("div");
     bubble.className="bubble";
-    bubble.textContent=text;
+
+
+    if(text.startsWith("[图片]")){
+
+        const parts=text.split("\n\n");
+
+
+        if(selectedImageUrl){
+
+            const img=document.createElement("img");
+
+            img.src=selectedImageUrl;
+
+            img.style.maxWidth="240px";
+
+            img.style.borderRadius="10px";
+
+            img.style.display="block";
+
+            img.style.marginBottom="8px";
+
+            bubble.appendChild(img);
+
+        }
+
+
+        if(parts[1]){
+
+            const p=document.createElement("div");
+
+            p.textContent=parts[1];
+
+            bubble.appendChild(p);
+
+        }
+
+
+    }else{
+
+        bubble.textContent=text;
+
+    }
+
 
     row.appendChild(bubble);
+
     chat.appendChild(row);
 
+
     chat.scrollTop=chat.scrollHeight;
+
 
     return bubble;
 
