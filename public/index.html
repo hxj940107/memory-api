@@ -261,24 +261,53 @@ async function sendMessage(){
 
     const text=input.value.trim();
 
-    if(!text) return;
+    if(!text && !selectedImageUrl) return;
+
 
     if(!CONVERSATION_ID){
 
-    CONVERSATION_ID="chat_"+Date.now();
+        CONVERSATION_ID="chat_"+Date.now();
 
-    localStorage.setItem(
-        "last_conversation",
-        CONVERSATION_ID
-    );
+        localStorage.setItem(
+            "last_conversation",
+            CONVERSATION_ID
+        );
 
-}
-    addMessage("user",text);
+    }
+
+
+    // 显示用户消息
+    if(selectedImageUrl){
+
+        addMessage(
+            "user",
+            "[图片]\n\n"+text
+        );
+
+    }else{
+
+        addMessage(
+            "user",
+            text
+        );
+
+    }
+
 
     input.value="";
 
-    const loading=addMessage("ai","正在思考...");
-    console.log("Sending image:", selectedImageUrl);
+
+    const loading=addMessage(
+        "ai",
+        "正在思考..."
+    );
+
+
+    console.log(
+        "Sending image:",
+        selectedImageUrl
+    );
+
 
     const res=await fetch(API_CHAT,{
 
@@ -295,15 +324,35 @@ async function sendMessage(){
             conversation_id:CONVERSATION_ID,
 
             message:text,
+
             imageUrl:selectedImageUrl
 
         })
 
     });
 
+
     const data=await res.json();
 
-    loading.textContent=data.reply||"无回复";
+
+    loading.textContent =
+        data.reply || "无回复";
+
+
+    // 清空图片状态
+    selectedImageUrl = null;
+    selectedImage = null;
+
+
+    const imageInput =
+        document.getElementById("image-upload");
+
+    if(imageInput){
+
+        imageInput.value="";
+
+    }
+
 
     await loadConversations();
 
