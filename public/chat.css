@@ -247,7 +247,6 @@ body{
 
 
 .bubble{
-
     max-width:720px;
 
     padding:14px 18px;
@@ -256,17 +255,12 @@ body{
 
     line-height:1.55;
 
-    white-space:pre-wrap;
+    font-size:30px !important;
 
-    word-break:break-word;
+    background:red !important;
 
-    font-size:16px;
-
-    box-shadow:
-        0 1px 2px rgba(0,0,0,.05);
-
+    color:white !important;
 }
-
 
 
 .user .bubble{
