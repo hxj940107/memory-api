@@ -148,7 +148,11 @@ body{
 
     display:flex;
 
-    align-items:center;
+    flex-direction:column;
+
+    justify-content:center;
+
+    align-items:flex-start;
 
     padding:0 28px;
 
@@ -158,11 +162,19 @@ body{
 
     font-weight:600;
 
-    background:rgba(255,255,255,.8);
-
 }
 
+.subtitle{
 
+    font-size:12px;
+
+    font-weight:400;
+
+    color:#888;
+
+    margin-top:2px;
+
+}
 
 /* 聊天区域 */
 
