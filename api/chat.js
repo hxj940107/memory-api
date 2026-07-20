@@ -248,6 +248,10 @@ async function judgeMemory(content) {
 
     const text =
       data?.choices?.[0]?.message?.content || "{}"
+    text = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim()
 
     return JSON.parse(text)
 
