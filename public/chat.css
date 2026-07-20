@@ -204,7 +204,30 @@ body{
 
 }
 
+.message.ai{
+    animation: aiAppear .35s ease;
+}
 
+
+@keyframes aiAppear{
+
+    from{
+
+        opacity:0;
+
+        transform:translateY(8px);
+
+    }
+
+    to{
+
+        opacity:1;
+
+        transform:translateY(0);
+
+    }
+
+}
 
 .message.user{
 
