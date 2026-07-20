@@ -347,11 +347,24 @@ async function sendMessage(){
 
     input.value="";
 
-
     const loading=addMessage(
         "ai",
-        "正在思考..."
+        "正在输入"
     );
+    let dots = 0;
+
+    const typingTimer = setInterval(()=>{
+
+        dots++;
+
+        if(dots > 3){
+            dots = 0;
+        }
+
+        loading.textContent =
+            "正在输入" + ".".repeat(dots);
+
+    },500);
 
 
     console.log(
