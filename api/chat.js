@@ -300,7 +300,12 @@ ${previousContent}
       .replace(/```/g, "")
       .trim()
 
-    return JSON.parse(clean)
+    const jsonStart = clean.indexOf("{")
+    const jsonEnd = clean.lastIndexOf("}")
+
+    return JSON.parse(
+      clean.slice(jsonStart, jsonEnd + 1)
+    )
 
   } catch (err) {
 
@@ -530,9 +535,16 @@ const messages = [
 
   {
     role: "system",
-    content: systemPrompt
+    content: [
+      {
+        type: "text",
+        text: systemPrompt,
+        cache_control: {
+          type: "ephemeral"
+        }
+      }
+    ]
   },
-
   {
     role: "system",
     content: `【Identity｜人格层】
