@@ -467,3 +467,56 @@ button:hover{
     background:#fafafa;
 
 }
+
+.memory-layer{
+
+    min-height:40px;
+
+    padding:8px 40px;
+
+    background:#fafafa;
+
+    display:flex;
+
+    justify-content:center;
+
+    align-items:center;
+
+}
+
+.memory-layer::before{
+
+    content:"";
+
+    width:6px;
+
+    height:6px;
+
+    border-radius:50%;
+
+    background:#ddd;
+
+    animation:pulse 2s infinite;
+
+}
+
+
+@keyframes pulse{
+
+    0%,100%{
+
+        opacity:.3;
+
+        transform:scale(1);
+
+    }
+
+    50%{
+
+        opacity:.8;
+
+        transform:scale(1.4);
+
+    }
+
+}
