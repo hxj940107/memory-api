@@ -606,10 +606,21 @@ console.log("\n========== Prompt Inspector ==========")
 
 console.log({
   prompt_tokens: llm.usage?.prompt_tokens,
-  completion_tokens: llm.usage?.completion_tokens,
-  total_tokens: llm.usage?.total_tokens,
+
+  completion_tokens:
+    llm.usage?.completion_tokens,
+
+  total_tokens:
+    llm.usage?.total_tokens,
+
   reasoning_tokens:
-    llm.usage?.completion_tokens_details?.reasoning_tokens
+    llm.usage?.completion_tokens_details?.reasoning_tokens,
+
+  cached_tokens:
+    llm.usage?.prompt_tokens_details?.cached_tokens,
+
+  cache_write_tokens:
+    llm.usage?.prompt_tokens_details?.cache_write_tokens
 })
 
 console.log("======================================\n")
