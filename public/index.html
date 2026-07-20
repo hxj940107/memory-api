@@ -398,7 +398,7 @@ async function sendMessage(){
 
     const data=await res.json();
 
-
+    clearInterval(typingTimer);
     loading.textContent =
         data.reply || "无回复";
 
