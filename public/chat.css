@@ -422,10 +422,46 @@ button:hover{
 
 /* 手机 */
 
-@media(max-width:700px){
+@media (max-width:700px){
 
-    body{
-        background:yellow !important;
+    .sidebar{
+        display:none;
+    }
+
+    .header{
+        height:56px;
+        padding:0 16px;
+    }
+
+    .chat{
+        padding:16px;
+        background:#fafafa;
+    }
+
+    .message{
+        margin-bottom:16px;
+    }
+
+    .bubble{
+        max-width:80%;
+        padding:12px 16px;
+        border-radius:20px;
+        line-height:1.55;
+        font-size:16px;
+    }
+
+    .bottom{
+        padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    }
+
+    #input{
+        height:46px;
+        border-radius:23px;
+    }
+
+    button{
+        height:46px;
+        padding:0 18px;
     }
 
 }
