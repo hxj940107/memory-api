@@ -76,6 +76,7 @@ const supabaseClient = supabase.createClient(
 );
 
 let selectedImage = null;
+let selectedImageUrl = null;
 const list=document.getElementById("conversation-list");
 const input=document.getElementById("input");
 
@@ -249,10 +250,10 @@ async function handleImage(e){
         .from("chat-images")
         .getPublicUrl(fileName);
 
-
+    selectedImageUrl = urlData.publicUrl;
     console.log(
         "Image URL:",
-        urlData.publicUrl
+        selectedImageUrl
     );
 
 }
@@ -293,6 +294,7 @@ async function sendMessage(){
             conversation_id:CONVERSATION_ID,
 
             message:text
+            imageUrl:selectedImageUrl
 
         })
 
