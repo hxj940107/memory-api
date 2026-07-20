@@ -226,8 +226,10 @@ async function handleImage(e){
 
     selectedImage = file;
 
+    const ext = file.name.split(".").pop();
+
     const fileName =
-        `${Date.now()}-${file.name}`;
+        `${Date.now()}.${ext}`;
 
     const { data, error } =
         await supabaseClient.storage
