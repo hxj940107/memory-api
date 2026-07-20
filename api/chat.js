@@ -375,7 +375,7 @@ export default async function handler(req, res) {
 await saveMessage(user_id, "user", message, cid)
 
 // 2. history
-const history = await getRecentMessages(user_id, cid, 20)
+const history = await getRecentMessages(user_id, cid, 6)
 
 // ==========================
 // Rolling Summary Trigger
