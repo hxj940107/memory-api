@@ -283,7 +283,12 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "Only POST" })
     }
 
-    const { user_id = "user", message, conversation_id } = req.body
+    const { 
+      user_id = "user", 
+      message, 
+      conversation_id,
+      imageUrl
+    } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
 
@@ -396,9 +401,10 @@ try {
 }
 
 const messages = [
+
   {
     role: "system",
-    content: `${systemPrompt}`
+    content: systemPrompt
   },
 
   {
@@ -429,24 +435,32 @@ ${dynamicMemory.join("\n")}`
 ${webSearch}`
   },
 
-  ...history.map((m, index, arr) => {
 
-    if (
-      index === arr.length - 1 &&
-      m.role === "user" &&
-      
-      message.startsWith("/搜") ||
-      message.startsWith("搜 ")
-    ) {
-      return {
-        ...m,
-        content: userMessage
-      };
-    }
+  // 保留历史，但去掉最后一条用户消息
+  // 因为最后一条要重新加入（可能带图片）
+  ...history.slice(0, -1),
 
-    return m;
 
-  })
+  // 当前用户消息
+  {
+    role: "user",
+
+    content: imageUrl
+      ? [
+          {
+            type: "text",
+            text: message
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: imageUrl
+            }
+          }
+        ]
+      : message
+  }
+
 ]
 
 // ===== Prompt Inspector =====
