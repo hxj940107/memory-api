@@ -260,7 +260,12 @@ ${previousContent}
       .replace(/```/g, "")
       .trim()
 
-    return JSON.parse(text)
+    const clean = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim()
+
+    return JSON.parse(clean)
 
   } catch (err) {
 
