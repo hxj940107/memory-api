@@ -422,35 +422,10 @@ button:hover{
 
 /* 手机 */
 
-@media (max-width:700px){
+@media(max-width:700px){
 
-    .sidebar{
-        display:none;
-    }
-
-    .header{
-        height:56px;
-        padding:0 16px;
-    }
-
-    .chat{
-        padding:16px;
-    }
-
-    .message{
-        margin-bottom:16px;
-    }
-
-    .bubble{
-        max-width:80%;
-        padding:12px 16px;
-        border-radius:20px;
-        font-size:16px;
-        line-height:1.55;
-    }
-
-    .bottom{
-        padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    body{
+        background:yellow !important;
     }
 
 }
