@@ -227,6 +227,16 @@ async function judgeMemory(content, previousContent) {
 - 一次性状态
 - 无意义内容
 
+如果用户消息包含以下表达：
+- 记一下
+- 记住
+- 保存一下
+- 别忘了
+- 以后提醒我
+
+则认为用户主动要求保存。
+需要保存该消息中有价值的长期信息。
+
 只输出 JSON：
 
 {
