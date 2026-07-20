@@ -507,7 +507,7 @@ console.log("MEMORY LOAD CHECK:", history.length)
 console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
-console.log("SYSTEM LENGTH:", systemPrompt.length)
+console.log("SYSTEM LENGTH:", .length)
 
 // ==========================
 // Future Summary Layer
@@ -535,16 +535,9 @@ const messages = [
 
   {
     role: "system",
-    content: [
-      {
-        type: "text",
-        text: systemPrompt,
-        cache_control: {
-          type: "ephemeral"
-        }
-      }
-    ]
+    content: systemPrompt
   },
+
   {
     role: "system",
     content: `【Identity｜人格层】
@@ -577,10 +570,8 @@ ${dynamicMemory.join("\n")}`
 ${webSearch}`
   },
 
-  // 当前用户消息
   {
     role: "user",
-
     content: imageUrl
       ? [
           {
@@ -598,7 +589,6 @@ ${webSearch}`
   }
 
 ]
-
 // ===== Prompt Inspector =====
 console.log("\n===== FINAL MESSAGES =====")
 
