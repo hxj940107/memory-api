@@ -535,28 +535,24 @@ const messages = [
 
   {
     role: "system",
-    content: systemPrompt
-  },
+    content: `
+${systemPrompt}
 
-  {
-    role: "system",
-    content: `【Identity｜人格层】
 
-${pinMemory.join("\n")}`
-  },
+【Identity｜人格层】
 
-  {
-    role: "system",
-    content: `【Summary｜长期摘要】
+${pinMemory.join("\n")}
 
-${summaryMemory}`
-  },
 
-  {
-    role: "system",
-    content: `【Memory｜相关长期记忆】
+【Summary｜长期摘要】
 
-${dynamicMemory.join("\n")}`
+${summaryMemory}
+
+
+【Memory｜相关长期记忆】
+
+${dynamicMemory.join("\n")}
+`
   },
 
   // 保留历史，但去掉最后一条用户消息
