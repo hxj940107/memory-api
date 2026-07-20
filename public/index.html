@@ -278,6 +278,7 @@ async function sendMessage(){
     input.value="";
 
     const loading=addMessage("ai","正在思考...");
+    console.log("Sending image:", selectedImageUrl);
 
     const res=await fetch(API_CHAT,{
 
