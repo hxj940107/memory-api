@@ -6,6 +6,7 @@
 <title>AI Memory Chat</title>
 
 <link rel="stylesheet" href="/chat.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 </head>
 
@@ -32,10 +33,11 @@ AI Memory Chat
 <div id="chat" class="chat"></div>
 
 <div class="bottom">
-<input 
+<input
   id="image-upload"
   type="file"
   accept="image/*"
+  onchange="handleImage(event)"
 >
 <input id="input"
 placeholder="输入消息..."
@@ -52,6 +54,8 @@ onkeydown="if(event.key==='Enter')sendMessage()">
 
 const API_CHAT="/api/chat";
 const API_HISTORY="/api/history";
+const SUPABASE_URL="https://cncpymfqefyabiclnqzg.supabase.co";
+const SUPABASE_KEY="sb_publishable_j_lDeIue7eODYxrPPNrbwA_3-FcJah4";
 const API_CONVERSATIONS="/api/conversations";
 
 const API_USER_STATE="/api/user-state";
@@ -66,6 +70,12 @@ const PAGE_SIZE = 50;
 let hasMoreHistory = true;
 
 const chat=document.getElementById("chat");
+const supabaseClient = supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+);
+
+let selectedImage = null;
 const list=document.getElementById("conversation-list");
 const input=document.getElementById("input");
 
@@ -206,6 +216,17 @@ async function loadConversations(){
         list.appendChild(div);
 
     });
+
+}
+async function handleImage(e){
+
+    const file = e.target.files[0];
+
+    if(!file) return;
+
+    selectedImage = file;
+
+    console.log("Selected image:", file.name);
 
 }
 
