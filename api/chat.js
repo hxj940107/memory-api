@@ -389,7 +389,14 @@ const { count: messageCount } = await supabase
   })
   .eq("conversation_id", cid);
 
-if (messageCount > 40) {
+const historySize =
+  JSON.stringify(history).length
+
+
+if (
+  messageCount > 20 ||
+  historySize > 5000
+) {
 
   console.log("ROLLING SUMMARY TRIGGERED");
 
