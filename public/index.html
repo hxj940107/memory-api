@@ -80,7 +80,7 @@ let selectedImageUrl = null;
 const list=document.getElementById("conversation-list");
 const input=document.getElementById("input");
 
-function addMessage(role,text){
+function addMessage(role,text,imageUrl=null){
 
     const row=document.createElement("div");
     row.className="message "+role;
@@ -90,29 +90,24 @@ function addMessage(role,text){
     bubble.className="bubble";
 
 
-    if(text.startsWith("[图片]")){
+    if(imageUrl){
+
+        const img=document.createElement("img");
+
+        img.src=imageUrl;
+
+        img.style.maxWidth="240px";
+
+        img.style.borderRadius="10px";
+
+        img.style.display="block";
+
+        img.style.marginBottom="8px";
+
+        bubble.appendChild(img);
+
 
         const parts=text.split("\n\n");
-
-
-        if(selectedImageUrl){
-
-            const img=document.createElement("img");
-
-            img.src=selectedImageUrl;
-
-            img.style.maxWidth="240px";
-
-            img.style.borderRadius="10px";
-
-            img.style.display="block";
-
-            img.style.marginBottom="8px";
-
-            bubble.appendChild(img);
-
-        }
-
 
         if(parts[1]){
 
@@ -327,7 +322,8 @@ async function sendMessage(){
 
         addMessage(
             "user",
-            "[图片]\n\n"+text
+            "[图片]\n\n"+text,
+            selectedImageUrl
         );
 
     }else{
