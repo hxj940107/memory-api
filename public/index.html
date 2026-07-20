@@ -226,10 +226,34 @@ async function handleImage(e){
 
     selectedImage = file;
 
-    console.log("Selected image:", file.name);
+    const fileName =
+        `${Date.now()}-${file.name}`;
+
+    const { data, error } =
+        await supabaseClient.storage
+        .from("chat-images")
+        .upload(fileName, file);
+
+    if(error){
+
+        console.error("Upload failed:", error);
+
+        return;
+
+    }
+
+    const { data:urlData } =
+        supabaseClient.storage
+        .from("chat-images")
+        .getPublicUrl(fileName);
+
+
+    console.log(
+        "Image URL:",
+        urlData.publicUrl
+    );
 
 }
-
 async function sendMessage(){
 
     const text=input.value.trim();
