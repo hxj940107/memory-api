@@ -500,14 +500,14 @@ if (message.startsWith("/搜 ")) {
 
 }
 
-console.log("MEMORY LOAD CHECK:", history.length)
-
 // 4. build context
+    
+console.log("MEMORY LOAD CHECK:", history.length)
 
 console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
-console.log("SYSTEM LENGTH:", .length)
+console.log("SYSTEM LENGTH:", systemPrompt.length)
 
 // ==========================
 // Future Summary Layer
