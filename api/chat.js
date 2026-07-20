@@ -246,7 +246,7 @@ async function judgeMemory(content) {
 
     const data = await res.json()
 
-    const text =
+    let text =
       data?.choices?.[0]?.message?.content || "{}"
     text = text
       .replace(/```json/g, "")
