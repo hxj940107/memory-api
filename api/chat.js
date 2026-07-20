@@ -507,18 +507,16 @@ ${summaryMemory}`
 ${dynamicMemory.join("\n")}`
   },
 
+  // 保留历史，但去掉最后一条用户消息
+  // 因为最后一条要重新加入（可能带图片）
+  ...history.slice(0, -1),
+
   {
     role: "system",
     content: `【Web Search｜联网搜索】
 
 ${webSearch}`
   },
-
-
-  // 保留历史，但去掉最后一条用户消息
-  // 因为最后一条要重新加入（可能带图片）
-  ...history.slice(0, -1),
-
 
   // 当前用户消息
   {
