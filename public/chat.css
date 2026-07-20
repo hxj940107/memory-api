@@ -154,7 +154,7 @@ body{
 
     align-items:flex-start;
 
-    padding:0 28px;
+    padding:0 16px;
 
     border-bottom:1px solid #e5e5e5;
 
@@ -185,13 +185,11 @@ body{
 
     overflow:auto;
 
-    padding:24px 40px;
+    padding:20px 16px;
 
     background:#fafafa;
 
 }
-
-
 
 /* 消息 */
 
@@ -253,7 +251,7 @@ body{
 
     border-radius:18px;
 
-    line-height:1.7;
+    line-height:1.55;
 
     white-space:pre-wrap;
 
@@ -312,7 +310,6 @@ body{
 
 /* 输入区域 */
 
-
 .bottom{
 
     display:flex;
@@ -321,7 +318,7 @@ body{
 
     gap:10px;
 
-    padding:16px 24px;
+    padding:16px 16px calc(16px + env(safe-area-inset-bottom)) 16px;
 
     background:white;
 
@@ -445,7 +442,7 @@ button:hover{
 
     .bubble{
 
-        max-width:85%;
+        max-width:78%;
 
     }
 
