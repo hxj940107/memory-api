@@ -449,7 +449,7 @@ ${webSearch}`
       ? [
           {
             type: "text",
-            text: message
+            text: userMessage
           },
           {
             type: "image_url",
@@ -458,7 +458,7 @@ ${webSearch}`
             }
           }
         ]
-      : message
+      : userMessage
   }
 
 ]
