@@ -439,12 +439,13 @@ button:hover{
     }
 
     .message{
+        width:100%;
         margin-bottom:8px;
     }
 
     .bubble{
 
-        max-width:calc(100vw - 48px);
+        max-width:85%;
 
         padding:12px 16px;
 
