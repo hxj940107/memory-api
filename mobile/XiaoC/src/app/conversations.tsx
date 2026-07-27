@@ -102,8 +102,6 @@ export default function Conversations() {
 
     const data = await res.json();
 
-    console.log("置顶返回:", data);
-
     hideMenu();
 
     loadConversations();
@@ -281,8 +279,6 @@ export default function Conversations() {
 
               <Pressable
                 onPress={() => {
-                  console.log("点击置顶", selected);
-
                   togglePin(selected);
                 }}
               >
