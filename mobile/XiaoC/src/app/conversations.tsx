@@ -17,7 +17,7 @@ type Conversation = {
   title: string;
   created_at: string;
   latest: boolean;
-  is_pinned: boolean;
+  is_pinned?: boolean;
 };
 
 export default function Conversations() {
@@ -40,45 +40,21 @@ export default function Conversations() {
 
       const data = await res.json();
 
-      setList(data);
+      setList(
+        data
+          .map((item: Conversation) => ({
+            ...item,
+            is_pinned: item.is_pinned ?? false,
+          }))
+          .sort((a: Conversation, b: Conversation) => {
+            if (a.is_pinned === b.is_pinned) return 0;
+
+            return a.is_pinned ? -1 : 1;
+          }),
+      );
     } catch (error) {
       console.log(error);
     }
-  };
-
-  const editTitle = (item: Conversation) => {
-    Alert.prompt(
-      "修改标题",
-      "",
-      async (text) => {
-        if (!text || !text.trim()) return;
-
-        await fetch(
-          "https://memory-api-beta.vercel.app/api/conversation-title",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type": "application/json",
-            },
-
-            body: JSON.stringify({
-              user_id: "user",
-
-              conversation_id: item.id,
-
-              title: text.trim(),
-            }),
-          },
-        );
-
-        loadConversations();
-      },
-
-      "plain-text",
-
-      item.title,
-    );
   };
 
   const showMenu = (item: Conversation) => {
@@ -101,23 +77,34 @@ export default function Conversations() {
   const togglePin = async (item: Conversation | null) => {
     if (!item) return;
 
-    await fetch("https://memory-api-beta.vercel.app/api/conversation-title", {
-      method: "POST",
+    const res = await fetch(
+      "https://memory-api-beta.vercel.app/api/conversation-title",
+      {
+        method: "POST",
 
-      headers: {
-        "Content-Type": "application/json",
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          user_id: "user",
+
+          conversation_id: item.id,
+
+          action: "pin",
+
+          is_pinned: !item.is_pinned,
+        }),
       },
+    );
 
-      body: JSON.stringify({
-        user_id: "user",
+    const data = await res.json();
 
-        conversation_id: item.id,
+    console.log("置顶返回:", data);
 
-        action: "pin",
+    hideMenu();
 
-        is_pinned: !item.is_pinned,
-      }),
-    });
+    loadConversations();
 
     hideMenu();
 
@@ -292,11 +279,13 @@ export default function Conversations() {
 
               <Pressable
                 onPress={() => {
+                  console.log("点击置顶", selected);
+
                   togglePin(selected);
                 }}
               >
                 <Text style={styles.menuText}>
-                  {selected.is_pinned ? "取消置顶" : "置顶"}
+                  {selected?.is_pinned ? "取消置顶" : "置顶"}
                 </Text>
               </Pressable>
 
