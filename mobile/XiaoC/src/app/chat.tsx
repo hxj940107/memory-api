@@ -10,7 +10,11 @@ import {
   Animated,
 } from "react-native";
 
+import { router, useLocalSearchParams } from "expo-router";
+
 import { useState, useRef, useEffect } from "react";
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type Message = {
   role: "user" | "assistant";
@@ -112,17 +116,61 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
   );
 }
 export default function ChatScreen() {
+  const params = useLocalSearchParams();
+
+  const incomingConversationId = params.conversationId as string | undefined;
+  useEffect(() => {
+    restoreConversation();
+  }, [incomingConversationId]);
   const [message, setMessage] = useState("");
 
   const [messages, setMessages] = useState<Message[]>([]);
 
   const [isTyping, setIsTyping] = useState(false);
 
+  const [loadingHistory, setLoadingHistory] = useState(true);
+
   const scrollRef = useRef<ScrollView>(null);
 
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   // 正在输入动画
+
+  const restoreConversation = async () => {
+    try {
+      setLoadingHistory(true);
+
+      const savedId = await AsyncStorage.getItem("conversation_id");
+
+      const id = incomingConversationId || savedId;
+
+      console.log("恢复ID:", id);
+
+      if (!id) {
+        setLoadingHistory(false);
+        return;
+      }
+
+      setConversationId(id);
+
+      const res = await fetch(
+        `https://memory-api-beta.vercel.app/api/history?user_id=user&conversation_id=${id}`,
+      );
+
+      const data = await res.json();
+
+      setMessages(
+        data.map((item: any) => ({
+          role: item.role,
+          text: item.content,
+        })),
+      );
+    } catch (error) {
+      console.log(error);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   const sendMessage = async () => {
     if (!message.trim()) return;
@@ -174,6 +222,46 @@ export default function ChatScreen() {
 
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
+
+        await AsyncStorage.setItem("conversation_id", data.conversation_id);
+
+        // 第一次创建会话时生成标题
+        if (!conversationId) {
+          await fetch(
+            "https://memory-api-beta.vercel.app/api/conversation-title",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type": "application/json",
+              },
+
+              body: JSON.stringify({
+                user_id: "user",
+                conversation_id: data.conversation_id,
+                message: userText,
+              }),
+            },
+          );
+        }
+      }
+      if (!conversationId) {
+        await fetch(
+          "https://memory-api-beta.vercel.app/api/conversation-title",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type": "application/json",
+            },
+
+            body: JSON.stringify({
+              user_id: "user",
+              conversation_id: data.conversation_id,
+              message: userText,
+            }),
+          },
+        );
       }
 
       setIsTyping(false);
@@ -187,7 +275,7 @@ export default function ChatScreen() {
         },
       ]);
     } catch (error) {
-      console.log(error);
+      console.log("CHAT ERROR:", error);
 
       setIsTyping(false);
 
@@ -208,6 +296,12 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View style={styles.container}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.push("/conversations")}>
+            <Text style={styles.menuText}>☰</Text>
+          </Pressable>
+        </View>
+
         <ScrollView
           ref={scrollRef}
           style={styles.chat}
@@ -222,8 +316,12 @@ export default function ChatScreen() {
             })
           }
         >
-          {messages.length === 0 && (
-            <Text style={styles.greeting}>今天过得怎么样？</Text>
+          {loadingHistory ? (
+            <TypingDots />
+          ) : (
+            messages.length === 0 && (
+              <Text style={styles.greeting}>今天过得怎么样？</Text>
+            )
           )}
 
           {messages.map((item, index) =>
@@ -238,7 +336,9 @@ export default function ChatScreen() {
             ) : (
               <AnimatedMessage key={index}>
                 <View style={styles.aiBox}>
-                  <Text style={styles.aiText}>{item.text}</Text>
+                  <Text style={styles.aiText}>
+                    {item.text.replace(/\s*\n\s*/g, "\n")}
+                  </Text>
                 </View>
               </AnimatedMessage>
             ),
@@ -280,13 +380,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
 
+  header: {
+    height: 105,
+    paddingTop: 45,
+    paddingHorizontal: 20,
+    justifyContent: "center",
+  },
+
+  menuText: {
+    fontSize: 26,
+    color: "#555",
+  },
+
   chat: {
     flex: 1,
   },
 
   chatContent: {
     paddingHorizontal: 20,
-    paddingTop: 70,
+    paddingTop: 20,
     paddingBottom: 20,
   },
 
@@ -321,18 +433,21 @@ const styles = StyleSheet.create({
   userText: {
     fontSize: 17,
     color: "#4B5563",
-    lineHeight: 24,
+    lineHeight: 22,
   },
 
   aiBox: {
-    maxWidth: "85%",
-    marginBottom: 25,
+    maxWidth: "72%",
+    backgroundColor: "#F4F4F4",
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
 
   aiText: {
-    fontSize: 17,
+    fontSize: 16,
     color: "#444",
-    lineHeight: 28,
+    lineHeight: 21,
   },
 
   typingDots: {
