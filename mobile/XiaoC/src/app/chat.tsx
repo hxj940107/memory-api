@@ -202,6 +202,7 @@ export default function ChatScreen() {
     }, 100);
 
     try {
+      console.log("请求地址:", "https://memory-api-beta.vercel.app/api/chat");
       const res = await fetch("https://memory-api-beta.vercel.app/api/chat", {
         method: "POST",
 
