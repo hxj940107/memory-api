@@ -40,6 +40,8 @@ export default function Conversations() {
 
       const data = await res.json();
 
+      console.log("聊天列表API返回:", data);
+
       setList(
         data
           .map((item: Conversation) => ({
