@@ -501,9 +501,12 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    height: 105,
-    paddingTop: 45,
+    height: 65,
+
+    paddingTop: 25,
+
     paddingHorizontal: 20,
+
     justifyContent: "center",
   },
 
@@ -518,7 +521,9 @@ const styles = StyleSheet.create({
 
   chatContent: {
     paddingHorizontal: 20,
-    paddingTop: 20,
+
+    paddingTop: 0,
+
     paddingBottom: 20,
   },
 
@@ -536,8 +541,10 @@ const styles = StyleSheet.create({
 
   userRow: {
     alignItems: "flex-end",
-    marginTop: 20,
-    marginBottom: 25,
+
+    marginTop: 12,
+
+    marginBottom: 18,
   },
 
   userBubble: {
@@ -553,21 +560,21 @@ const styles = StyleSheet.create({
   userText: {
     fontSize: 17,
     color: "#4B5563",
-    lineHeight: 22,
+    lineHeight: 24,
   },
-
   aiBox: {
-    maxWidth: "72%",
+    maxWidth: "75%",
+    alignSelf: "flex-start",
     backgroundColor: "#F4F4F4",
     borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
   },
 
   aiText: {
-    fontSize: 16,
+    fontSize: 17,
     color: "#444",
-    lineHeight: 21,
+    lineHeight: 24,
   },
 
   typingDots: {
