@@ -299,74 +299,79 @@ export default function ConversationList() {
       />
 
       {menuVisible && selected && (
-        <View style={styles.menuLayer}>
-          <Animated.View
-            style={[
-              styles.menu,
-
-              {
-                left: 40,
-
-                top: menuPosition.y,
-              },
-
-              {
-                opacity: menuAnim,
-
-                transform: [
-                  {
-                    translateY: menuAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 0],
-                    }),
-                  },
-
-                  {
-                    scale: menuAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.96, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
+        <Pressable style={styles.menuLayer} onPress={hideMenu}>
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation();
+            }}
           >
-            <Text
-              style={styles.menuTitle}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {selected.title}
-            </Text>
+            <Animated.View
+              style={[
+                styles.menu,
 
-            <Pressable
-              onPress={() => {
-                editTitle(selected);
-                hideMenu();
-              }}
-            >
-              <Text style={styles.menuText}>重命名</Text>
-            </Pressable>
+                {
+                  left: 40,
+                  top: menuPosition.y,
+                },
 
-            <Pressable
-              onPress={() => {
-                togglePin(selected);
-              }}
+                {
+                  opacity: menuAnim,
+
+                  transform: [
+                    {
+                      translateY: menuAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 0],
+                      }),
+                    },
+
+                    {
+                      scale: menuAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.96, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}
             >
-              <Text style={styles.menuText}>
-                {selected.is_pinned ? "取消置顶" : "置顶"}
+              <Text
+                style={styles.menuTitle}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {selected.title}
               </Text>
-            </Pressable>
 
-            <Pressable
-              onPress={() => {
-                deleteConversation(selected);
-              }}
-            >
-              <Text style={styles.deleteText}>删除</Text>
-            </Pressable>
-          </Animated.View>
-        </View>
+              <Pressable
+                onPress={() => {
+                  editTitle(selected);
+                  hideMenu();
+                }}
+              >
+                <Text style={styles.menuText}>重命名</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  togglePin(selected);
+                }}
+              >
+                <Text style={styles.menuText}>
+                  {selected.is_pinned ? "取消置顶" : "置顶"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  deleteConversation(selected);
+                }}
+              >
+                <Text style={styles.deleteText}>删除</Text>
+              </Pressable>
+            </Animated.View>
+          </Pressable>
+        </Pressable>
       )}
     </View>
   );
