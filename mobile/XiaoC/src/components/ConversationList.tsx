@@ -7,9 +7,10 @@ import {
   Alert,
   Animated,
   Easing,
+  Dimensions,
 } from "react-native";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 import { router } from "expo-router";
 
@@ -21,6 +22,31 @@ type Conversation = {
   is_pinned?: boolean;
 };
 
+function ConversationItem({
+  item,
+  onOpen,
+  onLongPress,
+}: {
+  item: Conversation;
+  onOpen: () => void;
+  onLongPress: (ref: React.RefObject<View | null>) => void;
+}) {
+  const itemRef = useRef<View>(null);
+
+  return (
+    <Pressable
+      ref={itemRef}
+      style={[styles.item, item.is_pinned && styles.pinnedItem]}
+      onPress={onOpen}
+      onLongPress={() => {
+        onLongPress(itemRef);
+      }}
+    >
+      <Text style={styles.itemTitle}>{item.title}</Text>
+    </Pressable>
+  );
+}
+
 export default function ConversationList() {
   const [list, setList] = useState<Conversation[]>([]);
 
@@ -29,7 +55,7 @@ export default function ConversationList() {
   const [menuVisible, setMenuVisible] = useState(false);
 
   const [menuPosition, setMenuPosition] = useState({
-    x: 20,
+    x: 40,
     y: 0,
   });
 
@@ -236,41 +262,38 @@ export default function ConversationList() {
         data={list}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
-          <Pressable
-            style={[styles.item, item.is_pinned && styles.pinnedItem]}
-            onPress={() => {
+          <ConversationItem
+            item={item}
+            onOpen={() => {
               router.push({
                 pathname: "/chat",
-
                 params: {
                   conversationId: item.id,
                 },
               });
             }}
-            onLongPress={(event) => {
-              const { pageY } = event.nativeEvent;
+            onLongPress={(ref) => {
+              ref.current?.measure((x, y, width, height, pageX, pageY) => {
+                const menuHeight = 150;
 
-              const menuHeight = 130;
+                const screenHeight = Dimensions.get("window").height;
 
-              const bottomSpace = 850 - pageY;
+                if (pageY + height + menuHeight + 20 > screenHeight) {
+                  setMenuPosition({
+                    x: 40,
+                    y: pageY - menuHeight - 2,
+                  });
+                } else {
+                  setMenuPosition({
+                    x: 40,
+                    y: pageY + height + 6,
+                  });
+                }
 
-              if (bottomSpace < menuHeight) {
-                setMenuPosition({
-                  x: 40,
-                  y: pageY - 120,
-                });
-              } else {
-                setMenuPosition({
-                  x: 40,
-                  y: pageY + 10,
-                });
-              }
-
-              showMenu(item);
+                showMenu(item);
+              });
             }}
-          >
-            <Text style={styles.itemTitle}>{item.title}</Text>
-          </Pressable>
+          />
         )}
         ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
       />
@@ -294,7 +317,7 @@ export default function ConversationList() {
                   {
                     translateY: menuAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [20, 0],
+                      outputRange: [0, 0],
                     }),
                   },
 
@@ -366,7 +389,7 @@ const styles = StyleSheet.create({
 
     color: "#333",
 
-    marginBottom: 20,
+    marginBottom: 24,
   },
 
   item: {
@@ -401,18 +424,13 @@ const styles = StyleSheet.create({
 
   menuLayer: {
     position: "absolute",
-
-    top: 60,
-
-    left: 20,
-
-    right: 20,
-
+    top: 0,
+    left: 0,
+    right: 0,
     bottom: 0,
-
-    zIndex: 100,
   },
   menu: {
+    position: "absolute",
     width: 200,
     left: 20,
 
@@ -420,7 +438,7 @@ const styles = StyleSheet.create({
 
     borderRadius: 18,
 
-    paddingVertical: 8,
+    paddingVertical: 4,
 
     shadowColor: "#000",
 
@@ -442,21 +460,21 @@ const styles = StyleSheet.create({
 
     paddingHorizontal: 16,
 
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
 
   menuText: {
-    fontSize: 16,
+    fontSize: 17,
 
     paddingHorizontal: 16,
 
-    paddingVertical: 11,
+    paddingVertical: 12,
 
     color: "#222",
   },
 
   deleteText: {
-    fontSize: 16,
+    fontSize: 17,
 
     paddingHorizontal: 18,
 
