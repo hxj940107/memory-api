@@ -7,14 +7,24 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Animated,
+  Animated as RNAnimated,
 } from "react-native";
+
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from "react-native-reanimated";
 
 import { router, useLocalSearchParams } from "expo-router";
 
 import { useState, useRef, useEffect } from "react";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import ConversationList from "../components/ConversationList";
 
 type Message = {
   role: "user" | "assistant";
@@ -23,24 +33,24 @@ type Message = {
 
 function TypingDots() {
   const dots = [
-    new Animated.Value(0),
-    new Animated.Value(0),
-    new Animated.Value(0),
+    new RNAnimated.Value(0),
+    new RNAnimated.Value(0),
+    new RNAnimated.Value(0),
   ];
 
   useEffect(() => {
     const animations = dots.map((dot, index) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(index * 200),
+      RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.delay(index * 200),
 
-          Animated.timing(dot, {
+          RNAnimated.timing(dot, {
             toValue: 1,
             duration: 600,
             useNativeDriver: true,
           }),
 
-          Animated.timing(dot, {
+          RNAnimated.timing(dot, {
             toValue: 0,
             duration: 600,
             useNativeDriver: true,
@@ -63,7 +73,7 @@ function TypingDots() {
   return (
     <View style={styles.typingDots}>
       {dots.map((dot, index) => (
-        <Animated.View
+        <RNAnimated.View
           key={index}
           style={[
             styles.dot,
@@ -81,18 +91,18 @@ function TypingDots() {
 }
 
 function AnimatedMessage({ children }: { children: React.ReactNode }) {
-  const opacity = useState(new Animated.Value(0))[0];
-  const translateY = useState(new Animated.Value(8))[0];
+  const opacity = useState(new RNAnimated.Value(0))[0];
+  const translateY = useState(new RNAnimated.Value(8))[0];
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, {
+    RNAnimated.parallel([
+      RNAnimated.timing(opacity, {
         toValue: 1,
         duration: 250,
         useNativeDriver: true,
       }),
 
-      Animated.timing(translateY, {
+      RNAnimated.timing(translateY, {
         toValue: 0,
         duration: 250,
         useNativeDriver: true,
@@ -101,7 +111,7 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Animated.View
+    <RNAnimated.View
       style={{
         opacity,
         transform: [
@@ -112,7 +122,7 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-    </Animated.View>
+    </RNAnimated.View>
   );
 }
 export default function ChatScreen() {
@@ -133,6 +143,40 @@ export default function ChatScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const [conversationId, setConversationId] = useState<string | null>(null);
+
+  const [drawerVisible, setDrawerVisible] = useState(false);
+
+  const drawerProgress = useSharedValue(0);
+
+  /*
+const panGesture = Gesture.Pan()
+  .onUpdate((event) => {
+    const progress = Math.min(
+      Math.max(event.translationX / 300, 0),
+      1,
+    );
+
+    drawerProgress.value = progress;
+  })
+  .onEnd((event) => {
+    if (event.translationX > 120) {
+      drawerProgress.value = withSpring(1);
+    } else {
+      drawerProgress.value = withSpring(0);
+    }
+  });
+*/
+
+  const drawerStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        {
+          translateX:
+            drawerProgress.value * 0 - (1 - drawerProgress.value) * 350,
+        },
+      ],
+    };
+  });
 
   // 正在输入动画
 
@@ -297,8 +341,33 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View style={styles.container}>
+        {drawerVisible && (
+          <View style={styles.drawerOverlay}>
+            <Pressable
+              style={styles.drawerCloseArea}
+              onPress={() => {
+                drawerProgress.value = withSpring(0);
+
+                setTimeout(() => {
+                  setDrawerVisible(false);
+                }, 250);
+              }}
+            />
+
+            <Animated.View style={[styles.drawer, drawerStyle]}>
+              <ConversationList />
+            </Animated.View>
+          </View>
+        )}
+
         <View style={styles.header}>
-          <Pressable onPress={() => router.push("/conversations")}>
+          <Pressable
+            onPress={() => {
+              setDrawerVisible(true);
+
+              drawerProgress.value = withSpring(1);
+            }}
+          >
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
         </View>
@@ -376,6 +445,59 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
+  drawerCloseArea: {
+    position: "absolute",
+
+    top: 0,
+    right: 0,
+    bottom: 0,
+
+    width: "24%",
+  },
+  drawerOverlay: {
+    position: "absolute",
+
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+
+    backgroundColor: "rgba(0,0,0,0.06)",
+
+    zIndex: 100,
+  },
+
+  drawer: {
+    width: "76%",
+
+    height: "100%",
+
+    backgroundColor: "#F7F7F8",
+
+    paddingTop: 60,
+
+    paddingHorizontal: 28,
+
+    borderTopRightRadius: 18,
+
+    borderBottomRightRadius: 18,
+
+    overflow: "hidden",
+
+    shadowColor: "#000",
+
+    shadowOpacity: 0.08,
+
+    shadowRadius: 24,
+
+    shadowOffset: {
+      width: 8,
+      height: 0,
+    },
+
+    elevation: 8,
+  },
+
   container: {
     flex: 1,
     backgroundColor: "#FFFFFF",
