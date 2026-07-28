@@ -474,20 +474,17 @@ const styles = StyleSheet.create({
 
     backgroundColor: "#F7F7F8",
 
-    paddingTop: 60,
+    paddingTop: 0,
 
-    paddingHorizontal: 28,
+    paddingHorizontal: 0,
 
     borderTopRightRadius: 18,
-
     borderBottomRightRadius: 18,
 
     overflow: "hidden",
 
     shadowColor: "#000",
-
     shadowOpacity: 0.08,
-
     shadowRadius: 24,
 
     shadowOffset: {

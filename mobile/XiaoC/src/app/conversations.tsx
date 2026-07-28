@@ -230,7 +230,6 @@ export default function Conversations() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>聊天记录</Text>
-
       <FlatList
         data={list}
         keyExtractor={(item) => item.id}
@@ -262,117 +261,6 @@ export default function Conversations() {
         ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
       />
 
-      {menuVisible && selected && (
-        <Pressable
-          style={styles.overlay}
-          onPress={() => {
-            hideMenu();
-          }}
-        >
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation();
-            }}
-          >
-            <Animated.View
-              style={[
-                styles.menu,
-
-                {
-                  opacity: menuAnim,
-
-                  transform: [
-                    {
-                      translateY: menuAnim.interpolate({
-                        inputRange: [0, 1],
-
-                        outputRange: [40, 0],
-                      }),
-                    },
-
-                    {
-                      scale: menuAnim.interpolate({
-                        inputRange: [0, 1],
-
-                        outputRange: [0.95, 1],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            >
-              <Text style={styles.menuTitle}>{selected.title}</Text>
-
-              <Pressable
-                onPress={() => {
-                  editTitle(selected);
-
-                  hideMenu();
-                }}
-                style={({ pressed }) => [pressed && styles.pressedItem]}
-              >
-                <Text style={styles.menuText}>重命名</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => {
-                  togglePin(selected);
-                }}
-                style={({ pressed }) => [pressed && styles.pressedItem]}
-              >
-                <Text style={styles.menuText}>
-                  {selected?.is_pinned ? "取消置顶" : "置顶"}
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => {
-                  deleteConversation(selected);
-                }}
-              >
-                <Text style={styles.deleteText}>删除</Text>
-              </Pressable>
-            </Animated.View>
-          </Pressable>
-
-          <Animated.View
-            style={[
-              styles.cancelButton,
-
-              {
-                opacity: menuAnim,
-
-                transform: [
-                  {
-                    translateY: menuAnim.interpolate({
-                      inputRange: [0, 1],
-
-                      outputRange: [40, 0],
-                    }),
-                  },
-
-                  {
-                    scale: menuAnim.interpolate({
-                      inputRange: [0, 1],
-
-                      outputRange: [0.96, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <Pressable
-              onPress={() => {
-                hideMenu();
-              }}
-            >
-              <Text style={styles.menuText}>取消</Text>
-            </Pressable>
-          </Animated.View>
-        </Pressable>
-      )}
-
       <Pressable style={styles.newButton} onPress={createNewChat}>
         <Text style={styles.newButtonText}>＋ 新聊天</Text>
       </Pressable>
@@ -387,20 +275,11 @@ const styles = StyleSheet.create({
 
   overlay: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
 
-    backgroundColor: "rgba(0,0,0,0.25)",
+    width: 0,
 
-    justifyContent: "flex-end",
-
-    paddingBottom: 35,
-
-    zIndex: 50,
+    height: 0,
   },
-
   menu: {
     width: "78%",
     alignSelf: "center",
@@ -461,7 +340,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
 
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
 
     paddingHorizontal: 20,
 
