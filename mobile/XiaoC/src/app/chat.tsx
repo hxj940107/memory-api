@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated as RNAnimated,
+  Dimensions,
 } from "react-native";
 
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -16,6 +17,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  runOnJS,
 } from "react-native-reanimated";
 
 import { router, useLocalSearchParams } from "expo-router";
@@ -128,10 +131,14 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
 export default function ChatScreen() {
   const params = useLocalSearchParams();
 
+  const drawerWidth = Dimensions.get("window").width * 0.76;
+
   const incomingConversationId = params.conversationId as string | undefined;
+
   useEffect(() => {
     restoreConversation();
   }, [incomingConversationId]);
+
   const [message, setMessage] = useState("");
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -148,31 +155,44 @@ export default function ChatScreen() {
 
   const drawerProgress = useSharedValue(0);
 
-  /*
-const panGesture = Gesture.Pan()
-  .onUpdate((event) => {
-    const progress = Math.min(
-      Math.max(event.translationX / 300, 0),
-      1,
-    );
-
-    drawerProgress.value = progress;
-  })
-  .onEnd((event) => {
-    if (event.translationX > 120) {
-      drawerProgress.value = withSpring(1);
-    } else {
-      drawerProgress.value = withSpring(0);
-    }
+  const overlayStyle = useAnimatedStyle(() => {
+    return {
+      opacity: drawerProgress.value,
+    };
   });
-*/
+
+  const openDrawer = () => {
+    setDrawerVisible(true);
+
+    drawerProgress.value = withTiming(1, {
+      duration: 350,
+    });
+  };
+
+  /*
+  const panGesture = Gesture.Pan()
+    .onUpdate((event) => {
+      const progress = Math.min(
+        Math.max(event.translationX / 300, 0),
+        1,
+      );
+
+      drawerProgress.value = progress;
+    })
+    .onEnd((event) => {
+      if (event.translationX > 120) {
+        drawerProgress.value = withSpring(1);
+      } else {
+        drawerProgress.value = withSpring(0);
+      }
+    });
+  */
 
   const drawerStyle = useAnimatedStyle(() => {
     return {
       transform: [
         {
-          translateX:
-            drawerProgress.value * 0 - (1 - drawerProgress.value) * 350,
+          translateX: (1 - drawerProgress.value) * -drawerWidth,
         },
       ],
     };
@@ -346,11 +366,17 @@ const panGesture = Gesture.Pan()
             <Pressable
               style={styles.drawerCloseArea}
               onPress={() => {
-                drawerProgress.value = withSpring(0);
-
-                setTimeout(() => {
-                  setDrawerVisible(false);
-                }, 250);
+                drawerProgress.value = withTiming(
+                  0,
+                  {
+                    duration: 300,
+                  },
+                  (finished) => {
+                    if (finished) {
+                      runOnJS(setDrawerVisible)(false);
+                    }
+                  },
+                );
               }}
             />
 
@@ -362,11 +388,13 @@ const panGesture = Gesture.Pan()
 
         <View style={styles.header}>
           <Pressable
-            onPress={() => {
-              setDrawerVisible(true);
-
-              drawerProgress.value = withSpring(1);
+            style={{
+              width: 44,
+              height: 44,
+              justifyContent: "center",
+              alignItems: "center",
             }}
+            onPress={openDrawer}
           >
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
@@ -445,6 +473,15 @@ const panGesture = Gesture.Pan()
 }
 
 const styles = StyleSheet.create({
+  menuButton: {
+    width: 44,
+
+    height: 44,
+
+    justifyContent: "center",
+
+    alignItems: "center",
+  },
   drawerCloseArea: {
     position: "absolute",
 
@@ -501,11 +538,11 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    height: 65,
+    height: 105,
 
-    paddingTop: 25,
+    paddingTop: 35,
 
-    paddingHorizontal: 20,
+    paddingLeft: 28,
 
     justifyContent: "center",
   },
@@ -513,6 +550,7 @@ const styles = StyleSheet.create({
   menuText: {
     fontSize: 26,
     color: "#555",
+    marginTop: 8,
   },
 
   chat: {
