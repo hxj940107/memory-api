@@ -24,7 +24,9 @@ export default function Conversations() {
   const [list, setList] = useState<Conversation[]>([]);
 
   const [selected, setSelected] = useState<Conversation | null>(null);
-
+  const [currentConversationId, setCurrentConversationId] = useState<
+    string | null
+  >(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const menuAnim = useState(new Animated.Value(0))[0];
 
@@ -39,8 +41,6 @@ export default function Conversations() {
       );
 
       const data = await res.json();
-
-      console.log("聊天列表API返回:", data);
 
       setList(
         data
@@ -76,35 +76,69 @@ export default function Conversations() {
       mass: 0.9,
     }).start();
   };
+
+  const editTitle = (item: Conversation | null) => {
+    if (!item) return;
+
+    Alert.prompt("重命名", "请输入新的标题", [
+      {
+        text: "取消",
+        style: "cancel",
+      },
+
+      {
+        text: "确定",
+
+        onPress: async (title?: string) => {
+          if (!title) return;
+
+          await fetch(
+            "https://memory-api-beta.vercel.app/api/conversation-title",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type": "application/json",
+              },
+
+              body: JSON.stringify({
+                user_id: "user",
+
+                conversation_id: item.id,
+
+                action: "rename",
+
+                title,
+              }),
+            },
+          );
+
+          loadConversations();
+        },
+      },
+    ]);
+  };
+
   const togglePin = async (item: Conversation | null) => {
     if (!item) return;
 
-    const res = await fetch(
-      "https://memory-api-beta.vercel.app/api/conversation-title",
-      {
-        method: "POST",
+    await fetch("https://memory-api-beta.vercel.app/api/conversation-title", {
+      method: "POST",
 
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          user_id: "user",
-
-          conversation_id: item.id,
-
-          action: "pin",
-
-          is_pinned: !item.is_pinned,
-        }),
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
 
-    const data = await res.json();
+      body: JSON.stringify({
+        user_id: "user",
 
-    hideMenu();
+        conversation_id: item.id,
 
-    loadConversations();
+        action: "pin",
+
+        is_pinned: !item.is_pinned,
+      }),
+    });
 
     hideMenu();
 
@@ -202,8 +236,14 @@ export default function Conversations() {
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <Pressable
-            style={styles.item}
+            style={[
+              styles.item,
+
+              item.id === currentConversationId && styles.activeItem,
+            ]}
             onPress={() => {
+              setCurrentConversationId(item.id);
+
               router.push({
                 pathname: "/chat",
 
@@ -216,11 +256,7 @@ export default function Conversations() {
               showMenu(item);
             }}
           >
-            <Text style={styles.itemTitle}>
-              {item.is_pinned ? "⭐ " : ""}
-
-              {item.title}
-            </Text>
+            <Text style={styles.itemTitle}>{item.title}</Text>
           </Pressable>
         )}
         ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
@@ -273,6 +309,7 @@ export default function Conversations() {
 
                   hideMenu();
                 }}
+                style={({ pressed }) => [pressed && styles.pressedItem]}
               >
                 <Text style={styles.menuText}>重命名</Text>
               </Pressable>
@@ -281,6 +318,7 @@ export default function Conversations() {
                 onPress={() => {
                   togglePin(selected);
                 }}
+                style={({ pressed }) => [pressed && styles.pressedItem]}
               >
                 <Text style={styles.menuText}>
                   {selected?.is_pinned ? "取消置顶" : "置顶"}
@@ -343,6 +381,10 @@ export default function Conversations() {
 }
 
 const styles = StyleSheet.create({
+  pressedItem: {
+    backgroundColor: "#E5E5EA",
+  },
+
   overlay: {
     position: "absolute",
     top: 0,
@@ -438,10 +480,15 @@ const styles = StyleSheet.create({
 
   item: {
     paddingVertical: 18,
+  },
 
-    borderBottomWidth: 1,
+  activeItem: {
+    backgroundColor: "#F2F2F7",
+    borderRadius: 12,
+  },
 
-    borderColor: "#EEEEEE",
+  pinnedItem: {
+    backgroundColor: "rgba(120,120,128,0.08)",
   },
 
   itemTitle: {
