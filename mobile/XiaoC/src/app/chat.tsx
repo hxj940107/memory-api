@@ -162,10 +162,14 @@ export default function ChatScreen() {
   });
 
   const openDrawer = () => {
+    drawerProgress.value = 0;
+
     setDrawerVisible(true);
 
-    drawerProgress.value = withTiming(1, {
-      duration: 350,
+    requestAnimationFrame(() => {
+      drawerProgress.value = withTiming(1, {
+        duration: 350,
+      });
     });
   };
 
@@ -192,12 +196,11 @@ export default function ChatScreen() {
     return {
       transform: [
         {
-          translateX: (1 - drawerProgress.value) * -drawerWidth,
+          translateX: (1 - drawerProgress.value) * -300,
         },
       ],
     };
   });
-
   // 正在输入动画
 
   const restoreConversation = async () => {
