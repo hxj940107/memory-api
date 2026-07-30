@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { AI_MODELS } from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -59,7 +60,7 @@ ${content}
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "anthropic/claude-sonnet-4.6",
+        model: AI_MODELS.memoryJudge,
         messages: [
           {
             role: "user",

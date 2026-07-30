@@ -46,6 +46,7 @@ export default async function handler(req, res) {
       .from("conversations")
       .select("conversation_id")
       .eq("conversation_id", conversation_id)
+      .eq("user_id", user_id)
       .maybeSingle()
 
     if (!exists) {

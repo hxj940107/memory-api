@@ -1,3 +1,5 @@
+import { AI_MODELS } from "../lib/aiConfig.js"
+
 export default async function handler(req, res) {
 
   try {
@@ -101,7 +103,7 @@ ${message}
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "anthropic/claude-sonnet-4.6",
+          model: AI_MODELS.memoryJudge,
           messages: [
             {
               role: "user",

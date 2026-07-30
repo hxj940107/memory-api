@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { AI_MODELS } from "../lib/aiConfig.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -50,7 +51,7 @@ ${newMessages}
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "anthropic/claude-haiku-4.5",
+        model: AI_MODELS.summary,
         messages: [
           {
             role: "user",

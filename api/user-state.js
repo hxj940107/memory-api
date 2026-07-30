@@ -9,11 +9,42 @@ export default async function handler(req, res) {
 
   try {
 
-    const user_id = req.query.user_id
+    const user_id =
+      req.method === "GET"
+        ? req.query.user_id
+        : req.body.user_id
 
     if (!user_id) {
       return res.status(400).json({
         error: "user_id required"
+      })
+    }
+
+    if (req.method === "POST") {
+      const { last_conversation = null } = req.body
+
+      const { error } = await supabase
+        .from("user_state")
+        .upsert({
+          user_id,
+          last_conversation,
+          updated_at: new Date().toISOString()
+        })
+
+      if (error) {
+        return res.status(500).json({
+          error: error.message
+        })
+      }
+
+      return res.status(200).json({
+        last_conversation
+      })
+    }
+
+    if (req.method !== "GET") {
+      return res.status(405).json({
+        error: "Only GET or POST allowed"
       })
     }
 
