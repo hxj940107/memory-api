@@ -11,27 +11,37 @@ import {
   Dimensions,
 } from "react-native";
 
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   runOnJS,
 } from "react-native-reanimated";
 
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 
 import { useState, useRef, useEffect } from "react";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
 import ConversationList from "../components/ConversationList";
+import { APP_USER_ID, apiJson, postJson } from "../config/api";
+import {
+  getBestLastConversation,
+  saveLastConversation,
+} from "../lib/conversationState";
 
 type Message = {
   role: "user" | "assistant";
   text: string;
+};
+
+type HistoryItem = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type ChatResponse = {
+  reply?: string;
+  conversation_id?: string;
 };
 
 function TypingDots() {
@@ -134,10 +144,11 @@ export default function ChatScreen() {
   const drawerWidth = Dimensions.get("window").width * 0.76;
 
   const incomingConversationId = params.conversationId as string | undefined;
+  const shouldStartNewChat = params.newChat === "1";
 
   useEffect(() => {
     restoreConversation();
-  }, [incomingConversationId]);
+  }, [incomingConversationId, shouldStartNewChat]);
 
   const [message, setMessage] = useState("");
 
@@ -154,12 +165,6 @@ export default function ChatScreen() {
   const [drawerVisible, setDrawerVisible] = useState(false);
 
   const drawerProgress = useSharedValue(0);
-
-  const overlayStyle = useAnimatedStyle(() => {
-    return {
-      opacity: drawerProgress.value,
-    };
-  });
 
   const openDrawer = () => {
     drawerProgress.value = 0;
@@ -207,11 +212,14 @@ export default function ChatScreen() {
     try {
       setLoadingHistory(true);
 
-      const savedId = await AsyncStorage.getItem("conversation_id");
+      if (shouldStartNewChat) {
+        setConversationId(null);
+        setMessages([]);
+        setLoadingHistory(false);
+        return;
+      }
 
-      const id = incomingConversationId || savedId;
-
-      console.log("恢复ID:", id);
+      const id = incomingConversationId || (await getBestLastConversation());
 
       if (!id) {
         setLoadingHistory(false);
@@ -220,14 +228,15 @@ export default function ChatScreen() {
 
       setConversationId(id);
 
-      const res = await fetch(
-        `https://memory-api-beta.vercel.app/api/history?user_id=user&conversation_id=${id}`,
-      );
-
-      const data = await res.json();
+      const data = await apiJson<HistoryItem[]>("/api/history", {
+        query: {
+          user_id: APP_USER_ID,
+          conversation_id: id,
+        },
+      });
 
       setMessages(
-        data.map((item: any) => ({
+        data.map((item) => ({
           role: item.role,
           text: item.content,
         })),
@@ -269,67 +278,24 @@ export default function ChatScreen() {
     }, 100);
 
     try {
-      console.log("请求地址:", "https://memory-api-beta.vercel.app/api/chat");
-      const res = await fetch("https://memory-api-beta.vercel.app/api/chat", {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          user_id: "user",
-
-          message: userText,
-
-          conversation_id: conversationId,
-        }),
+      const data = await postJson<ChatResponse>("/api/chat", {
+        user_id: APP_USER_ID,
+        message: userText,
+        conversation_id: conversationId,
       });
-
-      const data = await res.json();
 
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
 
-        await AsyncStorage.setItem("conversation_id", data.conversation_id);
+        await saveLastConversation(data.conversation_id);
 
-        // 第一次创建会话时生成标题
         if (!conversationId) {
-          await fetch(
-            "https://memory-api-beta.vercel.app/api/conversation-title",
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type": "application/json",
-              },
-
-              body: JSON.stringify({
-                user_id: "user",
-                conversation_id: data.conversation_id,
-                message: userText,
-              }),
-            },
-          );
+          await postJson("/api/conversation-title", {
+            user_id: APP_USER_ID,
+            conversation_id: data.conversation_id,
+            message: userText,
+          });
         }
-      }
-      if (!conversationId) {
-        await fetch(
-          "https://memory-api-beta.vercel.app/api/conversation-title",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type": "application/json",
-            },
-
-            body: JSON.stringify({
-              user_id: "user",
-              conversation_id: data.conversation_id,
-              message: userText,
-            }),
-          },
-        );
       }
 
       setIsTyping(false);
@@ -339,7 +305,7 @@ export default function ChatScreen() {
 
         {
           role: "assistant",
-          text: data.reply,
+          text: data.reply || "小C暂时没有回复。",
         },
       ]);
     } catch (error) {

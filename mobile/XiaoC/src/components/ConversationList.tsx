@@ -13,6 +13,11 @@ import {
 import { useEffect, useState, useRef } from "react";
 
 import { router } from "expo-router";
+import { APP_USER_ID, apiJson, postJson } from "../config/api";
+import {
+  clearLastConversation,
+  saveLastConversation,
+} from "../lib/conversationState";
 
 type Conversation = {
   id: string;
@@ -65,31 +70,63 @@ export default function ConversationList() {
     loadConversations();
   }, []);
 
+  const normalizeConversations = (data: Conversation[]) =>
+    data
+      .map((item: Conversation) => ({
+        ...item,
+        is_pinned: item.is_pinned ?? false,
+      }))
+      .sort((a: Conversation, b: Conversation) => {
+        if (a.is_pinned === b.is_pinned) {
+          return 0;
+        }
+
+        return a.is_pinned ? -1 : 1;
+      });
+
+  const fetchConversations = async () => {
+    const data = await apiJson<Conversation[]>("/api/conversations", {
+      query: {
+        user_id: APP_USER_ID,
+      },
+    });
+
+    return normalizeConversations(data);
+  };
+
   const loadConversations = async () => {
     try {
-      const res = await fetch(
-        "https://memory-api-beta.vercel.app/api/conversations?user_id=user",
-      );
-
-      const data = await res.json();
-
-      setList(
-        data
-          .map((item: Conversation) => ({
-            ...item,
-            is_pinned: item.is_pinned ?? false,
-          }))
-          .sort((a: Conversation, b: Conversation) => {
-            if (a.is_pinned === b.is_pinned) {
-              return 0;
-            }
-
-            return a.is_pinned ? -1 : 1;
-          }),
-      );
+      setList(await fetchConversations());
     } catch (error) {
       console.log(error);
     }
+  };
+
+  const restoreAfterDelete = async () => {
+    const nextList = await fetchConversations();
+    const nextConversation = nextList[0];
+
+    setList(nextList);
+
+    if (nextConversation) {
+      await saveLastConversation(nextConversation.id);
+
+      router.replace({
+        pathname: "/chat",
+        params: {
+          conversationId: nextConversation.id,
+        },
+      });
+      return;
+    }
+
+    await clearLastConversation();
+    router.replace({
+      pathname: "/chat",
+      params: {
+        newChat: "1",
+      },
+    });
   };
 
   const showMenu = (item: Conversation) => {
@@ -139,26 +176,12 @@ export default function ConversationList() {
         onPress: async (title?: string) => {
           if (!title) return;
 
-          await fetch(
-            "https://memory-api-beta.vercel.app/api/conversation-title",
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type": "application/json",
-              },
-
-              body: JSON.stringify({
-                user_id: "user",
-
-                conversation_id: item.id,
-
-                action: "rename",
-
-                title,
-              }),
-            },
-          );
+          await postJson("/api/conversation-title", {
+            user_id: APP_USER_ID,
+            conversation_id: item.id,
+            action: "rename",
+            title,
+          });
 
           loadConversations();
         },
@@ -169,22 +192,11 @@ export default function ConversationList() {
   const togglePin = async (item: Conversation | null) => {
     if (!item) return;
 
-    await fetch("https://memory-api-beta.vercel.app/api/conversation-title", {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json",
-      },
-
-      body: JSON.stringify({
-        user_id: "user",
-
-        conversation_id: item.id,
-
-        action: "pin",
-
-        is_pinned: !item.is_pinned,
-      }),
+    await postJson("/api/conversation-title", {
+      user_id: APP_USER_ID,
+      conversation_id: item.id,
+      action: "pin",
+      is_pinned: !item.is_pinned,
     });
 
     hideMenu();
@@ -215,26 +227,13 @@ export default function ConversationList() {
             style: "destructive",
 
             onPress: async () => {
-              await fetch(
-                "https://memory-api-beta.vercel.app/api/conversation-title",
-                {
-                  method: "POST",
+              await postJson("/api/conversation-title", {
+                user_id: APP_USER_ID,
+                conversation_id: item.id,
+                action: "delete",
+              });
 
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-
-                  body: JSON.stringify({
-                    user_id: "user",
-
-                    conversation_id: item.id,
-
-                    action: "delete",
-                  }),
-                },
-              );
-
-              loadConversations();
+              await restoreAfterDelete();
             },
           },
         ],
@@ -264,7 +263,9 @@ export default function ConversationList() {
         renderItem={({ item }) => (
           <ConversationItem
             item={item}
-            onOpen={() => {
+            onOpen={async () => {
+              await saveLastConversation(item.id);
+
               router.push({
                 pathname: "/chat",
                 params: {

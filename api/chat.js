@@ -1,6 +1,15 @@
 import { createClient } from "@supabase/supabase-js"
 import fs from "fs"
 import path from "path"
+import {
+  AI_MODELS,
+  CACHE_POLICY,
+  CONTEXT_BUDGET,
+  normalizeCacheText,
+  shouldRunMemoryJudge,
+  trimList,
+  trimText
+} from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -72,6 +81,13 @@ async function getMemorySmart(user_id, message, conversation_id) {
   console.log("CACHE KEYS:", [...memorySearchCache.keys()]);
 
   const key = `${user_id}`;
+  const dynamicCacheKey = [
+    conversation_id,
+    normalizeCacheText(
+      message,
+      CACHE_POLICY.dynamicMemoryKeyChars
+    )
+  ].join(":");
 
   let pinMemory = [];
   let dynamicMemory = [];
@@ -128,15 +144,25 @@ async function getMemorySmart(user_id, message, conversation_id) {
   // 2. dynamic memory cache
   // ==========================
 
-  if (memorySearchCache.has(conversation_id)) {
+  const cachedDynamicMemory =
+    memorySearchCache.get(dynamicCacheKey);
+
+  if (
+    cachedDynamicMemory &&
+    Date.now() - cachedDynamicMemory.createdAt <
+      CACHE_POLICY.dynamicMemoryTtlMs
+  ) {
 
     console.log("MEMORY SEARCH CACHE HIT");
 
-    dynamicMemory = memorySearchCache.get(
-      conversation_id
-    );
+    dynamicMemory = cachedDynamicMemory.value;
 
   } else {
+
+    if (cachedDynamicMemory) {
+      memorySearchCache.delete(dynamicCacheKey);
+      console.log("MEMORY SEARCH CACHE EXPIRED");
+    }
 
     console.log("MEMORY SEARCH CACHE MISS");
 
@@ -177,13 +203,10 @@ async function getMemorySmart(user_id, message, conversation_id) {
         // Limit dynamic memory size
         // ==========================
 
-        const MAX_MEMORY_LENGTH = 1000;
-
-
         const trimmedMemory =
-          searchTxt.slice(
-            0,
-            MAX_MEMORY_LENGTH
+          trimText(
+            searchTxt,
+            CONTEXT_BUDGET.dynamicMemoryChars
           );
 
 
@@ -193,14 +216,17 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
 
         memorySearchCache.set(
-          conversation_id,
-          dynamicMemory
+          dynamicCacheKey,
+          {
+            value: dynamicMemory,
+            createdAt: Date.now()
+          }
         );
 
 
         console.log(
           "CACHE SAVED:",
-          conversation_id
+          dynamicCacheKey
         );
 
       }
@@ -262,7 +288,7 @@ async function judgeMemory(content, previousContent) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "anthropic/claude-haiku-4.5",
+          model: AI_MODELS.memoryJudge,
           messages: [
             {
               role: "system",
@@ -445,7 +471,7 @@ async function callLLM(messages) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "anthropic/claude-sonnet-4.6",
+        model: AI_MODELS.chat,
         messages
       })
     }
@@ -481,7 +507,11 @@ export default async function handler(req, res) {
 await saveMessage(user_id, "user", message, cid)
 
 // 2. history
-const history = await getRecentMessages(user_id, cid, 6)
+const history = await getRecentMessages(
+  user_id,
+  cid,
+  CONTEXT_BUDGET.recentHistoryMessages + 1
+)
 
 // ==========================
 // Rolling Summary Trigger
@@ -555,7 +585,10 @@ if (message.startsWith("/搜 ")) {
   console.log("WEB SEARCH:", query);
   console.log(webSearch);
 
-  webSearch = await searchWeb(query);
+  webSearch = trimText(
+    await searchWeb(query),
+    CONTEXT_BUDGET.webSearchChars
+  );
 
   userMessage = query;
 
@@ -584,7 +617,10 @@ try {
     .eq("conversation_id", cid)
     .maybeSingle();
 
-  summaryMemory = data?.summary || "";
+  summaryMemory = trimText(
+    data?.summary || "",
+    CONTEXT_BUDGET.summaryChars
+  );
 
 } catch (err) {
 
@@ -593,7 +629,6 @@ try {
 }
 
 const messages = [
-
   {
     role: "system",
     content: `
@@ -602,7 +637,7 @@ ${systemPrompt}
 
 【Identity｜人格层】
 
-${pinMemory.join("\n")}
+${trimList(pinMemory, CONTEXT_BUDGET.pinMemoryChars).join("\n")}
 
 
 【Summary｜长期摘要】
@@ -612,7 +647,7 @@ ${summaryMemory}
 
 【Memory｜相关长期记忆】
 
-${dynamicMemory.join("\n")}
+${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
 `
   },
 
@@ -633,7 +668,10 @@ ${webSearch}`
       ? [
           {
             type: "text",
-            text: userMessage
+            text: trimText(
+              userMessage,
+              CONTEXT_BUDGET.userMessageChars
+            )
           },
           {
             type: "image_url",
@@ -642,7 +680,10 @@ ${webSearch}`
             }
           }
         ]
-      : userMessage
+      : trimText(
+          userMessage,
+          CONTEXT_BUDGET.userMessageChars
+        )
   }
 
 ]
@@ -650,8 +691,13 @@ ${webSearch}`
 console.log("\n===== FINAL MESSAGES =====")
 
 messages.forEach((m, i) => {
+  const contentLength =
+    typeof m.content === "string"
+      ? m.content.length
+      : JSON.stringify(m.content).length
+
   console.log(
-    `${i}. ${m.role} | ${m.content.length} chars`
+    `${i}. ${m.role} | ${contentLength} chars`
   )
 })
 
@@ -703,41 +749,42 @@ console.log("======================================\n")
       .filter(m => m.role === "user")
       .slice(1)[0]
 
-    const judgeResult = await judgeMemory(
-      message,
-      lastUserMessage?.content || ""
-    )
+    const judgeResult = shouldRunMemoryJudge(message)
+      ? await judgeMemory(
+          message,
+          lastUserMessage?.content || ""
+        )
+      : {
+          save: false,
+          content: ""
+        }
 
     if (judgeResult.save) {
       try {
-        const lastUser = [...history]
-          .reverse()
-          .filter(m => m.role === "user")
-          .slice(1)[0]
-
-        if (lastUser) {
-
-          const holdRes = await fetch(
-            "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                content: judgeResult.content
-              })
-            }
-          )
-
-          if (holdRes.ok) {
-
-            memorySearchCache.delete(cid)
-
-            console.log("MEMORY SEARCH CACHE CLEARED:", cid)
-            console.log("Saved memory:", judgeResult.content)
-
+        const holdRes = await fetch(
+          "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              user_id,
+              content: judgeResult.content
+            })
           }
+        )
+
+        if (holdRes.ok) {
+
+          for (const key of memorySearchCache.keys()) {
+            if (key.startsWith(`${cid}:`)) {
+              memorySearchCache.delete(key)
+            }
+          }
+
+          console.log("MEMORY SEARCH CACHE CLEARED:", cid)
+          console.log("Saved memory:", judgeResult.content)
 
         }
 
@@ -756,4 +803,3 @@ console.log("======================================\n")
     return res.status(500).json({ error: e.message })
   }
 }
-
