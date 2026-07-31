@@ -11,6 +11,7 @@ import {
   Modal,
   Animated as RNAnimated,
   Dimensions,
+  Keyboard,
 } from "react-native";
 
 import Animated, {
@@ -18,6 +19,7 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   runOnJS,
+  ReduceMotion,
 } from "react-native-reanimated";
 
 import { useLocalSearchParams } from "expo-router";
@@ -35,9 +37,14 @@ import {
 } from "../lib/conversationState";
 
 type Message = {
+  id: string;
   role: "user" | "assistant";
   text: string;
   imageUri?: string;
+  imageUris?: string[];
+  imageAsset?: ImagePicker.ImagePickerAsset;
+  imageAssets?: ImagePicker.ImagePickerAsset[];
+  status?: "sending" | "sent" | "failed";
 };
 
 type HistoryItem = {
@@ -45,6 +52,7 @@ type HistoryItem = {
   content: string;
   metadata?: {
     imageUrl?: string;
+    imageUrls?: string[];
   };
 };
 
@@ -53,7 +61,25 @@ type ChatResponse = {
   conversation_id?: string;
 };
 
-function TypingDots() {
+const MAX_IMAGES_PER_MESSAGE = 4;
+
+const createLocalMessageId = () =>
+  `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const IMAGE_PLACEHOLDER_TEXTS = new Set([
+  "（图片）",
+  "请看这张图片。",
+  "请看这张照片。",
+]);
+
+const shouldHideImagePlaceholderText = (content: string, imageUrl?: string) =>
+  !!imageUrl && IMAGE_PLACEHOLDER_TEXTS.has(content.trim());
+
+function TypingDots({
+  compact = false,
+}: {
+  compact?: boolean;
+}) {
   const dots = [
     new RNAnimated.Value(0),
     new RNAnimated.Value(0),
@@ -93,7 +119,7 @@ function TypingDots() {
   }, []);
 
   return (
-    <View style={styles.typingDots}>
+    <View style={[styles.typingDots, compact && styles.typingDotsCompact]}>
       {dots.map((dot, index) => (
         <RNAnimated.View
           key={index}
@@ -161,8 +187,9 @@ export default function ChatScreen() {
 
   const [message, setMessage] = useState("");
 
-  const [selectedImage, setSelectedImage] =
-    useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [selectedImages, setSelectedImages] = useState<
+    ImagePicker.ImagePickerAsset[]
+  >([]);
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
 
@@ -178,6 +205,29 @@ export default function ChatScreen() {
 
   const [drawerVisible, setDrawerVisible] = useState(false);
 
+  const scrollToLatestMessage = (animated = true) => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({
+        animated,
+      });
+    });
+  };
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+
+    const keyboardShowSubscription = Keyboard.addListener(showEvent, () => {
+      setTimeout(() => {
+        scrollToLatestMessage(true);
+      }, 80);
+    });
+
+    return () => {
+      keyboardShowSubscription.remove();
+    };
+  }, []);
+
   const drawerProgress = useSharedValue(0);
 
   const openDrawer = () => {
@@ -187,24 +237,28 @@ export default function ChatScreen() {
 
     requestAnimationFrame(() => {
       drawerProgress.value = withTiming(1, {
-        duration: 350,
+        duration: 260,
+        reduceMotion: ReduceMotion.Never,
       });
     });
   };
 
-  const closeDrawer = () => {
-    drawerProgress.value = withTiming(
-      0,
-      {
-        duration: 300,
-      },
-      (finished) => {
-        if (finished) {
-          runOnJS(setDrawerVisible)(false);
-        }
-      },
-    );
-  };
+  const closeDrawer = () =>
+    new Promise<void>((resolve) => {
+      drawerProgress.value = withTiming(
+        0,
+        {
+          duration: 220,
+          reduceMotion: ReduceMotion.Never,
+        },
+        (finished) => {
+          if (finished) {
+            runOnJS(setDrawerVisible)(false);
+            runOnJS(resolve)();
+          }
+        },
+      );
+    });
 
   /*
   const panGesture = Gesture.Pan()
@@ -229,9 +283,15 @@ export default function ChatScreen() {
     return {
       transform: [
         {
-          translateX: (1 - drawerProgress.value) * -300,
+          translateX: (1 - drawerProgress.value) * -drawerWidth,
         },
       ],
+    };
+  });
+
+  const drawerOverlayStyle = useAnimatedStyle(() => {
+    return {
+      opacity: drawerProgress.value,
     };
   });
   // 正在输入动画
@@ -244,8 +304,10 @@ export default function ChatScreen() {
       setMessages((prev) => [
         ...prev,
         {
+          id: createLocalMessageId(),
           role: "assistant",
           text: "需要先允许访问相册，才能发图片给小C看。",
+          status: "sent",
         },
       ]);
       return;
@@ -253,13 +315,15 @@ export default function ChatScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_IMAGES_PER_MESSAGE,
       allowsEditing: false,
       quality: 0.8,
       base64: false,
     });
 
     if (!result.canceled) {
-      setSelectedImage(result.assets[0]);
+      setSelectedImages(result.assets.slice(0, MAX_IMAGES_PER_MESSAGE));
     }
   };
 
@@ -300,12 +364,19 @@ export default function ChatScreen() {
 
       setMessages(
         data.map((item) => ({
+          id: createLocalMessageId(),
           role: item.role,
-          text:
-            item.metadata?.imageUrl && item.content === "（图片）"
-              ? ""
-              : item.content,
+          imageUris: item.metadata?.imageUrls || (
+            item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
+          ),
+          text: shouldHideImagePlaceholderText(
+            item.content,
+            item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
+          )
+            ? ""
+            : item.content,
           imageUri: item.metadata?.imageUrl,
+          status: "sent",
         })),
       );
     } catch (error) {
@@ -315,16 +386,13 @@ export default function ChatScreen() {
     }
   };
 
-  const sendMessage = async () => {
-    if (!message.trim() && !selectedImage) return;
+  const submitMessage = async (messageToSend: Message) => {
+    const userText = messageToSend.text || "请看这张图片。";
+    const imagesToSend = messageToSend.imageAssets || [];
+    const imageUrls = [];
 
-    const displayText = message.trim();
-    const userText = displayText || "请看这张图片。";
-    const imageToSend = selectedImage;
-    let imageUrl;
-
-    if (imageToSend) {
-      const maxImageSide = 1024;
+    for (const imageToSend of imagesToSend) {
+      const maxImageSide = imagesToSend.length > 1 ? 768 : 1024;
       const width = imageToSend.width || maxImageSide;
       const height = imageToSend.height || maxImageSide;
       const longestSide = Math.max(width, height);
@@ -344,41 +412,21 @@ export default function ChatScreen() {
         imageToSend.uri,
         resizeAction,
         {
-          compress: 0.65,
+          compress: imagesToSend.length > 1 ? 0.58 : 0.65,
           format: ImageManipulator.SaveFormat.JPEG,
           base64: true,
         },
       );
 
-      imageUrl = compressedImage.base64
-        ? `data:image/jpeg;base64,${compressedImage.base64}`
-        : undefined;
+      if (compressedImage.base64) {
+        imageUrls.push(`data:image/jpeg;base64,${compressedImage.base64}`);
+      }
     }
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        text: displayText,
-        imageUri: imageToSend?.uri,
-      },
-    ]);
-
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({
-        animated: true,
-      });
-    }, 100);
-
-    setMessage("");
-    setSelectedImage(null);
 
     setIsTyping(true);
 
     setTimeout(() => {
-      scrollRef.current?.scrollToEnd({
-        animated: true,
-      });
+      scrollToLatestMessage(true);
     }, 100);
 
     try {
@@ -386,7 +434,10 @@ export default function ChatScreen() {
         user_id: APP_USER_ID,
         message: userText,
         conversation_id: conversationId,
-        imageUrl,
+        imageUrl: imageUrls[0],
+        imageUrls,
+      }, {
+        timeoutMs: 45000,
       });
 
       if (data.conversation_id) {
@@ -403,14 +454,27 @@ export default function ChatScreen() {
         }
       }
 
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSend.id
+            ? {
+                ...item,
+                status: "sent",
+              }
+            : item,
+        ),
+      );
+
       setIsTyping(false);
 
       setMessages((prev) => [
         ...prev,
 
         {
+          id: createLocalMessageId(),
           role: "assistant",
           text: data.reply || "小C暂时没有回复。",
+          status: "sent",
         },
       ]);
     } catch (error) {
@@ -418,34 +482,86 @@ export default function ChatScreen() {
 
       setIsTyping(false);
 
-      setMessages((prev) => [
-        ...prev,
-
-        {
-          role: "assistant",
-          text: "小C暂时连接不上啦。",
-        },
-      ]);
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSend.id
+            ? {
+                ...item,
+                status: "failed",
+              }
+            : item,
+        ),
+      );
     }
+  };
+
+  const sendMessage = async () => {
+    if (!message.trim() && selectedImages.length === 0) return;
+
+    const newMessage: Message = {
+      id: createLocalMessageId(),
+      role: "user",
+      text: message.trim(),
+      imageUri: selectedImages[0]?.uri,
+      imageUris: selectedImages.map((image) => image.uri),
+      imageAsset: selectedImages[0],
+      imageAssets: selectedImages,
+      status: "sending",
+    };
+
+    setMessages((prev) => [...prev, newMessage]);
+
+    setTimeout(() => {
+      scrollToLatestMessage(true);
+    }, 100);
+
+    setMessage("");
+    setSelectedImages([]);
+
+    await submitMessage(newMessage);
+  };
+
+  const retryMessage = async (messageToRetry: Message) => {
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === messageToRetry.id
+          ? {
+              ...item,
+              status: "sending",
+            }
+          : item,
+      ),
+    );
+
+    await submitMessage({
+      ...messageToRetry,
+      status: "sending",
+    });
   };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={0}
     >
       <View style={styles.container}>
         {drawerVisible && (
-          <View style={styles.drawerOverlay}>
+          <Animated.View
+            style={[styles.drawerOverlay, drawerOverlayStyle]}
+          >
             <Pressable
               style={styles.drawerCloseArea}
               onPress={closeDrawer}
             />
 
             <Animated.View style={[styles.drawer, drawerStyle]}>
-              <ConversationList onNavigate={closeDrawer} />
+              <ConversationList
+                currentConversationId={conversationId}
+                onNavigate={closeDrawer}
+              />
             </Animated.View>
-          </View>
+          </Animated.View>
         )}
 
         <View style={styles.header}>
@@ -484,19 +600,62 @@ export default function ChatScreen() {
             )
           )}
 
-          {messages.map((item, index) =>
+          {messages.map((item) =>
             item.role === "user" ? (
-              <AnimatedMessage key={index}>
+              <AnimatedMessage key={item.id}>
                 <View style={styles.userRow}>
-                  {item.imageUri && (
-                    <Pressable
-                      onPress={() => setPreviewImageUri(item.imageUri || null)}
-                    >
-                      <Image
-                        source={{ uri: item.imageUri }}
-                        style={styles.messageImage}
-                      />
-                    </Pressable>
+                  {(item.imageUris?.length || item.imageUri) && (
+                    <View style={styles.messageImageWrap}>
+                      <View
+                        style={[
+                          styles.messageImageGrid,
+                          (item.imageUris || [item.imageUri]).length > 1 &&
+                            styles.messageImageGridMultiple,
+                        ]}
+                      >
+                        {(item.imageUris || [item.imageUri]).map(
+                          (imageUri, imageIndex) =>
+                            imageUri && (
+                              <Pressable
+                                key={`${item.id}_${imageIndex}`}
+                                onPress={() =>
+                                  item.status !== "sending" &&
+                                  setPreviewImageUri(imageUri)
+                                }
+                              >
+                                <Image
+                                  source={{ uri: imageUri }}
+                                  style={[
+                                    styles.messageImage,
+                                    (item.imageUris || [item.imageUri]).length >
+                                      1 && styles.messageImageGridItem,
+                                    (item.status === "sending" ||
+                                      item.status === "failed") &&
+                                      styles.messageImageSending,
+                                  ]}
+                                />
+                              </Pressable>
+                            ),
+                        )}
+                      </View>
+
+                      {item.status === "sending" && (
+                        <View style={styles.imageSendingOverlay}>
+                          <TypingDots compact />
+                        </View>
+                      )}
+
+                      {item.status === "failed" && (
+                        <Pressable
+                          style={styles.imageRetryOverlay}
+                          onPress={() => retryMessage(item)}
+                        >
+                          <View style={styles.retryButton}>
+                            <Text style={styles.retryText}>↻</Text>
+                          </View>
+                        </Pressable>
+                      )}
+                    </View>
                   )}
 
                   {!!item.text && (
@@ -504,10 +663,21 @@ export default function ChatScreen() {
                       <Text style={styles.userText}>{item.text}</Text>
                     </View>
                   )}
+
+                  {!item.imageUri &&
+                    !item.imageUris?.length &&
+                    item.status === "failed" && (
+                    <Pressable
+                      style={styles.textRetryButton}
+                      onPress={() => retryMessage(item)}
+                    >
+                      <Text style={styles.retryText}>↻</Text>
+                    </Pressable>
+                  )}
                 </View>
               </AnimatedMessage>
             ) : (
-              <AnimatedMessage key={index}>
+              <AnimatedMessage key={item.id}>
                 <View style={styles.aiBox}>
                   <Text style={styles.aiText}>
                     {item.text.replace(/\s*\n\s*/g, "\n")}
@@ -521,21 +691,34 @@ export default function ChatScreen() {
         </ScrollView>
 
         <View style={styles.inputArea}>
-          {selectedImage && (
-            <View style={styles.attachmentPreview}>
-              <Pressable onPress={() => setPreviewImageUri(selectedImage.uri)}>
-                <Image
-                  source={{ uri: selectedImage.uri }}
-                  style={styles.attachmentImage}
-                />
-              </Pressable>
+          {selectedImages.length > 0 && (
+            <View style={styles.attachmentPreviewList}>
+              {selectedImages.map((selectedImage, index) => (
+                <View
+                  key={`${selectedImage.uri}_${index}`}
+                  style={styles.attachmentPreview}
+                >
+                  <Pressable
+                    onPress={() => setPreviewImageUri(selectedImage.uri)}
+                  >
+                    <Image
+                      source={{ uri: selectedImage.uri }}
+                      style={styles.attachmentImage}
+                    />
+                  </Pressable>
 
-              <Pressable
-                style={styles.removeAttachment}
-                onPress={() => setSelectedImage(null)}
-              >
-                <Text style={styles.removeAttachmentText}>×</Text>
-              </Pressable>
+                  <Pressable
+                    style={styles.removeAttachment}
+                    onPress={() =>
+                      setSelectedImages((prev) =>
+                        prev.filter((_, imageIndex) => imageIndex !== index),
+                      )
+                    }
+                  >
+                    <Text style={styles.removeAttachmentText}>×</Text>
+                  </Pressable>
+                </View>
+              ))}
             </View>
           )}
 
@@ -550,13 +733,19 @@ export default function ChatScreen() {
               placeholderTextColor="#999"
               value={message}
               onChangeText={setMessage}
+              onFocus={() => {
+                setTimeout(() => {
+                  scrollToLatestMessage(true);
+                }, 120);
+              }}
               multiline
             />
 
             <Pressable
               style={[
                 styles.sendButton,
-                (message.length > 0 || selectedImage) && styles.sendActive,
+                (message.length > 0 || selectedImages.length > 0) &&
+                  styles.sendActive,
               ]}
               onPress={sendMessage}
             >
@@ -746,20 +935,16 @@ const styles = StyleSheet.create({
     height: 20,
   },
 
+  typingDotsCompact: {
+    marginBottom: 0,
+  },
+
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: "#D0D0D0",
     marginRight: 6,
-  },
-
-  activeDot: {
-    backgroundColor: "#888888",
-  },
-
-  midDot: {
-    backgroundColor: "#B5B5B5",
   },
 
   inputArea: {
@@ -770,6 +955,14 @@ const styles = StyleSheet.create({
   attachmentPreview: {
     alignSelf: "flex-start",
     marginBottom: 10,
+    marginRight: 10,
+  },
+
+  attachmentPreviewList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    marginBottom: 2,
   },
 
   attachmentImage: {
@@ -855,6 +1048,83 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 8,
     backgroundColor: "#E9EEF5",
+  },
+
+  messageImageGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    maxWidth: 190,
+  },
+
+  messageImageGridMultiple: {
+    maxWidth: 190,
+  },
+
+  messageImageGridItem: {
+    width: 88,
+    height: 88,
+    marginLeft: 6,
+    marginBottom: 6,
+    borderRadius: 14,
+  },
+
+  messageImageWrap: {
+    position: "relative",
+  },
+
+  messageImageSending: {
+    opacity: 0.45,
+  },
+
+  imageSendingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 8,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+
+  imageRetryOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 8,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+
+  retryButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(40,40,40,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  textRetryButton: {
+    marginTop: -8,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(40,40,40,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  retryText: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    lineHeight: 24,
+    marginTop: -1,
   },
 
   imagePreviewOverlay: {

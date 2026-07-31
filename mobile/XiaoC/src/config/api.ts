@@ -22,10 +22,38 @@ export async function apiJson<T>(
   path: string,
   options?: RequestInit & {
     query?: Record<string, QueryValue>;
+    timeoutMs?: number;
   },
 ): Promise<T> {
-  const { query, ...fetchOptions } = options || {};
-  const response = await fetch(apiUrl(path, query), fetchOptions);
+  const { query, timeoutMs = 20000, signal, ...fetchOptions } = options || {};
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  if (signal) {
+    signal.addEventListener("abort", () => {
+      controller.abort();
+    });
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(apiUrl(path, query), {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("Request timeout");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
@@ -40,12 +68,19 @@ export async function apiJson<T>(
   return data as T;
 }
 
-export function postJson<T>(path: string, body: unknown) {
+export function postJson<T>(
+  path: string,
+  body: unknown,
+  options?: {
+    timeoutMs?: number;
+  },
+) {
   return apiJson<T>(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    timeoutMs: options?.timeoutMs,
   });
 }
