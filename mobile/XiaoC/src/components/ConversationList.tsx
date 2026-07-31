@@ -27,12 +27,25 @@ type Conversation = {
   is_pinned?: boolean;
 };
 
+type ConversationListRow =
+  | {
+      type: "section";
+      id: string;
+      title: string;
+    }
+  | {
+      type: "conversation";
+      item: Conversation;
+    };
+
 function ConversationItem({
   item,
+  isCurrent,
   onOpen,
   onLongPress,
 }: {
   item: Conversation;
+  isCurrent: boolean;
   onOpen: () => void;
   onLongPress: (ref: React.RefObject<View | null>) => void;
 }) {
@@ -41,7 +54,7 @@ function ConversationItem({
   return (
     <Pressable
       ref={itemRef}
-      style={[styles.item, item.is_pinned && styles.pinnedItem]}
+      style={[styles.item, isCurrent && styles.currentItem]}
       onPress={onOpen}
       onLongPress={() => {
         onLongPress(itemRef);
@@ -54,8 +67,10 @@ function ConversationItem({
 
 export default function ConversationList({
   onNavigate,
+  currentConversationId,
 }: {
-  onNavigate?: () => void;
+  onNavigate?: () => void | Promise<void>;
+  currentConversationId?: string | null;
 }) {
   const [list, setList] = useState<Conversation[]>([]);
 
@@ -105,6 +120,36 @@ export default function ConversationList({
       console.log(error);
     }
   };
+
+  const pinnedConversations = list.filter((item) => item.is_pinned);
+  const normalConversations = list.filter((item) => !item.is_pinned);
+  const hasPinnedConversations = pinnedConversations.length > 0;
+
+  const rows: ConversationListRow[] = hasPinnedConversations
+    ? [
+        {
+          type: "section",
+          id: "pinned",
+          title: "置顶",
+        },
+        ...pinnedConversations.map((item) => ({
+          type: "conversation" as const,
+          item,
+        })),
+        {
+          type: "section",
+          id: "normal",
+          title: "最近",
+        },
+        ...normalConversations.map((item) => ({
+          type: "conversation" as const,
+          item,
+        })),
+      ]
+    : list.map((item) => ({
+        type: "conversation" as const,
+        item,
+      }));
 
   const restoreAfterDelete = async () => {
     const nextList = await fetchConversations();
@@ -248,7 +293,7 @@ export default function ConversationList({
   const createNewChat = async () => {
     await clearLastConversation();
 
-    onNavigate?.();
+    await onNavigate?.();
 
     router.push({
       pathname: "/chat",
@@ -270,45 +315,61 @@ export default function ConversationList({
       </View>
 
       <FlatList
-        data={list}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <ConversationItem
-            item={item}
-            onOpen={async () => {
-              await saveLastConversation(item.id);
-              onNavigate?.();
+        data={rows}
+        keyExtractor={(row) =>
+          row.type === "section" ? row.id : row.item.id
+        }
+        renderItem={({ item: row }) => {
+          if (row.type === "section") {
+            return <Text style={styles.sectionTitle}>{row.title}</Text>;
+          }
 
-              router.push({
-                pathname: "/chat",
-                params: {
-                  conversationId: item.id,
-                },
-              });
-            }}
-            onLongPress={(ref) => {
-              ref.current?.measure((x, y, width, height, pageX, pageY) => {
-                const menuHeight = 150;
+          const item = row.item;
 
-                const screenHeight = Dimensions.get("window").height;
-
-                if (pageY + height + menuHeight + 20 > screenHeight) {
-                  setMenuPosition({
-                    x: 40,
-                    y: pageY - menuHeight - 2,
-                  });
-                } else {
-                  setMenuPosition({
-                    x: 40,
-                    y: pageY + height + 6,
-                  });
+          return (
+            <ConversationItem
+              item={item}
+              isCurrent={item.id === currentConversationId}
+              onOpen={async () => {
+                if (item.id === currentConversationId) {
+                  await onNavigate?.();
+                  return;
                 }
 
-                showMenu(item);
-              });
-            }}
-          />
-        )}
+                await saveLastConversation(item.id);
+                await onNavigate?.();
+
+                router.push({
+                  pathname: "/chat",
+                  params: {
+                    conversationId: item.id,
+                  },
+                });
+              }}
+              onLongPress={(ref) => {
+                ref.current?.measure((x, y, width, height, pageX, pageY) => {
+                  const menuHeight = 150;
+
+                  const screenHeight = Dimensions.get("window").height;
+
+                  if (pageY + height + menuHeight + 20 > screenHeight) {
+                    setMenuPosition({
+                      x: 40,
+                      y: pageY - menuHeight - 2,
+                    });
+                  } else {
+                    setMenuPosition({
+                      x: 40,
+                      y: pageY + height + 6,
+                    });
+                  }
+
+                  showMenu(item);
+                });
+              }}
+            />
+          );
+        }}
         ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
       />
 
@@ -358,6 +419,10 @@ export default function ConversationList({
               </Text>
 
               <Pressable
+                style={({ pressed }) => [
+                  styles.menuAction,
+                  pressed && styles.menuActionPressed,
+                ]}
                 onPress={() => {
                   editTitle(selected);
                   hideMenu();
@@ -367,6 +432,10 @@ export default function ConversationList({
               </Pressable>
 
               <Pressable
+                style={({ pressed }) => [
+                  styles.menuAction,
+                  pressed && styles.menuActionPressed,
+                ]}
                 onPress={() => {
                   togglePin(selected);
                 }}
@@ -377,6 +446,10 @@ export default function ConversationList({
               </Pressable>
 
               <Pressable
+                style={({ pressed }) => [
+                  styles.menuAction,
+                  pressed && styles.menuActionPressed,
+                ]}
                 onPress={() => {
                   deleteConversation(selected);
                 }}
@@ -427,18 +500,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
 
-  pinnedItem: {
-    backgroundColor: "rgba(120,120,128,0.12)",
-  },
-
-  pressedItem: {
-    backgroundColor: "#E5E5EA",
+  currentItem: {
+    backgroundColor: "rgba(120,120,128,0.08)",
   },
 
   itemTitle: {
     fontSize: 17,
 
     color: "#444",
+  },
+
+  sectionTitle: {
+    marginTop: 8,
+
+    marginBottom: 6,
+
+    paddingHorizontal: 8,
+
+    fontSize: 13,
+
+    fontWeight: "500",
+
+    color: "#8E8E93",
   },
 
   empty: {
@@ -488,6 +571,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
 
     paddingVertical: 8,
+  },
+
+  menuAction: {
+    borderRadius: 12,
+
+    marginHorizontal: 4,
+  },
+
+  menuActionPressed: {
+    backgroundColor: "rgba(120,120,128,0.10)",
   },
 
   menuText: {

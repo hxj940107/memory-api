@@ -46,7 +46,7 @@ async function saveMessage(user_id, role, content, conversation_id) {
   })
 }
 
-async function saveUserMessage(user_id, content, conversation_id, imageUrl) {
+async function saveUserMessage(user_id, content, conversation_id, imageUrls = []) {
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -55,9 +55,10 @@ async function saveUserMessage(user_id, content, conversation_id, imageUrl) {
       role: "user",
       content,
       conversation_id,
-      metadata: imageUrl
+      metadata: imageUrls.length > 0
         ? {
-            imageUrl
+            imageUrl: imageUrls[0],
+            imageUrls
           }
         : {}
     })
@@ -488,13 +489,19 @@ export default async function handler(req, res) {
       user_id = APP_USER.defaultUserId, 
       message, 
       conversation_id,
-      imageUrl
+      imageUrl,
+      imageUrls
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
+    const normalizedImageUrls = Array.isArray(imageUrls)
+      ? imageUrls.slice(0, 4).filter(Boolean)
+      : imageUrl
+        ? [imageUrl]
+        : []
 
 // 1. save user msg
-await saveUserMessage(user_id, message, cid, imageUrl)
+await saveUserMessage(user_id, message, cid, normalizedImageUrls)
 
 // 2. history
 const history = await getRecentMessages(
@@ -664,7 +671,7 @@ ${webSearch}`
 
   {
     role: "user",
-    content: imageUrl
+    content: normalizedImageUrls.length > 0
       ? [
           {
             type: "text",
@@ -673,12 +680,12 @@ ${webSearch}`
               CONTEXT_BUDGET.userMessageChars
             )
           },
-          {
+          ...normalizedImageUrls.map(url => ({
             type: "image_url",
             image_url: {
-              url: imageUrl
+              url
             }
-          }
+          }))
         ]
       : trimText(
           userMessage,

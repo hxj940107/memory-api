@@ -45,9 +45,20 @@ The highest principle is Experience First. Every change should be judged by whet
 ## Latest Progress
 
 - Added mobile image attachments in chat.
-- Images are picked from the photo library, compressed before sending, and sent through the existing `imageUrl` path.
+- Image sending now supports up to 4 selected images per message.
+- Images are picked from the photo library, compressed before sending, and sent through `imageUrls` while keeping `imageUrl` compatibility for older single-image messages.
 - Image metadata is saved with messages so refreshed history can show sent images.
 - Image thumbnails can be opened in a full-screen preview.
+- Image-only history messages hide default placeholder text such as "请看这张图片。".
+- Image messages now show sending, sent, failed, and retry states in the chat UI.
+- Mobile API requests have timeout handling so offline/failed sends do not remain stuck indefinitely.
+- Improved keyboard behavior so the latest chat content stays visible when the input is focused.
+- Improved drawer behavior:
+  - drawer open/close now animates even when iOS reduced motion is enabled
+  - navigation waits for the close animation before switching conversations
+  - the current conversation is highlighted with a light iOS-style background
+  - pinned and normal conversations are separated only when pinned conversations exist
+  - context menu actions have pressed-state feedback
 - Added `metadata jsonb` requirement for the `messages` table.
 - Added `last_conversation` and `updated_at` requirements for the `user_state` table.
 - Added `docs/MOBILE_UI_DIRECTION.md` for the broader iMessage-like mobile design direction.
@@ -59,6 +70,7 @@ The highest principle is Experience First. Every change should be judged by whet
   - PIN memory cache has a 30-minute TTL and does not cache empty results
   - dynamic memory search query includes recent user messages plus the current message
   - Supabase `memories` now acts as a stable memory fallback in chat context
+- Confirmed Ombre Brain pinned memories now reach XiaoC through `PIN MEMORY`; XiaoC can remember the user's identity and dog-related pinned memory.
 - Strengthened `prompt/system.md` so XiaoC uses known memories naturally and keeps a stable warm/rational/mature voice.
 
 ## Database Changes Applied Manually
@@ -79,10 +91,12 @@ add column if not exists updated_at timestamptz;
 ## Current Test Notes
 
 - Text chat works.
-- Image sending works after compression.
-- Image history display works after code deployment and new image messages.
+- Single-image sending works after compression.
+- Multi-image selection and chat UI display work locally; full multi-image model handling requires the updated backend deployment.
+- Image history display works for single-image messages and is prepared for `imageUrls` multi-image metadata.
 - Full-screen image preview works.
-- The main remaining high-priority test is memory behavior after the latest Ombre Brain retrieval changes are pushed and deployed.
+- Image send failure shows a retry affordance instead of staying stuck.
+- Memory retrieval from Ombre Brain is confirmed working in Vercel logs.
 
 Check Vercel logs after deployment for:
 
@@ -92,17 +106,17 @@ DYNAMIC QUERY:
 SEARCH RESULT:
 ```
 
-If `PIN MEMORY` is still empty, investigate Ombre Brain `/breath-hook` behavior and whether it accepts `user_id`.
+If `PIN MEMORY` becomes empty again, investigate Ombre Brain `/breath-hook`, Railway deployment health, and `memory-search` before changing XiaoC prompt.
 
 ## Next Recommended Step
 
-After switching to Mac:
+Before ending the current work session:
 
-1. Pull latest code.
-2. Confirm Vercel deployment completed.
-3. Test whether XiaoC remembers the user's identity, the dog, and other pinned Ombre Brain memories.
-4. Check Vercel logs for PIN/dynamic memory payloads.
-5. If memory is still missing, inspect Ombre Brain endpoints directly before changing XiaoC prompt again.
+1. Test the latest mobile UI changes in Expo.
+2. Commit and push the local mobile/backend changes together.
+3. Confirm Vercel deployment completed.
+4. Test multi-image model handling against the deployed backend.
+5. Check Vercel logs for request size, image payload handling, and memory payloads.
 
 ## Attribution Boundary
 
