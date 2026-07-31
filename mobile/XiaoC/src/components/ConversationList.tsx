@@ -52,7 +52,11 @@ function ConversationItem({
   );
 }
 
-export default function ConversationList() {
+export default function ConversationList({
+  onNavigate,
+}: {
+  onNavigate?: () => void;
+}) {
   const [list, setList] = useState<Conversation[]>([]);
 
   const [selected, setSelected] = useState<Conversation | null>(null);
@@ -241,21 +245,29 @@ export default function ConversationList() {
     }, 300);
   };
 
-  const createNewChat = () => {
-    const id = "chat_" + Date.now();
+  const createNewChat = async () => {
+    await clearLastConversation();
+
+    onNavigate?.();
 
     router.push({
       pathname: "/chat",
 
       params: {
-        conversationId: id,
+        newChat: "1",
       },
     });
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>聊天记录</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>聊天记录</Text>
+
+        <Pressable style={styles.newButton} onPress={createNewChat}>
+          <Text style={styles.newButtonText}>＋</Text>
+        </Pressable>
+      </View>
 
       <FlatList
         data={list}
@@ -265,6 +277,7 @@ export default function ConversationList() {
             item={item}
             onOpen={async () => {
               await saveLastConversation(item.id);
+              onNavigate?.();
 
               router.push({
                 pathname: "/chat",
@@ -394,8 +407,16 @@ const styles = StyleSheet.create({
     fontWeight: "600",
 
     color: "#333",
+  },
+
+  titleRow: {
+    flexDirection: "row",
 
     marginBottom: 24,
+
+    alignItems: "center",
+
+    justifyContent: "space-between",
   },
 
   item: {
@@ -490,22 +511,24 @@ const styles = StyleSheet.create({
   },
 
   newButton: {
-    height: 55,
+    width: 36,
 
-    borderRadius: 28,
+    height: 36,
 
-    backgroundColor: "#F2F2F2",
+    borderRadius: 18,
+
+    backgroundColor: "rgba(120,120,128,0.12)",
 
     justifyContent: "center",
 
     alignItems: "center",
-
-    marginBottom: 20,
   },
 
   newButtonText: {
-    fontSize: 18,
+    fontSize: 24,
 
     color: "#444",
+
+    lineHeight: 28,
   },
 });

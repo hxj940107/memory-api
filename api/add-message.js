@@ -19,7 +19,8 @@ export default async function handler(req, res) {
       user_id,
       role,
       content,
-      conversation_id = "default"
+      conversation_id = "default",
+      metadata = {}
     } = req.body
 
     // 保存消息
@@ -30,7 +31,8 @@ export default async function handler(req, res) {
           user_id,
           role,
           content,
-          conversation_id
+          conversation_id,
+          metadata
         }
       ])
       .select()

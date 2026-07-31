@@ -8,6 +8,10 @@ type UserStateResponse = {
   last_conversation: string | null;
 };
 
+type ConversationListItem = {
+  id: string;
+};
+
 export async function getLocalLastConversation() {
   return AsyncStorage.getItem(LAST_CONVERSATION_KEY);
 }
@@ -62,17 +66,44 @@ export async function getCloudLastConversation() {
   return state.last_conversation;
 }
 
+async function getConversationList() {
+  return apiJson<ConversationListItem[]>("/api/conversations", {
+    query: {
+      user_id: APP_USER_ID,
+    },
+  });
+}
+
 export async function getBestLastConversation() {
+  const localId = await getLocalLastConversation();
+
   try {
     const cloudId = await getCloudLastConversation();
+    const conversations = await getConversationList();
+    const ids = new Set(conversations.map((item) => item.id));
 
-    if (cloudId) {
+    if (cloudId && ids.has(cloudId)) {
       await saveLocalLastConversation(cloudId);
       return cloudId;
     }
+
+    if (localId && ids.has(localId)) {
+      await saveLastConversation(localId);
+      return localId;
+    }
+
+    const latestConversation = conversations[0];
+
+    if (latestConversation) {
+      await saveLastConversation(latestConversation.id);
+      return latestConversation.id;
+    }
+
+    await clearLastConversation();
+    return null;
   } catch (error) {
     console.log("Cloud conversation restore failed:", error);
   }
 
-  return getLocalLastConversation();
+  return localId;
 }

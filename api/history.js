@@ -37,7 +37,7 @@ export default async function handler(req, res) {
 
     const { data, error } = await supabase
       .from("messages")
-      .select("role, content, created_at")
+      .select("role, content, metadata, created_at")
       .eq("user_id", user_id)
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
@@ -54,7 +54,8 @@ export default async function handler(req, res) {
         .reverse()
         .map(item => ({
           role: item.role,
-          content: item.content
+          content: item.content,
+          metadata: item.metadata || {}
         }))
     )
 

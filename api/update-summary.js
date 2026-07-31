@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { AI_MODELS } from "../lib/aiConfig.js";
+import { AI_ENDPOINTS, AI_MODELS, APP_USER } from "../lib/aiConfig.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -29,6 +29,10 @@ ${newMessages}
 - 不要重复
 - 保持连续上下文
 - 控制在300字以内
+- 严格区分说话人：user 是用户，assistant 是小C
+- 不要把 assistant/小C 说过的话总结成用户说过、用户认为或用户经历过的事
+- 只有 user 明确表达过的信息，才能写入【人物】【事件】【计划】中的用户事实
+- assistant 的表达只可用于【关系】或【待继续】中描述互动氛围，不能当成用户事实
 
 输出格式：
 
@@ -43,7 +47,7 @@ ${newMessages}
 【待继续】`;
 
   const res = await fetch(
-    "https://openrouter.ai/api/v1/chat/completions",
+    AI_ENDPOINTS.openRouterChatCompletions,
     {
       method: "POST",
       headers: {
@@ -88,7 +92,10 @@ export default async function handler(req, res) {
       });
     }
 
-    const { conversation_id } = req.body;
+    const {
+      conversation_id,
+      user_id = APP_USER.defaultUserId
+    } = req.body;
 
     if (!conversation_id) {
       return res.status(400).json({
@@ -127,6 +134,7 @@ export default async function handler(req, res) {
       .from("messages")
       .select("role,content,created_at")
       .eq("conversation_id", conversation_id)
+      .eq("user_id", user_id)
       .order("created_at", {
         ascending: true
       });
