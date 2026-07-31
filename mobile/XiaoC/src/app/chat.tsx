@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Modal,
   Animated as RNAnimated,
   Dimensions,
 } from "react-native";
@@ -163,6 +164,8 @@ export default function ChatScreen() {
   const [selectedImage, setSelectedImage] =
     useState<ImagePicker.ImagePickerAsset | null>(null);
 
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+
   const [messages, setMessages] = useState<Message[]>([]);
 
   const [isTyping, setIsTyping] = useState(false);
@@ -298,7 +301,10 @@ export default function ChatScreen() {
       setMessages(
         data.map((item) => ({
           role: item.role,
-          text: item.content,
+          text:
+            item.metadata?.imageUrl && item.content === "（图片）"
+              ? ""
+              : item.content,
           imageUri: item.metadata?.imageUrl,
         })),
       );
@@ -312,7 +318,8 @@ export default function ChatScreen() {
   const sendMessage = async () => {
     if (!message.trim() && !selectedImage) return;
 
-    const userText = message.trim() || "（图片）";
+    const displayText = message.trim();
+    const userText = displayText || "请看这张图片。";
     const imageToSend = selectedImage;
     let imageUrl;
 
@@ -352,7 +359,7 @@ export default function ChatScreen() {
       ...prev,
       {
         role: "user",
-        text: userText,
+        text: displayText,
         imageUri: imageToSend?.uri,
       },
     ]);
@@ -481,16 +488,22 @@ export default function ChatScreen() {
             item.role === "user" ? (
               <AnimatedMessage key={index}>
                 <View style={styles.userRow}>
-                  <View style={styles.userBubble}>
-                    {item.imageUri && (
+                  {item.imageUri && (
+                    <Pressable
+                      onPress={() => setPreviewImageUri(item.imageUri || null)}
+                    >
                       <Image
                         source={{ uri: item.imageUri }}
                         style={styles.messageImage}
                       />
-                    )}
+                    </Pressable>
+                  )}
 
-                    <Text style={styles.userText}>{item.text}</Text>
-                  </View>
+                  {!!item.text && (
+                    <View style={styles.userBubble}>
+                      <Text style={styles.userText}>{item.text}</Text>
+                    </View>
+                  )}
                 </View>
               </AnimatedMessage>
             ) : (
@@ -510,10 +523,12 @@ export default function ChatScreen() {
         <View style={styles.inputArea}>
           {selectedImage && (
             <View style={styles.attachmentPreview}>
-              <Image
-                source={{ uri: selectedImage.uri }}
-                style={styles.attachmentImage}
-              />
+              <Pressable onPress={() => setPreviewImageUri(selectedImage.uri)}>
+                <Image
+                  source={{ uri: selectedImage.uri }}
+                  style={styles.attachmentImage}
+                />
+              </Pressable>
 
               <Pressable
                 style={styles.removeAttachment}
@@ -549,6 +564,33 @@ export default function ChatScreen() {
             </Pressable>
           </View>
         </View>
+
+        <Modal
+          visible={!!previewImageUri}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPreviewImageUri(null)}
+        >
+          <Pressable
+            style={styles.imagePreviewOverlay}
+            onPress={() => setPreviewImageUri(null)}
+          >
+            {previewImageUri && (
+              <Image
+                source={{ uri: previewImageUri }}
+                style={styles.imagePreview}
+                resizeMode="contain"
+              />
+            )}
+
+            <Pressable
+              style={styles.imagePreviewClose}
+              onPress={() => setPreviewImageUri(null)}
+            >
+              <Text style={styles.imagePreviewCloseText}>×</Text>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </View>
     </KeyboardAvoidingView>
   );
@@ -813,5 +855,35 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 8,
     backgroundColor: "#E9EEF5",
+  },
+
+  imagePreviewOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  imagePreview: {
+    width: "100%",
+    height: "88%",
+  },
+
+  imagePreviewClose: {
+    position: "absolute",
+    top: 58,
+    right: 24,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  imagePreviewCloseText: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    lineHeight: 30,
   },
 });

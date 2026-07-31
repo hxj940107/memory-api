@@ -80,18 +80,79 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse()
 }
 
+async function getStableMemories(user_id) {
+  const { data, error } = await supabase
+    .from("memories")
+    .select("content, metadata, created_at")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false })
+    .limit(30)
+
+  if (error || !data) {
+    if (error) {
+      console.error("stable memory load failed:", error)
+    }
+
+    return []
+  }
+
+  const unique = []
+  const seen = new Set()
+
+  for (const item of data) {
+    const content = String(item.content || "").trim()
+
+    if (!content || seen.has(content)) {
+      continue
+    }
+
+    seen.add(content)
+    unique.push(content)
+  }
+
+  return trimList(unique, CONTEXT_BUDGET.stableMemoryChars)
+}
+
 // --------------------
 // MEMORY (NEW LOGIC)
 // --------------------
-async function getMemorySmart(user_id, message, conversation_id) {
+function buildMemorySearchQuery(history, message) {
+  const recentUserMessages = (history || [])
+    .filter(item => item.role === "user")
+    .slice(-3)
+    .map(item => item.content)
+    .filter(Boolean)
+
+  return trimText(
+    [...recentUserMessages, message]
+      .join("\n")
+      .trim(),
+    600
+  )
+}
+
+function memoryUrl(pathname, query = {}) {
+  const url = new URL(pathname, AI_ENDPOINTS.memoryBaseUrl)
+
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== "") {
+      url.searchParams.set(key, String(value))
+    }
+  })
+
+  return url.toString()
+}
+
+async function getMemorySmart(user_id, message, conversation_id, history = []) {
   console.log("CONVERSATION ID:", conversation_id);
   console.log("CACHE KEYS:", [...memorySearchCache.keys()]);
 
   const key = `${user_id}`;
+  const memorySearchQuery = buildMemorySearchQuery(history, message)
   const dynamicCacheKey = [
     conversation_id,
     normalizeCacheText(
-      message,
+      memorySearchQuery,
       CACHE_POLICY.dynamicMemoryKeyChars
     )
   ].join(":");
@@ -103,20 +164,37 @@ async function getMemorySmart(user_id, message, conversation_id) {
   // 1. PIN memory cache
   // ==========================
 
-  if (memoryCache.has(key)) {
+  const cachedPinMemory =
+    memoryCache.get(key);
+
+  if (
+    cachedPinMemory &&
+    Date.now() - cachedPinMemory.createdAt <
+      CACHE_POLICY.pinMemoryTtlMs
+  ) {
 
     console.log("PIN CACHE HIT");
 
-    pinMemory = memoryCache.get(key);
+    pinMemory = cachedPinMemory.value;
 
   } else {
+
+    if (cachedPinMemory) {
+      memoryCache.delete(key);
+      console.log("PIN CACHE EXPIRED");
+    }
 
     console.log("PIN CACHE MISS");
 
     try {
 
       const pinRes = await fetch(
-        `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memoryBreathPath}`
+        memoryUrl(
+          AI_ENDPOINTS.memoryBreathPath,
+          {
+            user_id
+          }
+        )
       );
 
       if (pinRes.ok) {
@@ -129,11 +207,15 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
       }
 
-      // only cache PIN
-      memoryCache.set(
-        key,
-        pinMemory
-      );
+      if (pinMemory.length > 0) {
+        memoryCache.set(
+          key,
+          {
+            value: pinMemory,
+            createdAt: Date.now()
+          }
+        );
+      }
 
     } catch (err) {
 
@@ -177,13 +259,18 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
       console.log(
         "DYNAMIC QUERY:",
-        message
+        memorySearchQuery
       );
 
 
       const searchRes = await fetch(
-        `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memorySearchPath}?query=` +
-        encodeURIComponent(message)
+        memoryUrl(
+          AI_ENDPOINTS.memorySearchPath,
+          {
+            user_id,
+            query: memorySearchQuery
+          }
+        )
       );
 
 
@@ -288,6 +375,11 @@ function clearConversationMemorySearchCache(conversation_id) {
   }
 
   console.log("MEMORY SEARCH CACHE CLEARED:", conversation_id)
+}
+
+function clearUserMemoryCache(user_id) {
+  memoryCache.delete(`${user_id}`)
+  console.log("PIN MEMORY CACHE CLEARED:", user_id)
 }
 
 async function saveLongTermMemory(user_id, content) {
@@ -471,8 +563,11 @@ const {
 } = await getMemorySmart(
   user_id,
   message,
-  cid
+  cid,
+  history
 )
+
+const stableMemory = await getStableMemories(user_id)
 
 let webSearch = "";
 let userMessage = message;
@@ -498,6 +593,7 @@ if (message.startsWith("/搜 ")) {
 console.log("MEMORY LOAD CHECK:", history.length)
 
 console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
+console.log("STABLE MEMORY LENGTH:", JSON.stringify(stableMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
@@ -537,6 +633,11 @@ ${systemPrompt}
 【Identity｜人格层】
 
 ${trimList(pinMemory, CONTEXT_BUDGET.pinMemoryChars).join("\n")}
+
+
+【User Profile｜用户长期事实】
+
+${stableMemory.join("\n")}
 
 
 【Summary｜长期摘要】
@@ -668,6 +769,7 @@ console.log("======================================\n")
         )
 
         if (saved) {
+          clearUserMemoryCache(user_id)
           clearConversationMemorySearchCache(cid)
           console.log("Saved memory:", judgeResult.content)
         }
