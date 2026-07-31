@@ -42,6 +42,68 @@ The highest principle is Experience First. Every change should be judged by whet
 - Memory judging logic exists in multiple places and may drift.
 - `api/chat.js` currently owns many responsibilities and may need small, careful extraction over time.
 
+## Latest Progress
+
+- Added mobile image attachments in chat.
+- Images are picked from the photo library, compressed before sending, and sent through the existing `imageUrl` path.
+- Image metadata is saved with messages so refreshed history can show sent images.
+- Image thumbnails can be opened in a full-screen preview.
+- Added `metadata jsonb` requirement for the `messages` table.
+- Added `last_conversation` and `updated_at` requirements for the `user_state` table.
+- Added `docs/MOBILE_UI_DIRECTION.md` for the broader iMessage-like mobile design direction.
+- Improved last-conversation restore so stale conversation IDs are less likely to trap the app on an empty chat.
+- Added a left-drawer new-chat entry and drawer auto-close on navigation.
+- Improved memory retrieval:
+  - recent history increased from 4 to 16 messages
+  - Ombre Brain `breath-hook` and `memory-search` now receive `user_id`
+  - PIN memory cache has a 30-minute TTL and does not cache empty results
+  - dynamic memory search query includes recent user messages plus the current message
+  - Supabase `memories` now acts as a stable memory fallback in chat context
+- Strengthened `prompt/system.md` so XiaoC uses known memories naturally and keeps a stable warm/rational/mature voice.
+
+## Database Changes Applied Manually
+
+The following Supabase SQL was applied successfully:
+
+```sql
+alter table messages
+add column if not exists metadata jsonb default '{}'::jsonb;
+
+alter table user_state
+add column if not exists last_conversation text;
+
+alter table user_state
+add column if not exists updated_at timestamptz;
+```
+
+## Current Test Notes
+
+- Text chat works.
+- Image sending works after compression.
+- Image history display works after code deployment and new image messages.
+- Full-screen image preview works.
+- The main remaining high-priority test is memory behavior after the latest Ombre Brain retrieval changes are pushed and deployed.
+
+Check Vercel logs after deployment for:
+
+```text
+PIN MEMORY:
+DYNAMIC QUERY:
+SEARCH RESULT:
+```
+
+If `PIN MEMORY` is still empty, investigate Ombre Brain `/breath-hook` behavior and whether it accepts `user_id`.
+
+## Next Recommended Step
+
+After switching to Mac:
+
+1. Pull latest code.
+2. Confirm Vercel deployment completed.
+3. Test whether XiaoC remembers the user's identity, the dog, and other pinned Ombre Brain memories.
+4. Check Vercel logs for PIN/dynamic memory payloads.
+5. If memory is still missing, inspect Ombre Brain endpoints directly before changing XiaoC prompt again.
+
 ## Attribution Boundary
 
 - `user_id` means the single user's data space.
