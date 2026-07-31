@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { APP_USER } from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -8,7 +9,7 @@ const supabase = createClient(
 export default async function handler(req, res) {
   try {
 
-    const user_id = req.query.user_id || "small_c"
+    const user_id = req.query.user_id || APP_USER.defaultUserId
 
     const { data, error } = await supabase
       .from("memories")

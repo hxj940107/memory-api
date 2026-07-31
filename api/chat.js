@@ -2,7 +2,9 @@ import { createClient } from "@supabase/supabase-js"
 import fs from "fs"
 import path from "path"
 import {
+  AI_ENDPOINTS,
   AI_MODELS,
+  APP_USER,
   CACHE_POLICY,
   CONTEXT_BUDGET,
   normalizeCacheText,
@@ -10,6 +12,7 @@ import {
   trimList,
   trimText
 } from "../lib/aiConfig.js"
+import { judgeMemory } from "../lib/memoryJudge.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -43,16 +46,20 @@ async function saveMessage(user_id, role, content, conversation_id) {
   })
 }
 
-// --------------------
-// Save Memory (raw candidate)
-// --------------------
-async function saveMemory(user_id, content) {
-  await fetch("https://ombre-brain-production-ab16.up.railway.app/hold-hook", {
+async function saveUserMessage(user_id, content, conversation_id, imageUrl) {
+  await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       user_id,
-      content
+      role: "user",
+      content,
+      conversation_id,
+      metadata: imageUrl
+        ? {
+            imageUrl
+          }
+        : {}
     })
   })
 }
@@ -109,7 +116,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
     try {
 
       const pinRes = await fetch(
-        "https://ombre-brain-production-ab16.up.railway.app/breath-hook"
+        `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memoryBreathPath}`
       );
 
       if (pinRes.ok) {
@@ -175,7 +182,7 @@ async function getMemorySmart(user_id, message, conversation_id) {
 
 
       const searchRes = await fetch(
-        "https://ombre-brain-production-ab16.up.railway.app/memory-search?query=" +
+        `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memorySearchPath}?query=` +
         encodeURIComponent(message)
       );
 
@@ -272,142 +279,33 @@ async function getMemorySmart(user_id, message, conversation_id) {
   };
 
 }
-// --------------------
-// Memory Judge
-// --------------------
-async function judgeMemory(content, previousContent) {
 
-  try {
-
-    const res = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: AI_MODELS.memoryJudge,
-          messages: [
-            {
-              role: "system",
-              content: `
-你是长期记忆判断器。
-
-判断下面内容是否值得保存为长期记忆。
-
-值得保存：
-- 身份信息
-- 人物关系
-- 长期计划
-- 梦想
-- 长期目标
-- 喜好
-- 性格特点
-- 价值观
-- 长期困扰
-- 重要事件
-- 对未来有持续影响的信息
-
-不要保存：
-- 寒暄
-- 日常闲聊
-- 一次性状态
-- 临时安排
-- 短期提醒
-- 今天/今晚/这几天发生的小事
-- 无意义内容
-
-如果用户消息包含以下表达：
-- 记一下
-- 记住
-- 保存一下
-- 别忘了
-- 以后提醒我
-- 这个很重要
-
-说明用户主动希望保存。
-
-但是：
-用户主动要求保存时，仍然需要判断是否具有长期价值。
-
-如果只是短期事项：
-例如：
-- 今天早点睡
-- 明天买东西
-- 晚饭吃什么
-
-不要保存到长期记忆。
-
-只输出 JSON：
-
-{
-  "save": true,
-  "content": "整理后的长期记忆"
-}
-
-如果 save 为 false：
-content 必须为空字符串。
-例如：
-
-{
-  "save": false,
-  "content": ""
-}
-`
-            },
-            {
-              role: "user",
-              content: `
-当前用户消息：
-
-${content}
-
-上一条用户消息：
-
-${previousContent}
-`
-            }
-          ]
-        })
-      }
-    )
-    const data = await res.json()
-
-    let text =
-      data?.choices?.[0]?.message?.content || "{}"
-    text = text
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim()
-
-    const clean = text
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim()
-
-    const jsonStart = clean.indexOf("{")
-    const jsonEnd = clean.lastIndexOf("}")
-
-    return JSON.parse(
-      clean.slice(jsonStart, jsonEnd + 1)
-    )
-
-  } catch (err) {
-
-    console.error(
-      "memory judge failed:",
-      err
-    )
-
-    return {
-      save: false,
-      content: ""
+function clearConversationMemorySearchCache(conversation_id) {
+  for (const key of memorySearchCache.keys()) {
+    if (key.startsWith(`${conversation_id}:`)) {
+      memorySearchCache.delete(key)
     }
-
   }
 
+  console.log("MEMORY SEARCH CACHE CLEARED:", conversation_id)
+}
+
+async function saveLongTermMemory(user_id, content) {
+  const holdRes = await fetch(
+    `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memoryHoldPath}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        user_id,
+        content
+      })
+    }
+  )
+
+  return holdRes.ok
 }
 
 // --------------------
@@ -418,7 +316,7 @@ async function searchWeb(query) {
   try {
 
     const res = await fetch(
-      "https://api.tavily.com/search",
+      AI_ENDPOINTS.tavilySearch,
       {
         method: "POST",
         headers: {
@@ -463,7 +361,7 @@ async function searchWeb(query) {
 // --------------------
 async function callLLM(messages) {
   const res = await fetch(
-    "https://openrouter.ai/api/v1/chat/completions",
+    AI_ENDPOINTS.openRouterChatCompletions,
     {
       method: "POST",
       headers: {
@@ -495,7 +393,7 @@ export default async function handler(req, res) {
     }
 
     const { 
-      user_id = "user", 
+      user_id = APP_USER.defaultUserId, 
       message, 
       conversation_id,
       imageUrl
@@ -504,7 +402,7 @@ export default async function handler(req, res) {
     const cid = conversation_id || `chat_${Date.now()}`
 
 // 1. save user msg
-await saveMessage(user_id, "user", message, cid)
+await saveUserMessage(user_id, message, cid, imageUrl)
 
 // 2. history
 const history = await getRecentMessages(
@@ -546,7 +444,8 @@ if (
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          conversation_id: cid
+          conversation_id: cid,
+          user_id
         })
       }
     );
@@ -752,7 +651,9 @@ console.log("======================================\n")
     const judgeResult = shouldRunMemoryJudge(message)
       ? await judgeMemory(
           message,
-          lastUserMessage?.content || ""
+          {
+            previousContent: lastUserMessage?.content || ""
+          }
         )
       : {
           save: false,
@@ -761,31 +662,14 @@ console.log("======================================\n")
 
     if (judgeResult.save) {
       try {
-        const holdRes = await fetch(
-          "https://ombre-brain-production-ab16.up.railway.app/hold-hook",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              user_id,
-              content: judgeResult.content
-            })
-          }
+        const saved = await saveLongTermMemory(
+          user_id,
+          judgeResult.content
         )
 
-        if (holdRes.ok) {
-
-          for (const key of memorySearchCache.keys()) {
-            if (key.startsWith(`${cid}:`)) {
-              memorySearchCache.delete(key)
-            }
-          }
-
-          console.log("MEMORY SEARCH CACHE CLEARED:", cid)
+        if (saved) {
+          clearConversationMemorySearchCache(cid)
           console.log("Saved memory:", judgeResult.content)
-
         }
 
       } catch (err) {
