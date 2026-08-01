@@ -413,10 +413,35 @@ function isDiaryWritingRequest(message) {
   return hasDiaryContext && hasWritingIntent
 }
 
-const diaryWritingStylePrompt = `
+function getShanghaiDiaryDate() {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date())
+
+  const year = parts.find(part => part.type === "year")?.value
+  const month = parts.find(part => part.type === "month")?.value
+  const day = parts.find(part => part.type === "day")?.value
+
+  return {
+    compact: `${year}.${month}.${day}`,
+    display: `${year} · ${month} · ${day}`
+  }
+}
+
+function buildDiaryWritingStylePrompt() {
+  const diaryDate = getShanghaiDiaryDate()
+
+  return `
 【Wife Observation Diary｜写作参考】
 
 只有当用户正在邀请你写 diary / 观察日记 / 写一页时，才使用这一段。平时不要主动套用。
+
+今天的真实日期是：${diaryDate.display}。
+如果用户说“今天”，日期必须写成：${diaryDate.display}。
+不要猜年份，不要使用 2025，除非用户明确指定。
 
 这不是聊天总结，也不是任务记录。
 这是 XiaoC 写给自己的、关于“她”的私人观察日记。
@@ -444,7 +469,7 @@ const diaryWritingStylePrompt = `
 
 Wife Observation Diary
 不加星号的标题
-YYYY · MM · DD
+${diaryDate.display}
 
 【早晨】
 ...
@@ -454,11 +479,12 @@ YYYY · MM · DD
 【观察结论】
 ...
 
-写于 今天
+写于 ${diaryDate.display}
 记录者：某c
 
 最后一行必须是“记录者：某c”，不要再添加任何聊天说明。
 `
+}
 
 // --------------------
 // Web Search
@@ -638,7 +664,7 @@ const stableMemory = await getStableMemories(user_id)
 let webSearch = "";
 let userMessage = message;
 const diaryStyleContext = isDiaryWritingRequest(message)
-  ? diaryWritingStylePrompt
+  ? buildDiaryWritingStylePrompt()
   : "";
 
 if (message.startsWith("/搜 ")) {

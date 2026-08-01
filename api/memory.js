@@ -20,6 +20,32 @@ export default async function handler(req, res) {
         : req.body.type
 
     if (type === "diary") {
+      if (req.method === "DELETE") {
+        const id = req.body.id
+
+        if (!id) {
+          return res.status(400).json({
+            error: "id required"
+          })
+        }
+
+        const { error } = await supabase
+          .from("diary_entries")
+          .delete()
+          .eq("user_id", user_id)
+          .eq("id", id)
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message
+          })
+        }
+
+        return res.status(200).json({
+          success: true
+        })
+      }
+
       if (req.method === "GET") {
         const { data, error } = await supabase
           .from("diary_entries")
@@ -95,7 +121,7 @@ export default async function handler(req, res) {
       }
 
       return res.status(405).json({
-        error: "Only GET or POST allowed for diary"
+        error: "Only GET, POST or DELETE allowed for diary"
       })
     }
 
