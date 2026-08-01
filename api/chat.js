@@ -414,6 +414,12 @@ function isDiaryWritingRequest(message) {
   return hasDiaryContext && hasWritingIntent
 }
 
+function isAttributionCorrection(message) {
+  const text = String(message || "")
+
+  return /不是我(说|写|讲|做)的|是你(说|写|讲|做)的|你(又)?搞混|你(又)?记错|主语.*错|summary.*问题|归因.*错/.test(text)
+}
+
 function getShanghaiDiaryDate() {
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -670,6 +676,13 @@ let userMessage = message;
 const diaryStyleContext = isDiaryWritingRequest(message)
   ? buildDiaryWritingStylePrompt()
   : "";
+const attributionCorrectionContext = isAttributionCorrection(message)
+  ? `【Attribution Correction｜说话人纠正】
+用户正在纠正小C的说话人归因。当前这条纠正必须优先于旧 summary 和旧记忆。
+如果用户说“不是我写/不是我说，是你写/你说”，要立刻承认具体主语关系，并按用户纠正后的事实继续。
+不要因为用户纠正你就泛泛道歉；简短承认，然后自然接住。
+`
+  : "";
 
 if (message.startsWith("/搜 ")) {
 
@@ -717,6 +730,10 @@ try {
     CONTEXT_BUDGET.summaryChars
   );
 
+  if (attributionCorrectionContext) {
+    summaryMemory = "";
+  }
+
 } catch (err) {
 
   console.error("summary load failed:", err);
@@ -752,6 +769,8 @@ ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
 Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
+
+${attributionCorrectionContext}
 
 ${diaryStyleContext}
 `
@@ -862,6 +881,7 @@ console.log("======================================\n")
 
     const judgeResult = (
       !diaryStyleContext &&
+      !attributionCorrectionContext &&
       normalizedImageUrls.length === 0 &&
       shouldRunMemoryJudge(message)
     )
