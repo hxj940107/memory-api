@@ -113,6 +113,17 @@ const normalizeDate = (value?: string) => {
   return source.replace(/[^\d]/g, ".").replace(/\.+/g, ".").replace(/\.$/, "");
 };
 
+const getFallbackDiaryDate = (fallbackDate: Date) => {
+  const year = fallbackDate.getFullYear();
+  const month = String(fallbackDate.getMonth() + 1).padStart(2, "0");
+  const day = String(fallbackDate.getDate()).padStart(2, "0");
+
+  return {
+    date: `${year}.${month}.${day}`,
+    displayDate: `${year} · ${month} · ${day}`,
+  };
+};
+
 const cleanDiaryLine = (line: string) =>
   line
     .trim()
@@ -169,8 +180,14 @@ export function parseDiaryText(
       || "没有标题的一页";
   const dateLine =
     lines.find((line) => datePattern.test(line)) ||
-    `${fallbackDate.getFullYear()} · ${String(fallbackDate.getMonth() + 1).padStart(2, "0")} · ${String(fallbackDate.getDate()).padStart(2, "0")}`;
-  const date = normalizeDate(dateLine);
+    "";
+  const fallbackDiaryDate = getFallbackDiaryDate(fallbackDate);
+  const normalizedDate = normalizeDate(dateLine);
+  const isAmbiguousTodayDate = /今天|today/i.test(dateLine);
+  const date =
+    !dateLine || isAmbiguousTodayDate
+      ? fallbackDiaryDate.date
+      : normalizedDate;
   const displayDate = date.replaceAll(".", " · ");
   const sections: ObservationDiarySection[] = [];
   let current: ObservationDiarySection | null = null;

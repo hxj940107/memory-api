@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,13 +15,26 @@ import {
 } from "../../data/observationDiary";
 import { APP_USER_ID, apiJson } from "../../config/api";
 
+type DiaryListEntry = ObservationDiaryEntry & {
+  source: "cloud" | "local";
+};
+
 const mergeDiaryEntries = (
   cloudEntries: ObservationDiaryEntry[],
   localEntries: ObservationDiaryEntry[],
 ) => {
   const seen = new Set<string>();
 
-  return [...cloudEntries, ...localEntries]
+  return [
+    ...cloudEntries.map((entry) => ({
+      ...entry,
+      source: "cloud" as const,
+    })),
+    ...localEntries.map((entry) => ({
+      ...entry,
+      source: "local" as const,
+    })),
+  ]
     .filter((entry) => {
       if (seen.has(entry.id)) {
         return false;
@@ -39,8 +53,11 @@ const mergeDiaryEntries = (
 };
 
 export default function ObservationDiaryScreen() {
-  const [entries, setEntries] = useState<ObservationDiaryEntry[]>(
-    observationDiaryEntries,
+  const [entries, setEntries] = useState<DiaryListEntry[]>(
+    observationDiaryEntries.map((entry) => ({
+      ...entry,
+      source: "local",
+    })),
   );
 
   useEffect(() => {
@@ -60,6 +77,50 @@ export default function ObservationDiaryScreen() {
     } catch (error) {
       console.log("Diary load failed:", error);
     }
+  };
+
+  const deleteDiaryEntry = (entry: DiaryListEntry) => {
+    if (entry.source !== "cloud") {
+      Alert.alert("这篇先留着", "这是本地参考样本，暂时不从这里删除。");
+      return;
+    }
+
+    Alert.alert(
+      "删除这篇 Diary？",
+      "删除后无法恢复，但不会影响小C已经记住的长期记忆。",
+      [
+        {
+          text: "取消",
+          style: "cancel",
+        },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await apiJson("/api/memory", {
+                method: "DELETE",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  type: "diary",
+                  user_id: APP_USER_ID,
+                  id: entry.id,
+                }),
+              });
+
+              setEntries((prev) =>
+                prev.filter((item) => item.id !== entry.id),
+              );
+            } catch (error) {
+              console.log("Diary delete failed:", error);
+              Alert.alert("删除失败", "这篇 Diary 暂时没有删掉，等一下再试。");
+            }
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -89,6 +150,7 @@ export default function ObservationDiaryScreen() {
                 },
               })
             }
+            onLongPress={() => deleteDiaryEntry(entry)}
           >
             <View>
               <Text style={styles.rowDate}>
