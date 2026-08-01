@@ -7,6 +7,7 @@ import {
   APP_USER,
   CACHE_POLICY,
   CONTEXT_BUDGET,
+  SUMMARY_POLICY,
   normalizeCacheText,
   shouldRunMemoryJudge,
   trimList,
@@ -612,8 +613,11 @@ const historySize =
 
 
 if (
-  messageCount > 20 ||
-  historySize > 5000
+  (
+    messageCount >= SUMMARY_POLICY.minMessages &&
+    messageCount % SUMMARY_POLICY.intervalMessages === 0
+  ) ||
+  historySize > SUMMARY_POLICY.forceHistoryChars
 ) {
 
   console.log("ROLLING SUMMARY TRIGGERED");
@@ -753,12 +757,16 @@ ${diaryStyleContext}
   // 因为最后一条要重新加入（可能带图片）
   ...history.slice(0, -1),
 
-  {
-    role: "system",
-    content: `【Web Search｜联网搜索】
+  ...(webSearch
+    ? [
+        {
+          role: "system",
+          content: `【Web Search｜联网搜索】
 
 ${webSearch}`
-  },
+        }
+      ]
+    : []),
 
   {
     role: "user",
@@ -848,7 +856,11 @@ console.log("======================================\n")
       .filter(m => m.role === "user")
       .slice(1)[0]
 
-    const judgeResult = shouldRunMemoryJudge(message)
+    const judgeResult = (
+      !diaryStyleContext &&
+      normalizedImageUrls.length === 0 &&
+      shouldRunMemoryJudge(message)
+    )
       ? await judgeMemory(
           message,
           {
