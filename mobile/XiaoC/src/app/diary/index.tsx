@@ -25,8 +25,9 @@ export default function ObservationDiaryScreen() {
 
   const loadDiaryEntries = async () => {
     try {
-      const cloudEntries = await apiJson<ObservationDiaryEntry[]>("/api/diary", {
+      const cloudEntries = await apiJson<ObservationDiaryEntry[]>("/api/memory", {
         query: {
+          type: "diary",
           user_id: APP_USER_ID,
         },
       });

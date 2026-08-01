@@ -559,7 +559,8 @@ export default function ChatScreen() {
     );
 
     try {
-      await postJson("/api/diary", {
+      await postJson("/api/memory", {
+        type: "diary",
         user_id: APP_USER_ID,
         ...diaryEntry,
       });
