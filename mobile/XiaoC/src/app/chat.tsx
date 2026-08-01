@@ -969,7 +969,7 @@ const styles = StyleSheet.create({
 
     paddingTop: 0,
 
-    paddingBottom: 20,
+    paddingBottom: 130,
   },
 
   empty: {
@@ -1020,6 +1020,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   aiBox: {
+    minWidth: 120,
     maxWidth: "100%",
     alignSelf: "flex-start",
     backgroundColor: "#F4F4F4",
