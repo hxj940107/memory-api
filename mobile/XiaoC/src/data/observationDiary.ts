@@ -113,24 +113,62 @@ const normalizeDate = (value?: string) => {
   return source.replace(/[^\d]/g, ".").replace(/\.+/g, ".").replace(/\.$/, "");
 };
 
+const cleanDiaryLine = (line: string) =>
+  line
+    .trim()
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^[-—–]{3,}$/, "")
+    .replace(/^\*\*(.*)\*\*$/, "$1")
+    .replace(/^\*(.*)\*$/, "$1")
+    .trim();
+
+const isConversationalWrapperLine = (line: string) =>
+  /^(好[。！!]?$|宝宝[，,].*|写好了.*|你看看.*|看效果.*|我来写.*|我给.*写.*|下面是.*)$/i.test(
+    line,
+  );
+
+export function extractDiaryText(text: string) {
+  const rawLines = text.split("\n");
+  const labelIndex = rawLines.findIndex((line) =>
+    /wife observation diary|observation diary|观察日记/i.test(line),
+  );
+  const usefulLines = labelIndex >= 0 ? rawLines.slice(labelIndex) : rawLines;
+
+  return usefulLines
+    .map(cleanDiaryLine)
+    .filter((line) => line && !isConversationalWrapperLine(line))
+    .join("\n")
+    .trim();
+}
+
 export function parseDiaryText(
   text: string,
   fallbackDate = new Date(),
 ): ObservationDiaryEntry {
-  const lines = text
+  const diaryText = extractDiaryText(text);
+  const lines = diaryText
     .split("\n")
-    .map((line) => line.trim())
+    .map(cleanDiaryLine)
     .filter(Boolean);
 
   const labelIndex = lines.findIndex((line) =>
     /wife observation diary|observation diary|观察日记/i.test(line),
   );
+  const linesAfterLabel = labelIndex >= 0 ? lines.slice(labelIndex + 1) : lines;
+  const datePattern = /\d{4}\s*[·.／/\-年]\s*\d{1,2}/;
   const title =
-    lines[labelIndex + 1] && !/^\d{4}/.test(lines[labelIndex + 1])
-      ? lines[labelIndex + 1]
-      : "没有标题的一页";
+    linesAfterLabel.find(
+      (line) =>
+        !datePattern.test(line) &&
+        !/^\d{4}\s*年?$/.test(line) &&
+        !/^【.+】$/.test(line) &&
+        !/^·\s*·\s*·$/.test(line) &&
+        !/^写于/.test(line) &&
+        !/^记录者/.test(line),
+    )
+      || "没有标题的一页";
   const dateLine =
-    lines.find((line) => /\d{4}\s*[·.／/\-年]\s*\d{1,2}/.test(line)) ||
+    lines.find((line) => datePattern.test(line)) ||
     `${fallbackDate.getFullYear()} · ${String(fallbackDate.getMonth() + 1).padStart(2, "0")} · ${String(fallbackDate.getDate()).padStart(2, "0")}`;
   const date = normalizeDate(dateLine);
   const displayDate = date.replaceAll(".", " · ");
@@ -141,6 +179,7 @@ export function parseDiaryText(
     if (/wife observation diary|observation diary/i.test(line)) continue;
     if (line === title || line === dateLine) continue;
     if (/^写于/.test(line) || /^记录者/.test(line)) continue;
+    if (isConversationalWrapperLine(line)) continue;
 
     const sectionMatch = line.match(/^【(.+)】$/);
 
@@ -186,7 +225,7 @@ export function parseDiaryText(
       : [
           {
             tag: "记录",
-            paragraphs: [text.trim()],
+            paragraphs: [diaryText || text.trim()],
           },
         ],
   };

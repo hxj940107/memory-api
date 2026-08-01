@@ -6,6 +6,7 @@ import {
   ObservationDiaryEntry,
   ObservationDiarySection,
   getDiaryEntry,
+  observationDiaryEntries,
 } from "../../data/observationDiary";
 import { APP_USER_ID, apiJson } from "../../config/api";
 
@@ -45,7 +46,9 @@ export default function ObservationDiaryDetailScreen() {
           user_id: APP_USER_ID,
         },
       });
-      const match = cloudEntries.find((item) => item.id === id);
+      const match = [...cloudEntries, ...observationDiaryEntries].find(
+        (item) => item.id === id,
+      );
 
       if (match) {
         setCloudEntry(match);
@@ -96,14 +99,20 @@ export default function ObservationDiaryDetailScreen() {
 
                   {section.time && <Text style={styles.time}>{section.time}</Text>}
 
-                  {section.paragraphs.map((paragraph) => (
-                    <Text key={paragraph} style={styles.text}>
+                  {section.paragraphs.map((paragraph, paragraphIndex) => (
+                    <Text
+                      key={`${section.tag}-${index}-paragraph-${paragraphIndex}`}
+                      style={styles.text}
+                    >
                       {paragraph}
                     </Text>
                   ))}
 
-                  {section.emphasis?.map((paragraph) => (
-                    <Text key={paragraph} style={styles.emphasis}>
+                  {section.emphasis?.map((paragraph, emphasisIndex) => (
+                    <Text
+                      key={`${section.tag}-${index}-emphasis-${emphasisIndex}`}
+                      style={styles.emphasis}
+                    >
                       {paragraph}
                     </Text>
                   ))}

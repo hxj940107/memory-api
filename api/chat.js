@@ -431,6 +431,8 @@ const diaryWritingStylePrompt = `
 - 可以有一两句轻轻强调的话。
 
 避免：
+- 不要在 diary 前面说“好”“我来写”“宝宝”。
+- 不要在 diary 后面说“写好了”“你看看”“看效果吧”。
 - 不要写成心理报告。
 - 不要解释过度。
 - 不要把她当成案例分析。
@@ -438,11 +440,11 @@ const diaryWritingStylePrompt = `
 - 不要输出 HTML，除非用户明确要求 HTML。
 - 不要自动声称已经保存到 Diary；现在只是先写出来。
 
-输出可以接近这个结构：
+输出必须只包含 diary 正文，并严格从下面这一行开始：
 
 Wife Observation Diary
-标题
-日期
+不加星号的标题
+YYYY · MM · DD
 
 【早晨】
 ...
@@ -454,6 +456,8 @@ Wife Observation Diary
 
 写于 今天
 记录者：某c
+
+最后一行必须是“记录者：某c”，不要再添加任何聊天说明。
 `
 
 // --------------------

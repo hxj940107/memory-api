@@ -14,6 +14,30 @@ import {
 } from "../../data/observationDiary";
 import { APP_USER_ID, apiJson } from "../../config/api";
 
+const mergeDiaryEntries = (
+  cloudEntries: ObservationDiaryEntry[],
+  localEntries: ObservationDiaryEntry[],
+) => {
+  const seen = new Set<string>();
+
+  return [...cloudEntries, ...localEntries]
+    .filter((entry) => {
+      if (seen.has(entry.id)) {
+        return false;
+      }
+
+      seen.add(entry.id);
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.date === b.date) {
+        return b.id.localeCompare(a.id);
+      }
+
+      return b.date.localeCompare(a.date);
+    });
+};
+
 export default function ObservationDiaryScreen() {
   const [entries, setEntries] = useState<ObservationDiaryEntry[]>(
     observationDiaryEntries,
@@ -32,9 +56,7 @@ export default function ObservationDiaryScreen() {
         },
       });
 
-      if (cloudEntries.length > 0) {
-        setEntries(cloudEntries);
-      }
+      setEntries(mergeDiaryEntries(cloudEntries, observationDiaryEntries));
     } catch (error) {
       console.log("Diary load failed:", error);
     }
