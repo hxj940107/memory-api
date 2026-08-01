@@ -8,7 +8,11 @@ const supabase = createClient(
 
 async function updateSummaryWithClaude(oldSummary, newMessages) {
 
-  const prompt = `已有Summary：
+  const prompt = `你是 XiaoC 的“对话连续性压缩器”。
+
+你的目标不是记录所有信息，而是让 XiaoC 在少量上下文下仍然能自然接住后续聊天。
+
+已有连续性摘要：
 
 ${oldSummary || "（暂无）"}
 
@@ -20,31 +24,33 @@ ${newMessages}
 
 --------
 
-请根据新增聊天更新已有Summary。
+请根据新增聊天更新已有连续性摘要。
 
 要求：
 
-- 保留仍然重要的信息
-- 删除已经失效的信息
+- 保留对“下一轮怎么接话”仍然重要的信息
+- 删除已经结束、无后续价值、只是寒暄的信息
 - 不要重复
-- 保持连续上下文
-- 控制在300字以内
+- 控制在450字以内
 - 严格区分说话人：user 是用户，assistant 是小C
 - 不要把 assistant/小C 说过的话总结成用户说过、用户认为或用户经历过的事
-- 只有 user 明确表达过的信息，才能写入【人物】【事件】【计划】中的用户事实
-- assistant 的表达只可用于【关系】或【待继续】中描述互动氛围，不能当成用户事实
+- 只有 user 明确表达过的信息，才能写入【她的信息】中的用户事实
+- assistant 的表达只可用于【互动状态】或【待接住】中描述互动氛围，不能当成用户事实
+- 技术开发内容要保留当前问题、已决定方案、未完成检查；不要保留无意义过程
+- 情绪/关系内容要保留她的感受、偏好、需要被怎样回应
+- 如果新增聊天主要是在测试、确认、修 bug，只保留当前结论和待处理事项
 
 输出格式：
 
-【人物】
+【当前话题】
 
-【事件】
+【她的信息】
 
-【关系】
+【互动状态】
 
-【计划】
+【待接住】
 
-【待继续】`;
+【可丢弃】`;
 
   const res = await fetch(
     AI_ENDPOINTS.openRouterChatCompletions,
@@ -68,9 +74,7 @@ ${newMessages}
 
   const data = await res.json();
   console.log("STATUS:", res.status);
-  console.log("OPENROUTER:");
-  console.log(JSON.stringify(data, null, 2));
-  console.log("END");
+  console.log("SUMMARY USAGE:", data?.usage || {});
 
   if (!res.ok) {
     throw new Error(
