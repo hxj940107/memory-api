@@ -22,14 +22,19 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       const { last_conversation = null } = req.body
+      const payload = {
+        user_id,
+        last_conversation,
+        updated_at: new Date().toISOString()
+      }
+
+      if (last_conversation) {
+        payload.last_conversation_id = last_conversation
+      }
 
       const { error } = await supabase
         .from("user_state")
-        .upsert({
-          user_id,
-          last_conversation,
-          updated_at: new Date().toISOString()
-        })
+        .upsert(payload)
 
       if (error) {
         return res.status(500).json({
@@ -50,7 +55,7 @@ export default async function handler(req, res) {
 
     const { data, error } = await supabase
       .from("user_state")
-      .select("last_conversation")
+      .select("last_conversation,last_conversation_id")
       .eq("user_id", user_id)
       .single()
 
@@ -61,7 +66,7 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({
-      last_conversation: data.last_conversation
+      last_conversation: data.last_conversation_id || data.last_conversation
     })
 
   } catch (err) {

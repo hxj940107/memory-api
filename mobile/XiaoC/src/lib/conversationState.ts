@@ -42,18 +42,6 @@ export async function saveLastConversation(conversationId: string) {
 
 export async function clearLastConversation() {
   await clearLocalLastConversation();
-
-  try {
-    await postJson(
-      `/api/user-state?user_id=${encodeURIComponent(APP_USER_ID)}`,
-      {
-        user_id: APP_USER_ID,
-        last_conversation: null,
-      },
-    );
-  } catch (error) {
-    console.log("Cloud conversation clear failed:", error);
-  }
 }
 
 export async function getCloudLastConversation() {

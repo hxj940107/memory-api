@@ -38,6 +38,24 @@ type ConversationListRow =
       item: Conversation;
     };
 
+const xiaoCSpaces = [
+  {
+    id: "treehole",
+    icon: "🌙",
+    title: "深夜树洞",
+  },
+  {
+    id: "diary",
+    icon: "📓",
+    title: "Observation Diary",
+  },
+  {
+    id: "moments",
+    icon: "🫧",
+    title: "朋友圈",
+  },
+];
+
 function ConversationItem({
   item,
   isCurrent,
@@ -304,10 +322,43 @@ export default function ConversationList({
     });
   };
 
+  const showComingSoon = (title: string) => {
+    Alert.alert(title, "还没开放，先留一个位置给小C慢慢长出来");
+  };
+
+  const openSpace = async (space: (typeof xiaoCSpaces)[number]) => {
+    if (space.id === "diary") {
+      await onNavigate?.();
+
+      router.push("/diary");
+      return;
+    }
+
+    showComingSoon(space.title);
+  };
+
   return (
     <View style={styles.container}>
+      <View style={styles.spacesSection}>
+        <Text style={styles.sectionTitlePrimary}>小C的空间</Text>
+
+        {xiaoCSpaces.map((space) => (
+          <Pressable
+            key={space.id}
+            style={({ pressed }) => [
+              styles.spaceItem,
+              pressed && styles.spaceItemPressed,
+            ]}
+            onPress={() => openSpace(space)}
+          >
+            <Text style={styles.spaceIcon}>{space.icon}</Text>
+            <Text style={styles.spaceTitle}>{space.title}</Text>
+          </Pressable>
+        ))}
+      </View>
+
       <View style={styles.titleRow}>
-        <Text style={styles.title}>聊天记录</Text>
+        <Text style={styles.sectionTitlePrimary}>聊天记录</Text>
 
         <Pressable style={styles.newButton} onPress={createNewChat}>
           <Text style={styles.newButtonText}>＋</Text>
@@ -321,7 +372,9 @@ export default function ConversationList({
         }
         renderItem={({ item: row }) => {
           if (row.type === "section") {
-            return <Text style={styles.sectionTitle}>{row.title}</Text>;
+            return (
+              <Text style={styles.sectionTitleSecondary}>{row.title}</Text>
+            );
           }
 
           const item = row.item;
@@ -474,18 +527,10 @@ const styles = StyleSheet.create({
 
     paddingTop: 60,
   },
-  title: {
-    fontSize: 22,
-
-    fontWeight: "600",
-
-    color: "#333",
-  },
-
   titleRow: {
     flexDirection: "row",
 
-    marginBottom: 24,
+    marginBottom: 6,
 
     alignItems: "center",
 
@@ -493,11 +538,11 @@ const styles = StyleSheet.create({
   },
 
   item: {
-    paddingVertical: 16,
+    paddingVertical: 12,
 
     borderRadius: 12,
 
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
   },
 
   currentItem: {
@@ -505,23 +550,37 @@ const styles = StyleSheet.create({
   },
 
   itemTitle: {
-    fontSize: 17,
+    fontSize: 16,
 
     color: "#444",
   },
 
-  sectionTitle: {
+  sectionTitlePrimary: {
     marginTop: 8,
 
-    marginBottom: 6,
+    marginBottom: 8,
 
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
+
+    fontSize: 15,
+
+    fontWeight: "500",
+
+    color: "#8E8E93",
+  },
+
+  sectionTitleSecondary: {
+    marginTop: 10,
+
+    marginBottom: 4,
+
+    paddingHorizontal: 12,
 
     fontSize: 13,
 
     fontWeight: "500",
 
-    color: "#8E8E93",
+    color: "#A6A6AA",
   },
 
   empty: {
@@ -530,6 +589,40 @@ const styles = StyleSheet.create({
     textAlign: "center",
 
     color: "#999",
+  },
+
+  spacesSection: {
+    marginTop: 0,
+
+    paddingBottom: 26,
+  },
+
+  spaceItem: {
+    flexDirection: "row",
+
+    alignItems: "center",
+
+    paddingHorizontal: 12,
+
+    paddingVertical: 10,
+
+    borderRadius: 12,
+  },
+
+  spaceItemPressed: {
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  spaceIcon: {
+    width: 30,
+
+    fontSize: 16,
+  },
+
+  spaceTitle: {
+    fontSize: 16,
+
+    color: "#444",
   },
 
   menuLayer: {
@@ -604,13 +697,13 @@ const styles = StyleSheet.create({
   },
 
   newButton: {
-    width: 36,
+    width: 30,
 
-    height: 36,
+    height: 30,
 
-    borderRadius: 18,
+    borderRadius: 15,
 
-    backgroundColor: "rgba(120,120,128,0.12)",
+    backgroundColor: "rgba(120,120,128,0.10)",
 
     justifyContent: "center",
 
@@ -618,10 +711,10 @@ const styles = StyleSheet.create({
   },
 
   newButtonText: {
-    fontSize: 24,
+    fontSize: 21,
 
-    color: "#444",
+    color: "#555",
 
-    lineHeight: 28,
+    lineHeight: 24,
   },
 });

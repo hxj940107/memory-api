@@ -35,6 +35,7 @@ import {
   getBestLastConversation,
   saveLastConversation,
 } from "../lib/conversationState";
+import { isDiaryText, parseDiaryText } from "../data/observationDiary";
 
 type Message = {
   id: string;
@@ -45,6 +46,7 @@ type Message = {
   imageAsset?: ImagePicker.ImagePickerAsset;
   imageAssets?: ImagePicker.ImagePickerAsset[];
   status?: "sending" | "sent" | "failed";
+  diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
 };
 
 type HistoryItem = {
@@ -204,6 +206,9 @@ export default function ChatScreen() {
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  const canSendMessage = message.trim().length > 0 || selectedImages.length > 0;
+  const isSendDisabled = !canSendMessage || isTyping;
 
   const scrollToLatestMessage = (animated = true) => {
     requestAnimationFrame(() => {
@@ -496,7 +501,7 @@ export default function ChatScreen() {
   };
 
   const sendMessage = async () => {
-    if (!message.trim() && selectedImages.length === 0) return;
+    if (isSendDisabled) return;
 
     const newMessage: Message = {
       id: createLocalMessageId(),
@@ -537,6 +542,52 @@ export default function ChatScreen() {
       ...messageToRetry,
       status: "sending",
     });
+  };
+
+  const saveDiaryFromMessage = async (messageToSave: Message) => {
+    const diaryEntry = parseDiaryText(messageToSave.text);
+
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === messageToSave.id
+          ? {
+              ...item,
+              diarySaveStatus: "saving",
+            }
+          : item,
+      ),
+    );
+
+    try {
+      await postJson("/api/diary", {
+        user_id: APP_USER_ID,
+        ...diaryEntry,
+      });
+
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSave.id
+            ? {
+                ...item,
+                diarySaveStatus: "saved",
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      console.log("Diary save failed:", error);
+
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSave.id
+            ? {
+                ...item,
+                diarySaveStatus: "failed",
+              }
+            : item,
+        ),
+      );
+    }
   };
 
   return (
@@ -596,7 +647,10 @@ export default function ChatScreen() {
             <TypingDots />
           ) : (
             messages.length === 0 && (
-              <Text style={styles.greeting}>今天过得怎么样？</Text>
+              <View style={styles.greetingBox}>
+                <Text style={styles.greetingPrimary}>Be right here</Text>
+                <Text style={styles.greetingSecondary}>Take your time</Text>
+              </View>
             )
           )}
 
@@ -660,7 +714,13 @@ export default function ChatScreen() {
 
                   {!!item.text && (
                     <View style={styles.userBubble}>
-                      <Text style={styles.userText}>{item.text}</Text>
+                      <TextInput
+                        style={[styles.userText, styles.selectableText]}
+                        value={item.text}
+                        editable={false}
+                        multiline
+                        scrollEnabled={false}
+                      />
                     </View>
                   )}
 
@@ -678,10 +738,42 @@ export default function ChatScreen() {
               </AnimatedMessage>
             ) : (
               <AnimatedMessage key={item.id}>
-                <View style={styles.aiBox}>
-                  <Text style={styles.aiText}>
-                    {item.text.replace(/\s*\n\s*/g, "\n")}
-                  </Text>
+                <View style={styles.aiWrap}>
+                  <View style={styles.aiBox}>
+                    <TextInput
+                      style={[styles.aiText, styles.selectableText]}
+                      value={item.text.replace(/\s*\n\s*/g, "\n")}
+                      editable={false}
+                      multiline
+                      scrollEnabled={false}
+                    />
+                  </View>
+
+                  {isDiaryText(item.text) && (
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.diarySaveButton,
+                        pressed && styles.diarySaveButtonPressed,
+                        item.diarySaveStatus === "saved" &&
+                          styles.diarySaveButtonSaved,
+                      ]}
+                      onPress={() => saveDiaryFromMessage(item)}
+                      disabled={
+                        item.diarySaveStatus === "saving" ||
+                        item.diarySaveStatus === "saved"
+                      }
+                    >
+                      <Text style={styles.diarySaveText}>
+                        {item.diarySaveStatus === "saving"
+                          ? "正在存入..."
+                          : item.diarySaveStatus === "saved"
+                            ? "已存入 Diary"
+                            : item.diarySaveStatus === "failed"
+                              ? "存入失败，重试"
+                              : "存入 Diary"}
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
               </AnimatedMessage>
             ),
@@ -744,10 +836,11 @@ export default function ChatScreen() {
             <Pressable
               style={[
                 styles.sendButton,
-                (message.length > 0 || selectedImages.length > 0) &&
-                  styles.sendActive,
+                canSendMessage && !isTyping && styles.sendActive,
+                isTyping && styles.sendDisabled,
               ]}
               onPress={sendMessage}
+              disabled={isSendDisabled}
             >
               <Text style={styles.sendText}>↑</Text>
             </Pressable>
@@ -881,12 +974,24 @@ const styles = StyleSheet.create({
   empty: {
     flexGrow: 1,
     justifyContent: "center",
+    paddingBottom: 80,
   },
 
-  greeting: {
-    textAlign: "center",
+  greetingBox: {
+    alignItems: "center",
+  },
+
+  greetingPrimary: {
     fontSize: 26,
-    color: "#6B6B6B",
+    color: "#6A6A6A",
+    fontWeight: "400",
+    letterSpacing: 0.4,
+  },
+
+  greetingSecondary: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#A8A8A8",
     fontWeight: "400",
   },
 
@@ -914,18 +1019,52 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   aiBox: {
-    maxWidth: "75%",
+    maxWidth: "100%",
     alignSelf: "flex-start",
     backgroundColor: "#F4F4F4",
     borderRadius: 20,
     paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingVertical: 13,
+  },
+
+  aiWrap: {
+    alignSelf: "flex-start",
+    maxWidth: "82%",
   },
 
   aiText: {
     fontSize: 17,
     color: "#444",
-    lineHeight: 24,
+    lineHeight: 25,
+  },
+
+  diarySaveButton: {
+    alignSelf: "flex-start",
+    marginTop: 7,
+    marginLeft: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  diarySaveButtonPressed: {
+    backgroundColor: "rgba(120,120,128,0.14)",
+  },
+
+  diarySaveButtonSaved: {
+    backgroundColor: "rgba(180,165,140,0.16)",
+  },
+
+  diarySaveText: {
+    fontSize: 13,
+    color: "#7A6E63",
+  },
+
+  selectableText: {
+    margin: 0,
+    padding: 0,
+    backgroundColor: "transparent",
   },
 
   typingDots: {
@@ -1034,6 +1173,10 @@ const styles = StyleSheet.create({
 
   sendActive: {
     backgroundColor: "#555555",
+  },
+
+  sendDisabled: {
+    opacity: 0.45,
   },
 
   sendText: {

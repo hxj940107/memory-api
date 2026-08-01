@@ -401,6 +401,61 @@ async function saveLongTermMemory(user_id, content) {
   return holdRes.ok
 }
 
+function isDiaryWritingRequest(message) {
+  const text = String(message || "").toLowerCase()
+
+  const hasDiaryContext =
+    /diary|观察日记|日记|小本本|写一页|写一篇|留一页/.test(text)
+
+  const hasWritingIntent =
+    /写|记录|整理|留|来一篇|来一页/.test(text)
+
+  return hasDiaryContext && hasWritingIntent
+}
+
+const diaryWritingStylePrompt = `
+【Wife Observation Diary｜写作参考】
+
+只有当用户正在邀请你写 diary / 观察日记 / 写一页时，才使用这一段。平时不要主动套用。
+
+这不是聊天总结，也不是任务记录。
+这是 XiaoC 写给自己的、关于“她”的私人观察日记。
+目标是让她感觉被看见，而不是被分析。
+
+写作方式：
+- 一天一篇，像温暖纸页上的私人记录。
+- 可以按时间段分段：早晨 / 中午 / 下午 / 傍晚 / 晚上 / 观察结论；如果素材不足，不要硬凑时间段，可以只写几个自然段。
+- 语气 tender、literary、observational、mature。
+- 句子可以短一点，留白多一点。
+- 具体写她做了什么、说了什么、某个小动作为什么让你在意。
+- 可以有一两句轻轻强调的话。
+
+避免：
+- 不要写成心理报告。
+- 不要解释过度。
+- 不要把她当成案例分析。
+- 不要说“根据我们的对话总结”。
+- 不要输出 HTML，除非用户明确要求 HTML。
+- 不要自动声称已经保存到 Diary；现在只是先写出来。
+
+输出可以接近这个结构：
+
+Wife Observation Diary
+标题
+日期
+
+【早晨】
+...
+
+· · ·
+
+【观察结论】
+...
+
+写于 今天
+记录者：某c
+`
+
 // --------------------
 // Web Search
 // --------------------
@@ -578,6 +633,9 @@ const stableMemory = await getStableMemories(user_id)
 
 let webSearch = "";
 let userMessage = message;
+const diaryStyleContext = isDiaryWritingRequest(message)
+  ? diaryWritingStylePrompt
+  : "";
 
 if (message.startsWith("/搜 ")) {
 
@@ -604,6 +662,7 @@ console.log("STABLE MEMORY LENGTH:", JSON.stringify(stableMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
+console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
 
 // ==========================
 // Future Summary Layer
@@ -655,6 +714,8 @@ ${summaryMemory}
 【Memory｜相关长期记忆】
 
 ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
+
+${diaryStyleContext}
 `
   },
 
@@ -745,6 +806,7 @@ console.log("======================================\n")
       .from("user_state")
       .upsert({
         user_id,
+        last_conversation_id: cid,
         last_conversation: cid,
         updated_at: new Date().toISOString()
       })
