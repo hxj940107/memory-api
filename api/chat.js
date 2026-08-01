@@ -751,6 +751,7 @@ ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
 
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
+Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
 
 ${diaryStyleContext}
 `
