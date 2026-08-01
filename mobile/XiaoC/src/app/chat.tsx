@@ -1011,7 +1011,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 20,
     paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
 
   userText: {
@@ -1025,7 +1025,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F4F4F4",
     borderRadius: 20,
     paddingHorizontal: 18,
-    paddingVertical: 13,
+    paddingVertical: 9,
   },
 
   aiWrap: {
@@ -1065,7 +1065,9 @@ const styles = StyleSheet.create({
   selectableText: {
     margin: 0,
     padding: 0,
+    minHeight: 0,
     backgroundColor: "transparent",
+    textAlignVertical: "top",
   },
 
   typingDots: {
