@@ -13,6 +13,7 @@ import {
   Dimensions,
   Keyboard,
   ActionSheetIOS,
+  Alert,
 } from "react-native";
 
 import Animated, {
@@ -44,6 +45,7 @@ import { saveTreeholeDraft, TreeholeDraft } from "../lib/treeholeState";
 
 type Message = {
   id: string;
+  cloudId?: string;
   role: "user" | "assistant";
   text: string;
   fileName?: string;
@@ -76,6 +78,7 @@ type MessageMenuState = {
 } | null;
 
 type HistoryItem = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
   metadata?: {
@@ -90,6 +93,8 @@ type HistoryItem = {
 type ChatResponse = {
   reply?: string;
   conversation_id?: string;
+  user_message_id?: string | null;
+  assistant_message_id?: string | null;
 };
 
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -738,6 +743,7 @@ export default function ChatScreen() {
 
           return {
             id: createLocalMessageId(),
+            cloudId: item.id,
             role: item.role,
             imageUris: item.metadata?.imageUrls || (
               item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
@@ -844,8 +850,9 @@ export default function ChatScreen() {
         prev.map((item) =>
           item.id === messageToSend.id
             ? {
-                ...item,
-                status: "sent",
+              ...item,
+              cloudId: data.user_message_id || item.cloudId,
+              status: "sent",
               }
             : item,
         ),
@@ -860,6 +867,7 @@ export default function ChatScreen() {
 
         {
           id: createLocalMessageId(),
+          cloudId: data.assistant_message_id || undefined,
           role: "assistant",
           text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
           treeholeDraft: treeholeDraft || undefined,
@@ -1030,6 +1038,64 @@ export default function ChatScreen() {
   const dismissTreeholeDraft = (messageId: string) => {
     setMessages((prev) =>
       prev.filter((item) => item.id !== messageId),
+    );
+  };
+
+  const deleteMessage = async (messageToDelete: Message) => {
+    setMessages((prev) =>
+      prev.filter((item) => item.id !== messageToDelete.id),
+    );
+
+    if (!messageToDelete.cloudId) {
+      return;
+    }
+
+    try {
+      await apiJson("/api/delete-message", {
+        method: "DELETE",
+        query: {
+          user_id: APP_USER_ID,
+          message_id: messageToDelete.cloudId,
+        },
+      });
+    } catch (error) {
+      console.log("Message delete failed:", error);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: createLocalMessageId(),
+          role: "assistant",
+          text: "这条消息刚刚没能从云端删除，你可以稍后再试一次。",
+          status: "sent",
+        },
+      ]);
+    }
+  };
+
+  const confirmDeleteMessage = (messageToDelete?: Message) => {
+    if (!messageToDelete) {
+      return;
+    }
+
+    closeMessageMenu();
+
+    Alert.alert(
+      "删除这条消息？",
+      "删除后会从当前对话历史里移除。",
+      [
+        {
+          text: "取消",
+          style: "cancel",
+        },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => {
+            deleteMessage(messageToDelete);
+          },
+        },
+      ],
     );
   };
 
@@ -1447,6 +1513,18 @@ export default function ChatScreen() {
                       styles.messageMenuItem,
                       pressed && styles.messageMenuItemPressed,
                     ]}
+                    onPress={() => confirmDeleteMessage(messageMenu?.message)}
+                  >
+                    <Text style={[styles.messageMenuText, styles.deleteMenuText]}>
+                      删除消息
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
                     onPress={() => setMoreMenuVisible(false)}
                   >
                     <Text style={styles.messageMenuText}>返回</Text>
@@ -1835,6 +1913,10 @@ const styles = StyleSheet.create({
   messageMenuText: {
     fontSize: 18,
     color: "#111",
+  },
+
+  deleteMenuText: {
+    color: "#D92D20",
   },
 
   textSelectionOverlay: {
