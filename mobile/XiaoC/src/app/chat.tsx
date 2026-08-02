@@ -138,6 +138,14 @@ const getDisplayAiText = (text: string) =>
     ? normalizeShortAiText(text)
     : text.replace(/\s*\n\s*/g, "\n");
 
+const normalizeTreeholeDraftJson = (rawJson: string) =>
+  rawJson
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .replace(/"\s*\n\s*"/g, '",\n"')
+    .replace(/"\s+"(?=[^"]*"\s*(?:,|\]))/g, '", "')
+    .replace(/,\s*([}\]])/g, "$1");
+
 const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
   const trimmed = text.trim();
 
@@ -153,7 +161,14 @@ const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
   }
 
   try {
-    const draft = JSON.parse(trimmed.slice(start, end + 1));
+    const rawJson = trimmed.slice(start, end + 1);
+    let draft;
+
+    try {
+      draft = JSON.parse(rawJson);
+    } catch {
+      draft = JSON.parse(normalizeTreeholeDraftJson(rawJson));
+    }
 
     if (
       draft?.type === "treehole_draft" &&
