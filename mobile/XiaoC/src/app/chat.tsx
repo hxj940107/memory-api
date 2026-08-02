@@ -41,7 +41,11 @@ import {
   saveLastConversation,
 } from "../lib/conversationState";
 import { isDiaryText, parseDiaryText } from "../data/observationDiary";
-import { saveTreeholeDraft, TreeholeDraft } from "../lib/treeholeState";
+import {
+  isTreeholeDraftSaved,
+  saveTreeholeDraft,
+  TreeholeDraft,
+} from "../lib/treeholeState";
 
 type Message = {
   id: string;
@@ -736,10 +740,13 @@ export default function ChatScreen() {
         return;
       }
 
-      setMessages(
-        data.map((item) => {
+      const restoredMessages = await Promise.all(
+        data.map(async (item) => {
           const treeholeDraft =
             item.role === "assistant" ? parseTreeholeDraft(item.content) : null;
+          const treeholeAlreadySaved = treeholeDraft
+            ? await isTreeholeDraftSaved(treeholeDraft)
+            : false;
 
           return {
             id: createLocalMessageId(),
@@ -758,11 +765,14 @@ export default function ChatScreen() {
               ? ""
               : item.content,
             treeholeDraft: treeholeDraft || undefined,
+            treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
             imageUri: item.metadata?.imageUrl,
             status: "sent",
-          };
+          } satisfies Message;
         }),
       );
+
+      setMessages(restoredMessages);
     } catch (error) {
       console.log(error);
     } finally {
@@ -1051,12 +1061,10 @@ export default function ChatScreen() {
     }
 
     try {
-      await apiJson("/api/delete-message", {
-        method: "DELETE",
-        query: {
-          user_id: APP_USER_ID,
-          message_id: messageToDelete.cloudId,
-        },
+      await postJson("/api/add-message", {
+        action: "delete",
+        user_id: APP_USER_ID,
+        message_id: messageToDelete.cloudId,
       });
     } catch (error) {
       console.log("Message delete failed:", error);

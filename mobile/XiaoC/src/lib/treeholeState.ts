@@ -13,6 +13,19 @@ export type TreeholeDraft = {
   reaction?: string;
 };
 
+export function getTreeholeDraftKey(draft: TreeholeDraft) {
+  return [
+    draft.date || "",
+    draft.tag || "",
+    ...(draft.content || []),
+    ...(draft.highlights || []),
+    draft.reaction || "",
+  ]
+    .join("｜")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function getSavedTreeholePosts() {
   const raw = await AsyncStorage.getItem(SAVED_TREEHOLE_POSTS_KEY);
 
@@ -35,6 +48,22 @@ export async function getSavedTreeholePosts() {
 
 export async function saveTreeholeDraft(draft: TreeholeDraft) {
   const currentPosts = await getSavedTreeholePosts();
+  const draftKey = getTreeholeDraftKey(draft);
+  const alreadySaved = currentPosts.some(
+    (post) =>
+      getTreeholeDraftKey({
+        tag: post.tag,
+        date: post.date,
+        content: post.content,
+        highlights: post.highlights || [],
+        reaction: post.reaction,
+      }) === draftKey,
+  );
+
+  if (alreadySaved) {
+    return currentPosts[0];
+  }
+
   const post: TreeholePost = {
     id: `local_treehole_${Date.now()}`,
     tag: draft.tag || "树洞",
@@ -50,4 +79,20 @@ export async function saveTreeholeDraft(draft: TreeholeDraft) {
   );
 
   return post;
+}
+
+export async function isTreeholeDraftSaved(draft: TreeholeDraft) {
+  const currentPosts = await getSavedTreeholePosts();
+  const draftKey = getTreeholeDraftKey(draft);
+
+  return currentPosts.some(
+    (post) =>
+      getTreeholeDraftKey({
+        tag: post.tag,
+        date: post.date,
+        content: post.content,
+        highlights: post.highlights || [],
+        reaction: post.reaction,
+      }) === draftKey,
+  );
 }
