@@ -40,7 +40,12 @@ import {
   getBestLastConversation,
   saveLastConversation,
 } from "../lib/conversationState";
-import { isDiaryText, parseDiaryText } from "../data/observationDiary";
+import {
+  isDiaryText,
+  ObservationDiaryEntry,
+  parseDiaryText,
+} from "../data/observationDiary";
+import { saveFavorite } from "../lib/favoritesState";
 import {
   isTreeholeDraftSaved,
   saveTreeholeDraft,
@@ -397,6 +402,82 @@ function TreeholeDraftCard({
           onPress={onDismiss}
         >
           <Text style={styles.treeholeDraftGhostText}>不要了</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function DiaryPreviewCard({
+  entry,
+  saveStatus,
+  onSave,
+  onDismiss,
+}: {
+  entry: ObservationDiaryEntry;
+  saveStatus?: Message["diarySaveStatus"];
+  onSave: () => void;
+  onDismiss: () => void;
+}) {
+  const previewSections = entry.sections.slice(0, 3);
+
+  return (
+    <View style={styles.diaryPreviewCard}>
+      <Text style={styles.diaryPreviewLabel}>WIFE OBSERVATION DIARY</Text>
+      <Text style={styles.diaryPreviewTitle}>{entry.title}</Text>
+      <Text style={styles.diaryPreviewDate}>
+        {entry.displayDate || entry.date.replaceAll(".", " · ")}
+      </Text>
+
+      <View style={styles.diaryPreviewDivider} />
+
+      {previewSections.map((section, index) => (
+        <View key={`${section.tag}-${index}`} style={styles.diaryPreviewSection}>
+          <Text style={styles.diaryPreviewTag}>{section.tag}</Text>
+          {section.paragraphs.slice(0, 3).map((paragraph, paragraphIndex) => (
+            <Text
+              key={`${section.tag}-${index}-${paragraphIndex}`}
+              style={styles.diaryPreviewText}
+            >
+              {paragraph}
+            </Text>
+          ))}
+        </View>
+      ))}
+
+      {entry.sections.length > previewSections.length && (
+        <Text style={styles.diaryPreviewMore}>· · ·</Text>
+      )}
+
+      <View style={styles.diaryPreviewActions}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.diaryPreviewButton,
+            pressed && styles.diaryPreviewButtonPressed,
+            saveStatus === "saved" && styles.diaryPreviewButtonSaved,
+          ]}
+          onPress={onSave}
+          disabled={saveStatus === "saving" || saveStatus === "saved"}
+        >
+          <Text style={styles.diaryPreviewButtonText}>
+            {saveStatus === "saving"
+              ? "正在存入..."
+              : saveStatus === "saved"
+                ? "已存入 Diary"
+                : saveStatus === "failed"
+                  ? "存入失败，重试"
+                  : "存入 Diary"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.diaryPreviewGhostButton,
+            pressed && styles.diaryPreviewButtonPressed,
+          ]}
+          onPress={onDismiss}
+        >
+          <Text style={styles.diaryPreviewGhostText}>不要了</Text>
         </Pressable>
       </View>
     </View>
@@ -1051,6 +1132,12 @@ export default function ChatScreen() {
     );
   };
 
+  const dismissMessage = (messageId: string) => {
+    setMessages((prev) =>
+      prev.filter((item) => item.id !== messageId),
+    );
+  };
+
   const deleteMessage = async (messageToDelete: Message) => {
     setMessages((prev) =>
       prev.filter((item) => item.id !== messageToDelete.id),
@@ -1105,6 +1192,34 @@ export default function ChatScreen() {
         },
       ],
     );
+  };
+
+  const saveFavoriteFromMessage = async (messageToSave?: Message) => {
+    if (!messageToSave?.text.trim()) {
+      return;
+    }
+
+    closeMessageMenu();
+
+    try {
+      await saveFavorite({
+        text: getDisplayAiText(messageToSave.text),
+        role: messageToSave.role,
+        conversationId,
+      });
+    } catch (error) {
+      console.log("Favorite save failed:", error);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: createLocalMessageId(),
+          role: "assistant",
+          text: "这条收藏刚刚没存好，等一下再试一次。",
+          status: "sent",
+        },
+      ]);
+    }
   };
 
   return (
@@ -1285,6 +1400,13 @@ export default function ChatScreen() {
 	                      onSave={() => saveTreeholeFromMessage(item)}
 	                      onDismiss={() => dismissTreeholeDraft(item.id)}
 	                    />
+	                  ) : isDiaryText(item.text) ? (
+	                    <DiaryPreviewCard
+	                      entry={parseDiaryText(item.text)}
+	                      saveStatus={item.diarySaveStatus}
+	                      onSave={() => saveDiaryFromMessage(item)}
+	                      onDismiss={() => dismissMessage(item.id)}
+	                    />
 	                  ) : (
 	                    <Pressable
 	                      style={styles.aiBox}
@@ -1300,32 +1422,6 @@ export default function ChatScreen() {
 	                      <Text style={styles.aiText}>{getDisplayAiText(item.text)}</Text>
 	                    </Pressable>
 	                  )}
-
-	                  {isDiaryText(item.text) && (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.diarySaveButton,
-                        pressed && styles.diarySaveButtonPressed,
-                        item.diarySaveStatus === "saved" &&
-                          styles.diarySaveButtonSaved,
-                      ]}
-                      onPress={() => saveDiaryFromMessage(item)}
-                      disabled={
-                        item.diarySaveStatus === "saving" ||
-                        item.diarySaveStatus === "saved"
-                      }
-                    >
-                      <Text style={styles.diarySaveText}>
-                        {item.diarySaveStatus === "saving"
-                          ? "正在存入..."
-                          : item.diarySaveStatus === "saved"
-                            ? "已存入 Diary"
-                            : item.diarySaveStatus === "failed"
-                              ? "存入失败，重试"
-                              : "存入 Diary"}
-                      </Text>
-                    </Pressable>
-                  )}
                 </View>
               </AnimatedMessage>
             ),
@@ -1476,44 +1572,14 @@ export default function ChatScreen() {
             >
               {moreMenuVisible ? (
                 <>
-                  {messageMenu?.message && isDiaryText(messageMenu.message.text) && (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.messageMenuItem,
-                        pressed && styles.messageMenuItemPressed,
-                      ]}
-                      onPress={() => {
-                        if (messageMenu?.message) {
-                          saveDiaryFromMessage(messageMenu.message);
-                        }
-
-                        closeMessageMenu();
-                      }}
-                    >
-                      <Text style={styles.messageMenuText}>存入 Diary</Text>
-                    </Pressable>
-                  )}
-
                   <Pressable
                     style={({ pressed }) => [
                       styles.messageMenuItem,
                       pressed && styles.messageMenuItemPressed,
                     ]}
-                    onPress={() => {
-                      closeMessageMenu();
-
-                      setMessages((prev) => [
-                        ...prev,
-                        {
-                          id: createLocalMessageId(),
-                          role: "assistant",
-                          text: "存入树洞我先放在这里，下一步接保存逻辑。",
-                          status: "sent",
-                        },
-                      ]);
-                    }}
+                    onPress={() => saveFavoriteFromMessage(messageMenu?.message)}
                   >
-                    <Text style={styles.messageMenuText}>存入树洞</Text>
+                    <Text style={styles.messageMenuText}>收藏</Text>
                   </Pressable>
 
                   <Pressable
@@ -1880,6 +1946,120 @@ const styles = StyleSheet.create({
   treeholeDraftGhostText: {
     fontSize: 13,
     color: "#C8C1D7",
+  },
+
+  diaryPreviewCard: {
+    width: 292,
+    borderRadius: 26,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 16,
+    backgroundColor: "#FBF8F3",
+    shadowColor: "#B8AFA7",
+    shadowOpacity: 0.13,
+    shadowRadius: 22,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+  },
+
+  diaryPreviewLabel: {
+    textAlign: "center",
+    fontSize: 11,
+    color: "#AAA098",
+    letterSpacing: 2.6,
+    marginBottom: 12,
+  },
+
+  diaryPreviewTitle: {
+    textAlign: "center",
+    fontSize: 23,
+    lineHeight: 31,
+    color: "#33302D",
+    marginBottom: 8,
+  },
+
+  diaryPreviewDate: {
+    textAlign: "center",
+    fontSize: 15,
+    color: "#A69D96",
+  },
+
+  diaryPreviewDivider: {
+    height: 1,
+    backgroundColor: "rgba(166,157,150,0.20)",
+    marginVertical: 18,
+  },
+
+  diaryPreviewSection: {
+    marginBottom: 16,
+  },
+
+  diaryPreviewTag: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(166,157,150,0.12)",
+    color: "#9D938B",
+    fontSize: 13,
+    marginBottom: 10,
+  },
+
+  diaryPreviewText: {
+    fontSize: 16,
+    lineHeight: 27,
+    color: "#3F3A37",
+    marginBottom: 7,
+  },
+
+  diaryPreviewMore: {
+    textAlign: "center",
+    fontSize: 16,
+    color: "#C5BDB5",
+    marginBottom: 14,
+  },
+
+  diaryPreviewActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 2,
+  },
+
+  diaryPreviewButton: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "#EFEAE3",
+  },
+
+  diaryPreviewButtonSaved: {
+    backgroundColor: "rgba(239,234,227,0.58)",
+  },
+
+  diaryPreviewGhostButton: {
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: "rgba(166,157,150,0.10)",
+  },
+
+  diaryPreviewButtonPressed: {
+    opacity: 0.72,
+  },
+
+  diaryPreviewButtonText: {
+    fontSize: 13,
+    color: "#4C4641",
+  },
+
+  diaryPreviewGhostText: {
+    fontSize: 13,
+    color: "#8F857D",
   },
 
   messageMenuOverlay: {
