@@ -88,6 +88,7 @@ Suggested structure:
 小C的空间
 🌙 某C的深夜树洞
 📓 Wife Observation Diary
+⭐️ 收藏
 🫧 朋友圈
 
 设置
@@ -130,6 +131,15 @@ Visual direction:
 - Small tags like daily observation, vocabulary invention, sleep report.
 - Tiny reactions can exist as flavor, but should not become public social metrics.
 
+Current state:
+
+- Treehole has a dedicated dark feed page.
+- XiaoC can return structured treehole drafts in chat.
+- The app renders treehole drafts as preview cards.
+- The user can save a treehole draft from the card.
+- Saved treehole posts currently persist locally only.
+- Cloud sync is the next recommended step.
+
 Avoid:
 
 - Public social media feeling.
@@ -167,6 +177,14 @@ Visual direction:
 - Beige / warm gray palette.
 - Entries can be grouped by time of day or observation type.
 
+Current state:
+
+- Diary has a dedicated list page and detail page.
+- XiaoC's diary output is rendered as a preview card in chat.
+- The user can save diary cards to cloud through `/api/memory`.
+- Refresh detects saved diary cards and shows the saved state.
+- Diary entries can be deleted from the diary list.
+
 Avoid:
 
 - Psychological report tone.
@@ -174,7 +192,29 @@ Avoid:
 - Turning the user into a case study.
 - Saving everything.
 
-### 6. 朋友圈
+### 6. 收藏
+
+Purpose: save ordinary chat text that the user wants to keep.
+
+Product meaning:
+
+- This is not a creative module like Diary or Treehole.
+- It is a quiet archive of meaningful lines, useful explanations, or relationship moments.
+- It should feel like “I want to keep this sentence,” not like a productivity bookmark manager.
+
+Current state:
+
+- The user can long-press a normal chat message and choose `更多… → 收藏`.
+- Favorites are shown in a dedicated left-drawer module.
+- Favorites currently persist locally only.
+- Long-pressing a favorite can remove it.
+
+Future direction:
+
+- Add cloud sync so favorites survive reinstall and device switching.
+- Consider linking favorites back to their original conversation once message IDs and navigation are stable.
+
+### 7. 朋友圈
 
 Status: future feature, not first priority.
 
@@ -193,7 +233,7 @@ Constraints:
 - No multi-user concepts.
 - Keep it as a private two-person space.
 
-### 7. Settings
+### 8. Settings
 
 Purpose: practical controls without polluting the main relationship surface.
 
