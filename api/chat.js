@@ -47,7 +47,26 @@ async function saveMessage(user_id, role, content, conversation_id) {
   })
 }
 
-async function saveUserMessage(user_id, content, conversation_id, imageUrls = []) {
+async function saveUserMessage(
+  user_id,
+  content,
+  conversation_id,
+  imageUrls = [],
+  fileInfo = null
+) {
+  const metadata = {}
+
+  if (imageUrls.length > 0) {
+    metadata.imageUrl = imageUrls[0]
+    metadata.imageUrls = imageUrls
+  }
+
+  if (fileInfo?.fileName) {
+    metadata.fileName = fileInfo.fileName
+    metadata.fileMimeType = fileInfo.fileMimeType || null
+    metadata.fileSize = fileInfo.fileSize || null
+  }
+
   await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -56,12 +75,7 @@ async function saveUserMessage(user_id, content, conversation_id, imageUrls = []
       role: "user",
       content,
       conversation_id,
-      metadata: imageUrls.length > 0
-        ? {
-            imageUrl: imageUrls[0],
-            imageUrls
-          }
-        : {}
+      metadata
     })
   })
 }
@@ -582,7 +596,11 @@ export default async function handler(req, res) {
       message, 
       conversation_id,
       imageUrl,
-      imageUrls
+      imageUrls,
+      fileName,
+      fileText,
+      fileMimeType,
+      fileSize
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
@@ -591,9 +609,24 @@ export default async function handler(req, res) {
       : imageUrl
         ? [imageUrl]
         : []
+    const normalizedFileName = trimText(String(fileName || "").trim(), 160)
+    const normalizedFileText = trimText(String(fileText || "").trim(), 12000)
+    const hasFileText = Boolean(normalizedFileName && normalizedFileText)
 
 // 1. save user msg
-await saveUserMessage(user_id, message, cid, normalizedImageUrls)
+await saveUserMessage(
+  user_id,
+  message,
+  cid,
+  normalizedImageUrls,
+  normalizedFileName
+    ? {
+        fileName: normalizedFileName,
+        fileMimeType,
+        fileSize
+      }
+    : null
+)
 
 // 2. history
 const history = await getRecentMessages(
@@ -673,6 +706,19 @@ const stableMemory = await getStableMemories(user_id)
 
 let webSearch = "";
 let userMessage = message;
+const fileContext = hasFileText
+  ? `
+
+【Attached File｜用户上传文件】
+文件名：${normalizedFileName}
+类型：${fileMimeType || "unknown"}
+大小：${fileSize || "unknown"}
+
+以下是文件文本内容。只在用户当前问题需要时使用，不要把文件全文当作长期记忆保存：
+
+${normalizedFileText}
+`
+  : "";
 const diaryStyleContext = isDiaryWritingRequest(message)
   ? buildDiaryWritingStylePrompt()
   : "";
@@ -800,7 +846,7 @@ ${webSearch}`
             text: trimText(
               userMessage,
               CONTEXT_BUDGET.userMessageChars
-            )
+            ) + fileContext
           },
           ...normalizedImageUrls.map(url => ({
             type: "image_url",
@@ -809,10 +855,10 @@ ${webSearch}`
             }
           }))
         ]
-      : trimText(
+    : trimText(
           userMessage,
           CONTEXT_BUDGET.userMessageChars
-        )
+        ) + fileContext
   }
 
 ]
