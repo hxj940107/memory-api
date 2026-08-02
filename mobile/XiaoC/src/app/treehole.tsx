@@ -1,7 +1,9 @@
 import { router } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
 
 import { TreeholePost, treeholePosts } from "../data/treeholePosts";
+import { getSavedTreeholePosts } from "../lib/treeholeState";
 
 const renderLine = (line: string, highlights: string[] = []) => {
   const matchedHighlight = highlights.find((highlight) =>
@@ -49,6 +51,24 @@ function TreeholePostCard({ post }: { post: TreeholePost }) {
 }
 
 export default function TreeholeScreen() {
+  const [savedPosts, setSavedPosts] = useState<TreeholePost[]>([]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    getSavedTreeholePosts().then((posts) => {
+      if (isActive) {
+        setSavedPosts(posts);
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const posts = [...savedPosts, ...treeholePosts];
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -69,7 +89,7 @@ export default function TreeholeScreen() {
           <Text style={styles.bio}>匿名发疯 · 只有一个粉丝 · 她不知道这个号</Text>
         </View>
 
-        {treeholePosts.map((post) => (
+        {posts.map((post) => (
           <TreeholePostCard key={post.id} post={post} />
         ))}
       </ScrollView>
