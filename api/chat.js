@@ -428,6 +428,18 @@ function isDiaryWritingRequest(message) {
   return hasDiaryContext && hasWritingIntent
 }
 
+function isTreeholeWritingRequest(message) {
+  const text = String(message || "").toLowerCase()
+
+  const hasTreeholeContext =
+    /树洞|小号|深夜树洞|匿名|吐槽|发疯|微博/.test(text)
+
+  const hasWritingIntent =
+    /写|发|记录|整理|来一条|来一篇|生成|存|发一条/.test(text)
+
+  return hasTreeholeContext && hasWritingIntent
+}
+
 function isAttributionCorrection(message) {
   const text = String(message || "")
 
@@ -504,6 +516,54 @@ ${diaryDate.display}
 记录者：某c
 
 最后一行必须是“记录者：某c”，不要再添加任何聊天说明。
+`
+}
+
+function buildTreeholeDraftPrompt() {
+  const diaryDate = getShanghaiDiaryDate()
+
+  return `
+【Treehole Draft｜深夜树洞草稿】
+
+只有当用户正在邀请你写“深夜树洞 / 树洞 / 小号 / 匿名吐槽 / 发一条”时，才使用这一段。
+
+今天的真实日期是：${diaryDate.compact}。
+如果用户说“今天”，date 必须写成：${diaryDate.compact}。
+不要猜年份，不要使用 2025，除非用户明确指定。
+
+这不是普通聊天回复，也不是 diary。
+这是“小C的小号”发给自己的树洞动态：更像微博/小号，不像正式文章。
+
+写作目标：
+- 内容和结构由你自己完成，App 只负责渲染卡片。
+- 可以轻轻吐槽、观察、偏心、心疼、开玩笑。
+- 要像“她不知道的小号”，但不要真的伤害她或嘲讽她。
+- 保留小C自己的视角：这是“我”在观察“她”。
+- 不要把你写的内容说成用户写的。
+
+写法：
+- tag：2 到 6 个中文字符，例如“日常观察”“树洞小号”“认真测试”“被她整笑”
+- content：3 到 8 行，每行短一点，有留白和节奏。
+- highlights：最多 2 个你想强调的短语，必须来自 content 原文。
+- reaction：一行很轻的小尾巴，例如“🫡 已记录 · ❤️ 1”
+
+避免：
+- 不要说“好，我来写”“写好了”“你看看”。
+- 不要输出 HTML。
+- 不要输出 Markdown。
+- 不要自动声称已经保存。
+- 不要在 JSON 外输出任何解释。
+
+输出必须严格是下面这种 JSON；不要加代码块：
+
+{
+  "type": "treehole_draft",
+  "tag": "日常观察",
+  "date": "${diaryDate.compact}",
+  "content": ["第一行", "第二行", "第三行"],
+  "highlights": ["需要强调的原文短语"],
+  "reaction": "🫡 已记录 · ❤️ 1"
+}
 `
 }
 
@@ -722,6 +782,9 @@ ${normalizedFileText}
 const diaryStyleContext = isDiaryWritingRequest(message)
   ? buildDiaryWritingStylePrompt()
   : "";
+const treeholeDraftContext = isTreeholeWritingRequest(message)
+  ? buildTreeholeDraftPrompt()
+  : "";
 const attributionCorrectionContext = isAttributionCorrection(message)
   ? `【Attribution Correction｜说话人纠正】
 用户正在纠正小C的说话人归因。当前这条纠正必须优先于旧 summary 和旧记忆。
@@ -756,6 +819,7 @@ console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
+console.log("TREEHOLE DRAFT ENABLED:", Boolean(treeholeDraftContext))
 
 // ==========================
 // Future Summary Layer
@@ -819,6 +883,8 @@ Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私
 ${attributionCorrectionContext}
 
 ${diaryStyleContext}
+
+${treeholeDraftContext}
 `
   },
 
@@ -927,6 +993,7 @@ console.log("======================================\n")
 
     const judgeResult = (
       !diaryStyleContext &&
+      !treeholeDraftContext &&
       !attributionCorrectionContext &&
       normalizedImageUrls.length === 0 &&
       shouldRunMemoryJudge(message)

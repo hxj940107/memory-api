@@ -24,6 +24,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useLocalSearchParams } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
@@ -39,6 +40,7 @@ import {
   saveLastConversation,
 } from "../lib/conversationState";
 import { isDiaryText, parseDiaryText } from "../data/observationDiary";
+import { saveTreeholeDraft, TreeholeDraft } from "../lib/treeholeState";
 
 type Message = {
   id: string;
@@ -54,6 +56,8 @@ type Message = {
   imageAssets?: ImagePicker.ImagePickerAsset[];
   status?: "sending" | "sent" | "failed";
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
+  treeholeDraft?: TreeholeDraft;
+  treeholeSaveStatus?: "idle" | "saving" | "saved" | "failed";
 };
 
 type SelectedFile = {
@@ -63,6 +67,13 @@ type SelectedFile = {
   mimeType?: string | null;
   truncated: boolean;
 };
+
+type MessageMenuState = {
+  text: string;
+  message?: Message;
+  x: number;
+  y: number;
+} | null;
 
 type HistoryItem = {
   role: "user" | "assistant";
@@ -121,6 +132,51 @@ const normalizeShortAiText = (text: string) =>
 
 const shouldUseSimpleAiText = (text: string) =>
   normalizeShortAiText(text).length <= 32;
+
+const getDisplayAiText = (text: string) =>
+  shouldUseSimpleAiText(text)
+    ? normalizeShortAiText(text)
+    : text.replace(/\s*\n\s*/g, "\n");
+
+const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
+  const trimmed = text.trim();
+
+  if (!trimmed.includes('"type"') || !trimmed.includes("treehole_draft")) {
+    return null;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+
+  if (start < 0 || end <= start) {
+    return null;
+  }
+
+  try {
+    const draft = JSON.parse(trimmed.slice(start, end + 1));
+
+    if (
+      draft?.type === "treehole_draft" &&
+      Array.isArray(draft.content) &&
+      draft.content.length > 0
+    ) {
+      return {
+        type: "treehole_draft",
+        tag: String(draft.tag || "树洞"),
+        date: String(draft.date || ""),
+        content: draft.content.map((line: unknown) => String(line)),
+        highlights: Array.isArray(draft.highlights)
+          ? draft.highlights.map((line: unknown) => String(line))
+          : [],
+        reaction: String(draft.reaction || "🫡 已记录 · ❤️ 1"),
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+};
 
 const getFileExtension = (name: string) =>
   name.split(".").pop()?.toLowerCase() || "";
@@ -231,6 +287,97 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
     </RNAnimated.View>
   );
 }
+
+function TreeholeDraftCard({
+  draft,
+  saveStatus,
+  onSave,
+  onDismiss,
+}: {
+  draft: TreeholeDraft;
+  saveStatus?: Message["treeholeSaveStatus"];
+  onSave: () => void;
+  onDismiss: () => void;
+}) {
+  const highlights = draft.highlights || [];
+
+  return (
+    <View style={styles.treeholeDraftCard}>
+      <View style={styles.treeholeDraftHeader}>
+        <Text style={styles.treeholeDraftLabel}>深夜树洞 · 草稿</Text>
+        {!!draft.date && <Text style={styles.treeholeDraftDate}>{draft.date}</Text>}
+      </View>
+
+      {!!draft.tag && (
+        <Text style={styles.treeholeDraftTag}>{draft.tag}</Text>
+      )}
+
+      <View style={styles.treeholeDraftContent}>
+        {draft.content.map((line, index) => {
+          const matchedHighlight = highlights.find((highlight) =>
+            line.includes(highlight),
+          );
+
+          if (!matchedHighlight) {
+            return (
+              <Text key={`${line}-${index}`} style={styles.treeholeDraftLine}>
+                {line}
+              </Text>
+            );
+          }
+
+          const [before, after] = line.split(matchedHighlight);
+
+          return (
+            <Text key={`${line}-${index}`} style={styles.treeholeDraftLine}>
+              {before}
+              <Text style={styles.treeholeDraftHighlight}>
+                {matchedHighlight}
+              </Text>
+              {after}
+            </Text>
+          );
+        })}
+      </View>
+
+      <Text style={styles.treeholeDraftReaction}>
+        {draft.reaction || "🫡 已记录 · ❤️ 1"}
+      </Text>
+
+      <View style={styles.treeholeDraftActions}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.treeholeDraftButton,
+            pressed && styles.treeholeDraftButtonPressed,
+            saveStatus === "saved" && styles.treeholeDraftButtonSaved,
+          ]}
+          onPress={onSave}
+          disabled={saveStatus === "saving" || saveStatus === "saved"}
+        >
+          <Text style={styles.treeholeDraftButtonText}>
+            {saveStatus === "saving"
+              ? "正在存入..."
+              : saveStatus === "saved"
+                ? "已存入树洞"
+                : saveStatus === "failed"
+                  ? "存入失败，重试"
+                  : "存入树洞"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.treeholeDraftGhostButton,
+            pressed && styles.treeholeDraftButtonPressed,
+          ]}
+          onPress={onDismiss}
+        >
+          <Text style={styles.treeholeDraftGhostText}>不要了</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 export default function ChatScreen() {
   const params = useLocalSearchParams();
 
@@ -252,6 +399,14 @@ export default function ChatScreen() {
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+
+  const [messageMenu, setMessageMenu] = useState<MessageMenuState>(null);
+
+  const [messageMenuVisible, setMessageMenuVisible] = useState(false);
+
+  const [moreMenuVisible, setMoreMenuVisible] = useState(false);
+
+  const [selectionText, setSelectionText] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -275,6 +430,59 @@ export default function ChatScreen() {
         animated,
       });
     });
+  };
+
+  const openMessageMenu = (
+    text: string,
+    messageItem: Message | undefined,
+    x: number,
+    y: number,
+  ) => {
+    setMoreMenuVisible(false);
+    setMessageMenu({
+      text,
+      message: messageItem,
+      x,
+      y,
+    });
+    setMessageMenuVisible(true);
+  };
+
+  const closeMessageMenu = () => {
+    setMessageMenuVisible(false);
+    setMoreMenuVisible(false);
+
+    setTimeout(() => {
+      setMessageMenu(null);
+    }, 180);
+  };
+
+  const copyMenuText = async () => {
+    if (!messageMenu?.text) return;
+
+    await Clipboard.setStringAsync(messageMenu.text);
+    closeMessageMenu();
+  };
+
+  const openTextSelection = () => {
+    if (!messageMenu?.text) return;
+
+    setSelectionText(messageMenu.text);
+    closeMessageMenu();
+  };
+
+  const showTranslatePlaceholder = () => {
+    closeMessageMenu();
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: createLocalMessageId(),
+        role: "assistant",
+        text: "翻译功能我先放在这里，下一步可以接小C来翻译这条消息。",
+        status: "sent",
+      },
+    ]);
   };
 
   useEffect(() => {
@@ -509,24 +717,30 @@ export default function ChatScreen() {
       }
 
       setMessages(
-        data.map((item) => ({
-          id: createLocalMessageId(),
-          role: item.role,
-          imageUris: item.metadata?.imageUrls || (
-            item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
-          ),
-          fileName: item.metadata?.fileName,
-          fileMimeType: item.metadata?.fileMimeType,
-          fileSize: item.metadata?.fileSize,
-          text: shouldHideImagePlaceholderText(
-            item.content,
-            item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
-          )
-            ? ""
-            : item.content,
-          imageUri: item.metadata?.imageUrl,
-          status: "sent",
-        })),
+        data.map((item) => {
+          const treeholeDraft =
+            item.role === "assistant" ? parseTreeholeDraft(item.content) : null;
+
+          return {
+            id: createLocalMessageId(),
+            role: item.role,
+            imageUris: item.metadata?.imageUrls || (
+              item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
+            ),
+            fileName: item.metadata?.fileName,
+            fileMimeType: item.metadata?.fileMimeType,
+            fileSize: item.metadata?.fileSize,
+            text: treeholeDraft || shouldHideImagePlaceholderText(
+              item.content,
+              item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
+            )
+              ? ""
+              : item.content,
+            treeholeDraft: treeholeDraft || undefined,
+            imageUri: item.metadata?.imageUrl,
+            status: "sent",
+          };
+        }),
       );
     } catch (error) {
       console.log(error);
@@ -624,13 +838,16 @@ export default function ChatScreen() {
 
       setIsTyping(false);
 
+      const treeholeDraft = parseTreeholeDraft(data.reply || "");
+
       setMessages((prev) => [
         ...prev,
 
         {
           id: createLocalMessageId(),
           role: "assistant",
-          text: data.reply || "小C暂时没有回复。",
+          text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
+          treeholeDraft: treeholeDraft || undefined,
           status: "sent",
         },
       ]);
@@ -748,6 +965,57 @@ export default function ChatScreen() {
         ),
       );
     }
+  };
+
+  const saveTreeholeFromMessage = async (messageToSave: Message) => {
+    if (!messageToSave.treeholeDraft) {
+      return;
+    }
+
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === messageToSave.id
+          ? {
+              ...item,
+              treeholeSaveStatus: "saving",
+            }
+          : item,
+      ),
+    );
+
+    try {
+      await saveTreeholeDraft(messageToSave.treeholeDraft);
+
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSave.id
+            ? {
+                ...item,
+                treeholeSaveStatus: "saved",
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      console.log("Treehole save failed:", error);
+
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === messageToSave.id
+            ? {
+                ...item,
+                treeholeSaveStatus: "failed",
+              }
+            : item,
+        ),
+      );
+    }
+  };
+
+  const dismissTreeholeDraft = (messageId: string) => {
+    setMessages((prev) =>
+      prev.filter((item) => item.id !== messageId),
+    );
   };
 
   return (
@@ -891,15 +1159,19 @@ export default function ChatScreen() {
                   )}
 
                   {!!item.text && (
-                    <View style={styles.userBubble}>
-                      <TextInput
-                        style={[styles.userText, styles.selectableInputText]}
-                        value={item.text}
-                        editable={false}
-                        multiline
-                        scrollEnabled={false}
-                      />
-                    </View>
+                    <Pressable
+                      style={styles.userBubble}
+                      onLongPress={(event) =>
+                        openMessageMenu(
+                          item.text,
+                          item,
+                          event.nativeEvent.pageX,
+                          event.nativeEvent.pageY,
+                        )
+                      }
+                    >
+                      <Text style={styles.userText}>{item.text}</Text>
+                    </Pressable>
                   )}
 
                   {!item.imageUri &&
@@ -914,24 +1186,33 @@ export default function ChatScreen() {
                   )}
                 </View>
               </AnimatedMessage>
-            ) : (
-              <AnimatedMessage key={item.id}>
-                <View style={styles.aiWrap}>
-                  <View style={styles.aiBox}>
-                    <TextInput
-                      style={[styles.aiText, styles.selectableInputText]}
-                      value={
-                        shouldUseSimpleAiText(item.text)
-                          ? normalizeShortAiText(item.text)
-                          : item.text.replace(/\s*\n\s*/g, "\n")
-                      }
-                      editable={false}
-                      multiline
-                      scrollEnabled={false}
-                    />
-                  </View>
+	            ) : (
+	              <AnimatedMessage key={item.id}>
+	                <View style={styles.aiWrap}>
+	                  {item.treeholeDraft ? (
+	                    <TreeholeDraftCard
+	                      draft={item.treeholeDraft}
+	                      saveStatus={item.treeholeSaveStatus}
+	                      onSave={() => saveTreeholeFromMessage(item)}
+	                      onDismiss={() => dismissTreeholeDraft(item.id)}
+	                    />
+	                  ) : (
+	                    <Pressable
+	                      style={styles.aiBox}
+	                      onLongPress={(event) =>
+	                        openMessageMenu(
+	                          getDisplayAiText(item.text),
+	                          item,
+	                          event.nativeEvent.pageX,
+	                          event.nativeEvent.pageY,
+	                        )
+	                      }
+	                    >
+	                      <Text style={styles.aiText}>{getDisplayAiText(item.text)}</Text>
+	                    </Pressable>
+	                  )}
 
-                  {isDiaryText(item.text) && (
+	                  {isDiaryText(item.text) && (
                     <Pressable
                       style={({ pressed }) => [
                         styles.diarySaveButton,
@@ -1075,6 +1356,159 @@ export default function ChatScreen() {
               <Text style={styles.imagePreviewCloseText}>×</Text>
             </Pressable>
           </Pressable>
+        </Modal>
+
+        <Modal
+          visible={messageMenuVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={closeMessageMenu}
+        >
+          <View style={styles.messageMenuOverlay}>
+            <Pressable
+              style={styles.messageMenuBackdrop}
+              onPress={closeMessageMenu}
+            />
+
+            <View
+              style={[
+                styles.messageMenuCard,
+                messageMenu && {
+                  left: Math.min(
+                    Math.max(messageMenu.x - 84, 18),
+                    Dimensions.get("window").width - 186,
+                  ),
+                  top: Math.min(
+                    Math.max(messageMenu.y - 18, 70),
+                    Dimensions.get("window").height - 230,
+                  ),
+                },
+              ]}
+            >
+              {moreMenuVisible ? (
+                <>
+                  {messageMenu?.message && isDiaryText(messageMenu.message.text) && (
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.messageMenuItem,
+                        pressed && styles.messageMenuItemPressed,
+                      ]}
+                      onPress={() => {
+                        if (messageMenu?.message) {
+                          saveDiaryFromMessage(messageMenu.message);
+                        }
+
+                        closeMessageMenu();
+                      }}
+                    >
+                      <Text style={styles.messageMenuText}>存入 Diary</Text>
+                    </Pressable>
+                  )}
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={() => {
+                      closeMessageMenu();
+
+                      setMessages((prev) => [
+                        ...prev,
+                        {
+                          id: createLocalMessageId(),
+                          role: "assistant",
+                          text: "存入树洞我先放在这里，下一步接保存逻辑。",
+                          status: "sent",
+                        },
+                      ]);
+                    }}
+                  >
+                    <Text style={styles.messageMenuText}>存入树洞</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={() => setMoreMenuVisible(false)}
+                  >
+                    <Text style={styles.messageMenuText}>返回</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={copyMenuText}
+                  >
+                    <Text style={styles.messageMenuText}>拷贝</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={openTextSelection}
+                  >
+                    <Text style={styles.messageMenuText}>选择</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={showTranslatePlaceholder}
+                  >
+                    <Text style={styles.messageMenuText}>翻译</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.messageMenuItem,
+                      pressed && styles.messageMenuItemPressed,
+                    ]}
+                    onPress={() => setMoreMenuVisible(true)}
+                  >
+                    <Text style={styles.messageMenuText}>更多…</Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={!!selectionText}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectionText(null)}
+        >
+          <View style={styles.textSelectionOverlay}>
+            <Pressable
+              style={styles.textSelectionBackdrop}
+              onPress={() => setSelectionText(null)}
+            />
+
+            <View style={styles.textSelectionSheet}>
+              <View style={styles.textSelectionHandle} />
+              <ScrollView style={styles.textSelectionScroll}>
+                <TextInput
+                  style={styles.textSelectionInput}
+                  value={selectionText || ""}
+                  editable={false}
+                  multiline
+                  scrollEnabled={false}
+                />
+              </ScrollView>
+            </View>
+          </View>
         </Modal>
       </View>
     </KeyboardAvoidingView>
@@ -1241,13 +1675,193 @@ const styles = StyleSheet.create({
     lineHeight: 25,
   },
 
-  selectableInputText: {
-    marginTop: -4,
-    marginBottom: 0,
+  treeholeDraftCard: {
+    width: 285,
+    backgroundColor: "#191927",
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: "#10101A",
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+  },
+
+  treeholeDraftHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+
+  treeholeDraftLabel: {
+    fontSize: 12,
+    color: "#AAA4B8",
+    letterSpacing: 1.6,
+  },
+
+  treeholeDraftDate: {
+    fontSize: 12,
+    color: "#817B91",
+  },
+
+  treeholeDraftTag: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    color: "#CEC8DC",
+    fontSize: 13,
+    marginBottom: 14,
+  },
+
+  treeholeDraftContent: {
+    gap: 8,
+  },
+
+  treeholeDraftLine: {
+    fontSize: 16,
+    lineHeight: 25,
+    color: "#ECE9F4",
+  },
+
+  treeholeDraftHighlight: {
+    color: "#AFA8FF",
+  },
+
+  treeholeDraftReaction: {
+    marginTop: 16,
+    fontSize: 13,
+    color: "#9E98AA",
+  },
+
+  treeholeDraftActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  treeholeDraftButton: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: "#ECE9F4",
+  },
+
+  treeholeDraftButtonSaved: {
+    backgroundColor: "rgba(236,233,244,0.52)",
+  },
+
+  treeholeDraftGhostButton: {
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+
+  treeholeDraftButtonPressed: {
+    opacity: 0.72,
+  },
+
+  treeholeDraftButtonText: {
+    fontSize: 13,
+    color: "#201F2A",
+  },
+
+  treeholeDraftGhostText: {
+    fontSize: 13,
+    color: "#C8C1D7",
+  },
+
+  messageMenuOverlay: {
+    flex: 1,
+  },
+
+  messageMenuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.16)",
+  },
+
+  messageMenuCard: {
+    position: "absolute",
+    minWidth: 168,
+    borderRadius: 22,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 12,
+  },
+
+  messageMenuItem: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 14,
+    marginHorizontal: 6,
+  },
+
+  messageMenuItemPressed: {
+    backgroundColor: "rgba(120,120,128,0.10)",
+  },
+
+  messageMenuText: {
+    fontSize: 18,
+    color: "#111",
+  },
+
+  textSelectionOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+
+  textSelectionBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.14)",
+  },
+
+  textSelectionSheet: {
+    height: 250,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingTop: 10,
+    paddingHorizontal: 22,
+    paddingBottom: 24,
+    backgroundColor: "rgba(255,255,255,0.98)",
+  },
+
+  textSelectionHandle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    marginBottom: 14,
+    backgroundColor: "rgba(120,120,128,0.22)",
+  },
+
+  textSelectionScroll: {
+    flex: 1,
+  },
+
+  textSelectionInput: {
+    fontSize: 17,
+    lineHeight: 27,
+    color: "#333",
     padding: 0,
-    minHeight: 0,
+    margin: 0,
     backgroundColor: "transparent",
-    textAlignVertical: "top",
   },
 
   diarySaveButton: {
