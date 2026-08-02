@@ -50,6 +50,11 @@ const xiaoCSpaces = [
     title: "Observation Diary",
   },
   {
+    id: "favorites",
+    icon: "⭐️",
+    title: "收藏",
+  },
+  {
     id: "moments",
     icon: "🫧",
     title: "朋友圈",
@@ -338,6 +343,13 @@ export default function ConversationList({
       await onNavigate?.();
 
       router.push("/diary");
+      return;
+    }
+
+    if (space.id === "favorites") {
+      await onNavigate?.();
+
+      router.push("/favorites");
       return;
     }
 
