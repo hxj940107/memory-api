@@ -207,6 +207,20 @@ const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
   return null;
 };
 
+const getDiaryEntryKey = (entry: ObservationDiaryEntry) =>
+  [
+    entry.date || "",
+    entry.title || "",
+    ...entry.sections.flatMap((section) => [
+      section.tag,
+      ...(section.paragraphs || []),
+      ...(section.emphasis || []),
+    ]),
+  ]
+    .join("｜")
+    .replace(/\s+/g, " ")
+    .trim();
+
 const getFileExtension = (name: string) =>
   name.split(".").pop()?.toLowerCase() || "";
 
@@ -821,12 +835,43 @@ export default function ChatScreen() {
         return;
       }
 
+      let savedDiaryKeys = new Set<string>();
+
+      if (
+        data.some(
+          (item) => item.role === "assistant" && isDiaryText(item.content),
+        )
+      ) {
+        try {
+          const cloudDiaries = await apiJson<ObservationDiaryEntry[]>(
+            "/api/memory",
+            {
+              query: {
+                type: "diary",
+                user_id: APP_USER_ID,
+              },
+            },
+          );
+
+          savedDiaryKeys = new Set(cloudDiaries.map(getDiaryEntryKey));
+        } catch (error) {
+          console.log("Saved diary status load failed:", error);
+        }
+      }
+
       const restoredMessages = await Promise.all(
         data.map(async (item) => {
           const treeholeDraft =
             item.role === "assistant" ? parseTreeholeDraft(item.content) : null;
           const treeholeAlreadySaved = treeholeDraft
             ? await isTreeholeDraftSaved(treeholeDraft)
+            : false;
+          const diaryEntry =
+            item.role === "assistant" && isDiaryText(item.content)
+              ? parseDiaryText(item.content)
+              : null;
+          const diaryAlreadySaved = diaryEntry
+            ? savedDiaryKeys.has(getDiaryEntryKey(diaryEntry))
             : false;
 
           return {
@@ -847,6 +892,7 @@ export default function ChatScreen() {
               : item.content,
             treeholeDraft: treeholeDraft || undefined,
             treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
+            diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
             imageUri: item.metadata?.imageUrl,
             status: "sent",
           } satisfies Message;
