@@ -35,7 +35,7 @@ const memorySearchCache = new Map()
 // Save Message
 // --------------------
 async function saveMessage(user_id, role, content, conversation_id) {
-  await fetch(`${process.env.BASE_URL}/api/add-message`, {
+  const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -45,6 +45,9 @@ async function saveMessage(user_id, role, content, conversation_id) {
       conversation_id
     })
   })
+
+  const data = await res.json().catch(() => null)
+  return data?.data?.[0]?.id || null
 }
 
 async function saveUserMessage(
@@ -67,7 +70,7 @@ async function saveUserMessage(
     metadata.fileSize = fileInfo.fileSize || null
   }
 
-  await fetch(`${process.env.BASE_URL}/api/add-message`, {
+  const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -78,6 +81,9 @@ async function saveUserMessage(
       metadata
     })
   })
+
+  const data = await res.json().catch(() => null)
+  return data?.data?.[0]?.id || null
 }
 
 // --------------------
@@ -674,7 +680,7 @@ export default async function handler(req, res) {
     const hasFileText = Boolean(normalizedFileName && normalizedFileText)
 
 // 1. save user msg
-await saveUserMessage(
+const userMessageId = await saveUserMessage(
   user_id,
   message,
   cid,
@@ -972,7 +978,7 @@ console.log({
 console.log("======================================\n")
 
     // 6. save assistant
-    await saveMessage(user_id, "assistant", reply, cid)
+    const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
 
     // 6.5 update current conversation (cross-device sync)
     await supabase
@@ -1029,7 +1035,9 @@ console.log("======================================\n")
 
     return res.status(200).json({
       reply,
-      conversation_id: cid
+      conversation_id: cid,
+      user_message_id: userMessageId,
+      assistant_message_id: assistantMessageId
     })
 
   } catch (e) {
