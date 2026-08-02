@@ -327,6 +327,13 @@ export default function ConversationList({
   };
 
   const openSpace = async (space: (typeof xiaoCSpaces)[number]) => {
+    if (space.id === "treehole") {
+      await onNavigate?.();
+
+      router.push("/treehole");
+      return;
+    }
+
     if (space.id === "diary") {
       await onNavigate?.();
 

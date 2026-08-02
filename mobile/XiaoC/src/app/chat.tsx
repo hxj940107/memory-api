@@ -12,6 +12,7 @@ import {
   Animated as RNAnimated,
   Dimensions,
   Keyboard,
+  ActionSheetIOS,
 } from "react-native";
 
 import Animated, {
@@ -23,6 +24,8 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useLocalSearchParams } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 
@@ -41,6 +44,10 @@ type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  fileName?: string;
+  fileText?: string;
+  fileSize?: number | null;
+  fileMimeType?: string | null;
   imageUri?: string;
   imageUris?: string[];
   imageAsset?: ImagePicker.ImagePickerAsset;
@@ -49,12 +56,23 @@ type Message = {
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
 };
 
+type SelectedFile = {
+  name: string;
+  text: string;
+  size?: number | null;
+  mimeType?: string | null;
+  truncated: boolean;
+};
+
 type HistoryItem = {
   role: "user" | "assistant";
   content: string;
   metadata?: {
     imageUrl?: string;
     imageUrls?: string[];
+    fileName?: string;
+    fileMimeType?: string | null;
+    fileSize?: number | null;
   };
 };
 
@@ -64,6 +82,22 @@ type ChatResponse = {
 };
 
 const MAX_IMAGES_PER_MESSAGE = 4;
+const MAX_FILE_CHARS = 12000;
+const TEXT_FILE_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "markdown",
+  "csv",
+  "json",
+  "log",
+  "xml",
+  "html",
+  "css",
+  "js",
+  "ts",
+  "tsx",
+  "jsx",
+]);
 
 const createLocalMessageId = () =>
   `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -76,6 +110,28 @@ const IMAGE_PLACEHOLDER_TEXTS = new Set([
 
 const shouldHideImagePlaceholderText = (content: string, imageUrl?: string) =>
   !!imageUrl && IMAGE_PLACEHOLDER_TEXTS.has(content.trim());
+
+const normalizeShortAiText = (text: string) =>
+  text
+    .replace(/\s*\n+\s*/g, "")
+    .replace(/([\u4e00-\u9fff，。！？、；：])[\s\u3000]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[\s\u3000]+([，。！？、；：])/g, "$1$2")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+const shouldUseSimpleAiText = (text: string) =>
+  normalizeShortAiText(text).length <= 32;
+
+const getFileExtension = (name: string) =>
+  name.split(".").pop()?.toLowerCase() || "";
+
+const isSupportedTextFile = (name: string, mimeType?: string | null) => {
+  if (mimeType?.startsWith("text/")) {
+    return true;
+  }
+
+  return TEXT_FILE_EXTENSIONS.has(getFileExtension(name));
+};
 
 function TypingDots({
   compact = false,
@@ -193,6 +249,8 @@ export default function ChatScreen() {
     ImagePicker.ImagePickerAsset[]
   >([]);
 
+  const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
+
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -207,7 +265,8 @@ export default function ChatScreen() {
 
   const [drawerVisible, setDrawerVisible] = useState(false);
 
-  const canSendMessage = message.trim().length > 0 || selectedImages.length > 0;
+  const canSendMessage =
+    message.trim().length > 0 || selectedImages.length > 0 || !!selectedFile;
   const isSendDisabled = !canSendMessage || isTyping;
 
   const scrollToLatestMessage = (animated = true) => {
@@ -332,6 +391,88 @@ export default function ChatScreen() {
     }
   };
 
+  const pickFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: [
+        "text/*",
+        "application/json",
+        "text/markdown",
+        "text/csv",
+        "application/xml",
+      ],
+    });
+
+    if (result.canceled) {
+      return;
+    }
+
+    const asset = result.assets[0];
+
+    if (!isSupportedTextFile(asset.name, asset.mimeType)) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: createLocalMessageId(),
+          role: "assistant",
+          text: "这个文件类型我现在还不能稳定读取。先支持 txt、md、csv、json 这类文本文件；PDF 和 Word 我们下一步再做。",
+          status: "sent",
+        },
+      ]);
+      return;
+    }
+
+    try {
+      const rawText = await FileSystem.readAsStringAsync(asset.uri);
+      const truncated = rawText.length > MAX_FILE_CHARS;
+
+      setSelectedFile({
+        name: asset.name,
+        text: rawText.slice(0, MAX_FILE_CHARS),
+        size: asset.size,
+        mimeType: asset.mimeType,
+        truncated,
+      });
+    } catch (error) {
+      console.log("File read failed:", error);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: createLocalMessageId(),
+          role: "assistant",
+          text: "这个文件暂时没读出来，可能是编码或权限问题。你可以先换成 txt / md 试试。",
+          status: "sent",
+        },
+      ]);
+    }
+  };
+
+  const openAttachmentMenu = () => {
+    if (Platform.OS === "ios") {
+      // Keep this menu small and native-feeling for now.
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["取消", "选择图片", "选择文件"],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) {
+            pickImage();
+          }
+
+          if (buttonIndex === 2) {
+            pickFile();
+          }
+        },
+      );
+      return;
+    }
+
+    pickFile();
+  };
+
   const restoreConversation = async () => {
     try {
       setLoadingHistory(true);
@@ -374,6 +515,9 @@ export default function ChatScreen() {
           imageUris: item.metadata?.imageUrls || (
             item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
           ),
+          fileName: item.metadata?.fileName,
+          fileMimeType: item.metadata?.fileMimeType,
+          fileSize: item.metadata?.fileSize,
           text: shouldHideImagePlaceholderText(
             item.content,
             item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
@@ -392,7 +536,11 @@ export default function ChatScreen() {
   };
 
   const submitMessage = async (messageToSend: Message) => {
-    const userText = messageToSend.text || "请看这张图片。";
+    const userText =
+      messageToSend.text ||
+      (messageToSend.fileName
+        ? `请读取这个文件：${messageToSend.fileName}`
+        : "请看这张图片。");
     const imagesToSend = messageToSend.imageAssets || [];
     const imageUrls = [];
 
@@ -441,6 +589,10 @@ export default function ChatScreen() {
         conversation_id: conversationId,
         imageUrl: imageUrls[0],
         imageUrls,
+        fileName: messageToSend.fileName,
+        fileText: messageToSend.fileText,
+        fileMimeType: messageToSend.fileMimeType,
+        fileSize: messageToSend.fileSize,
       }, {
         timeoutMs: 45000,
       });
@@ -507,6 +659,12 @@ export default function ChatScreen() {
       id: createLocalMessageId(),
       role: "user",
       text: message.trim(),
+      fileName: selectedFile?.name,
+      fileText: selectedFile
+        ? `${selectedFile.text}${selectedFile.truncated ? "\n\n[文件内容过长，已截断。]" : ""}`
+        : undefined,
+      fileSize: selectedFile?.size,
+      fileMimeType: selectedFile?.mimeType,
       imageUri: selectedImages[0]?.uri,
       imageUris: selectedImages.map((image) => image.uri),
       imageAsset: selectedImages[0],
@@ -522,6 +680,7 @@ export default function ChatScreen() {
 
     setMessage("");
     setSelectedImages([]);
+    setSelectedFile(null);
 
     await submitMessage(newMessage);
   };
@@ -713,10 +872,28 @@ export default function ChatScreen() {
                     </View>
                   )}
 
+                  {!!item.fileName && (
+                    <View style={styles.messageFileCard}>
+                      <Text style={styles.messageFileIcon}>📄</Text>
+                      <View style={styles.messageFileTextBox}>
+                        <Text style={styles.messageFileName} numberOfLines={1}>
+                          {item.fileName}
+                        </Text>
+                        <Text style={styles.messageFileMeta}>
+                          {item.status === "sending"
+                            ? "正在发送"
+                            : item.status === "failed"
+                              ? "发送失败"
+                              : "已发送"}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
                   {!!item.text && (
                     <View style={styles.userBubble}>
                       <TextInput
-                        style={[styles.userText, styles.selectableText]}
+                        style={[styles.userText, styles.selectableInputText]}
                         value={item.text}
                         editable={false}
                         multiline
@@ -742,8 +919,12 @@ export default function ChatScreen() {
                 <View style={styles.aiWrap}>
                   <View style={styles.aiBox}>
                     <TextInput
-                      style={[styles.aiText, styles.selectableText]}
-                      value={item.text.replace(/\s*\n\s*/g, "\n")}
+                      style={[styles.aiText, styles.selectableInputText]}
+                      value={
+                        shouldUseSimpleAiText(item.text)
+                          ? normalizeShortAiText(item.text)
+                          : item.text.replace(/\s*\n\s*/g, "\n")
+                      }
                       editable={false}
                       multiline
                       scrollEnabled={false}
@@ -815,8 +996,29 @@ export default function ChatScreen() {
             </View>
           )}
 
+          {selectedFile && (
+            <View style={styles.selectedFileCard}>
+              <Text style={styles.selectedFileIcon}>📄</Text>
+              <View style={styles.selectedFileTextBox}>
+                <Text style={styles.selectedFileName} numberOfLines={1}>
+                  {selectedFile.name}
+                </Text>
+                <Text style={styles.selectedFileMeta}>
+                  {selectedFile.truncated ? "文本较长，将截断发送" : "准备发送"}
+                </Text>
+              </View>
+
+              <Pressable
+                style={styles.removeFileButton}
+                onPress={() => setSelectedFile(null)}
+              >
+                <Text style={styles.removeAttachmentText}>×</Text>
+              </Pressable>
+            </View>
+          )}
+
           <View style={styles.inputBox}>
-            <Pressable style={styles.attachButton} onPress={pickImage}>
+            <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
               <Text style={styles.attachText}>＋</Text>
             </Pressable>
 
@@ -1011,16 +1213,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 20,
     paddingHorizontal: 18,
-    paddingVertical: 8,
+    paddingVertical: 9,
   },
 
   userText: {
     fontSize: 17,
     color: "#4B5563",
-    lineHeight: 24,
+    lineHeight: 25,
   },
   aiBox: {
-    minWidth: 120,
     maxWidth: "100%",
     alignSelf: "flex-start",
     backgroundColor: "#F4F4F4",
@@ -1038,6 +1239,15 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: "#444",
     lineHeight: 25,
+  },
+
+  selectableInputText: {
+    marginTop: -4,
+    marginBottom: 0,
+    padding: 0,
+    minHeight: 0,
+    backgroundColor: "transparent",
+    textAlignVertical: "top",
   },
 
   diarySaveButton: {
@@ -1061,14 +1271,6 @@ const styles = StyleSheet.create({
   diarySaveText: {
     fontSize: 13,
     color: "#7A6E63",
-  },
-
-  selectableText: {
-    margin: 0,
-    padding: 0,
-    minHeight: 0,
-    backgroundColor: "transparent",
-    textAlignVertical: "top",
   },
 
   typingDots: {
@@ -1131,6 +1333,48 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 18,
     lineHeight: 20,
+  },
+
+  selectedFileCard: {
+    alignSelf: "flex-start",
+    maxWidth: "86%",
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    backgroundColor: "rgba(245,245,247,0.96)",
+  },
+
+  selectedFileIcon: {
+    fontSize: 22,
+    marginRight: 9,
+  },
+
+  selectedFileTextBox: {
+    flex: 1,
+  },
+
+  selectedFileName: {
+    fontSize: 14,
+    color: "#444",
+  },
+
+  selectedFileMeta: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#999",
+  },
+
+  removeFileButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    marginLeft: 10,
+    backgroundColor: "rgba(40,40,40,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   inputBox: {
@@ -1218,6 +1462,39 @@ const styles = StyleSheet.create({
 
   messageImageWrap: {
     position: "relative",
+  },
+
+  messageFileCard: {
+    maxWidth: "80%",
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    backgroundColor: "rgba(220,240,255,0.75)",
+    borderColor: "#D5E9FF",
+    borderWidth: 1,
+  },
+
+  messageFileIcon: {
+    fontSize: 22,
+    marginRight: 9,
+  },
+
+  messageFileTextBox: {
+    flexShrink: 1,
+  },
+
+  messageFileName: {
+    fontSize: 14,
+    color: "#4B5563",
+  },
+
+  messageFileMeta: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#7A8794",
   },
 
   messageImageSending: {
