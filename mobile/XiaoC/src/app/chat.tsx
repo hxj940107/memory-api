@@ -829,6 +829,7 @@ export default function ChatScreen() {
         query: {
           user_id: APP_USER_ID,
           conversation_id: id,
+          limit: 150,
         },
       });
 

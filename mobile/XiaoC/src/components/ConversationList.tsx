@@ -51,7 +51,7 @@ const xiaoCSpaces = [
   {
     id: "diary",
     icon: "📓",
-    title: "Observation Diary",
+    title: "观察日记",
   },
   {
     id: "favorites",
