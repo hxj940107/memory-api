@@ -103,6 +103,24 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse()
 }
 
+async function getDiaryContextMessages(user_id, conversation_id) {
+  const since = new Date(
+    Date.now() - CONTEXT_BUDGET.diaryContextWindowHours * 60 * 60 * 1000
+  ).toISOString()
+
+  const { data } = await supabase
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(CONTEXT_BUDGET.diaryContextMessages)
+
+  if (!data) return []
+  return data.reverse()
+}
+
 function formatMessagesForDiaryContext(messages = []) {
   const formatted = messages
     .filter(item => item?.content)
@@ -728,11 +746,7 @@ const history = await getRecentMessages(
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isTreeholeRequest = isTreeholeWritingRequest(message)
 const diaryContextMessages = isDiaryRequest
-  ? await getRecentMessages(
-      user_id,
-      cid,
-      CONTEXT_BUDGET.diaryContextMessages
-    )
+  ? await getDiaryContextMessages(user_id, cid)
   : []
 const diaryContext = isDiaryRequest
   ? formatMessagesForDiaryContext(diaryContextMessages)
@@ -862,6 +876,7 @@ console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
+console.log("DIARY CONTEXT WINDOW HOURS:", CONTEXT_BUDGET.diaryContextWindowHours)
 console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
 console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
 console.log("TREEHOLE DRAFT ENABLED:", Boolean(treeholeDraftContext))
