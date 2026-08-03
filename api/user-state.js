@@ -20,6 +20,48 @@ export default async function handler(req, res) {
       })
     }
 
+    if (req.method === "GET" && req.query.action === "openrouter-credits") {
+      try {
+        const creditsRes = await fetch("https://openrouter.ai/api/v1/credits", {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
+          }
+        })
+
+        const rawCredits = await creditsRes.json().catch(() => null)
+
+        if (!creditsRes.ok) {
+          return res.status(200).json({
+            balance: null,
+            total_credits: null,
+            total_usage: null,
+            error: rawCredits?.error?.message || "OpenRouter credits unavailable"
+          })
+        }
+
+        const credits = rawCredits?.data || rawCredits || {}
+        const totalCredits = Number(
+          credits.total_credits ?? credits.totalCredits ?? 0
+        )
+        const totalUsage = Number(
+          credits.total_usage ?? credits.totalUsage ?? 0
+        )
+
+        return res.status(200).json({
+          balance: Math.max(totalCredits - totalUsage, 0),
+          total_credits: totalCredits,
+          total_usage: totalUsage
+        })
+      } catch (error) {
+        return res.status(200).json({
+          balance: null,
+          total_credits: null,
+          total_usage: null,
+          error: error.message
+        })
+      }
+    }
+
     if (req.method === "POST") {
       const { last_conversation = null } = req.body
       const payload = {
