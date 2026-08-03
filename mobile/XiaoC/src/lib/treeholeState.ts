@@ -70,7 +70,7 @@ export async function saveTreeholeDraft(draft: TreeholeDraft) {
     date: draft.date,
     content: draft.content,
     highlights: draft.highlights || [],
-    reaction: draft.reaction || "🫡 已记录 · ❤️ 1",
+    reaction: draft.reaction || "🌙 偷偷偏心 · ❤️ 1",
   };
 
   await AsyncStorage.setItem(
