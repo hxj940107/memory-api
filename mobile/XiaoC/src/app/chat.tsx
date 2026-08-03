@@ -162,6 +162,7 @@ const normalizeTreeholeDraftJson = (rawJson: string) =>
     .replace(/\s*```$/i, "")
     .replace(/"\s*\n\s*"/g, '",\n"')
     .replace(/"\s+"(?=[^"]*"\s*(?:,|\]))/g, '", "')
+    .replace(/("[^"]*")\s+(?="[^"]*"\s*[\],])/g, "$1, ")
     .replace(/,\s*([}\]])/g, "$1");
 
 const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
