@@ -249,5 +249,29 @@ export function parseDiaryText(
 }
 
 export function isDiaryText(text: string) {
-  return /wife observation diary|observation diary|观察日记/i.test(text);
+  const lines = text
+    .split("\n")
+    .map(cleanDiaryLine)
+    .filter(Boolean);
+  const labelIndex = lines.findIndex((line) =>
+    /^(wife observation diary|observation diary|观察日记)$/i.test(line),
+  );
+
+  if (labelIndex < 0) {
+    return false;
+  }
+
+  const headerLines = lines.slice(labelIndex + 1, labelIndex + 5);
+  const hasExplicitDate = headerLines.some((line) =>
+    /\d{4}\s*[·.／/\-年]\s*\d{1,2}\s*[·.／/\-月]\s*\d{1,2}/.test(line),
+  );
+  const hasDiaryStructure = lines
+    .slice(labelIndex + 1)
+    .some((line) =>
+      /^【.+】$/.test(line) ||
+      /^写于\s*\d{4}/.test(line) ||
+      /^记录者/.test(line),
+    );
+
+  return hasExplicitDate && hasDiaryStructure;
 }

@@ -103,6 +103,19 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse()
 }
 
+function formatMessagesForDiaryContext(messages = []) {
+  const formatted = messages
+    .filter(item => item?.content)
+    .map(item => {
+      const speaker = item.role === "assistant" ? "小C" : "她"
+
+      return `${speaker}：${trimText(item.content, 900)}`
+    })
+    .join("\n\n")
+
+  return trimText(formatted, CONTEXT_BUDGET.diaryContextChars)
+}
+
 async function getStableMemories(user_id) {
   const { data, error } = await supabase
     .from("memories")
@@ -712,6 +725,19 @@ const history = await getRecentMessages(
   CONTEXT_BUDGET.recentHistoryMessages + 1
 )
 
+const isDiaryRequest = isDiaryWritingRequest(message)
+const isTreeholeRequest = isTreeholeWritingRequest(message)
+const diaryContextMessages = isDiaryRequest
+  ? await getRecentMessages(
+      user_id,
+      cid,
+      CONTEXT_BUDGET.diaryContextMessages
+    )
+  : []
+const diaryContext = isDiaryRequest
+  ? formatMessagesForDiaryContext(diaryContextMessages)
+  : ""
+
 // ==========================
 // Rolling Summary Trigger
 // ==========================
@@ -796,10 +822,10 @@ const fileContext = hasFileText
 ${normalizedFileText}
 `
   : "";
-const diaryStyleContext = isDiaryWritingRequest(message)
+const diaryStyleContext = isDiaryRequest
   ? buildDiaryWritingStylePrompt()
   : "";
-const treeholeDraftContext = isTreeholeWritingRequest(message)
+const treeholeDraftContext = isTreeholeRequest
   ? buildTreeholeDraftPrompt()
   : "";
 const attributionCorrectionContext = isAttributionCorrection(message)
@@ -836,6 +862,8 @@ console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
+console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
+console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
 console.log("TREEHOLE DRAFT ENABLED:", Boolean(treeholeDraftContext))
 console.log("CHAT MODEL:", selectedChatModel)
 
@@ -893,6 +921,16 @@ ${summaryMemory}
 【Memory｜相关长期记忆】
 
 ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
+
+${diaryContext
+  ? `【Diary Source｜本次写观察日记可参考的近期素材】
+以下内容只在用户明确邀请你写 diary / 观察日记时使用。
+它是近期对话素材，不是逐字必须覆盖的清单。
+请优先捕捉关系、情绪、细节和她今天的状态。
+说话人已标注：“她”是用户，“小C”是你。
+
+${diaryContext}`
+  : ""}
 
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
