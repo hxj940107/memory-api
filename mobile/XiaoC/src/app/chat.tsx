@@ -201,7 +201,7 @@ const parseTreeholeDraft = (text: string): TreeholeDraft | null => {
         highlights: Array.isArray(draft.highlights)
           ? draft.highlights.map((line: unknown) => String(line))
           : [],
-        reaction: String(draft.reaction || "🫡 已记录 · ❤️ 1"),
+        reaction: String(draft.reaction || "🌙 偷偷偏心 · ❤️ 1"),
       };
     }
   } catch {
@@ -388,7 +388,7 @@ function TreeholeDraftCard({
       </View>
 
       <Text style={styles.treeholeDraftReaction}>
-        {draft.reaction || "🫡 已记录 · ❤️ 1"}
+        {draft.reaction || "🌙 偷偷偏心 · ❤️ 1"}
       </Text>
 
       <View style={styles.treeholeDraftActions}>

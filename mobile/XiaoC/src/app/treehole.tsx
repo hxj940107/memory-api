@@ -67,7 +67,13 @@ export default function TreeholeScreen() {
     };
   }, []);
 
-  const posts = [...savedPosts, ...treeholePosts];
+  const posts = [...savedPosts, ...treeholePosts].sort((a, b) => {
+    if (a.pinned === b.pinned) {
+      return 0;
+    }
+
+    return a.pinned ? -1 : 1;
+  });
 
   return (
     <View style={styles.screen}>
