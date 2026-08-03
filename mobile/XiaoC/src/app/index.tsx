@@ -6,17 +6,49 @@ import {
   TextInput,
 } from 'react-native';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { router } from 'expo-router';
 
+import {
+  DEFAULT_ACCOUNT_NAME,
+  getAccountPassword,
+  getAccountSettings,
+} from "../lib/accountSettings";
 
 
 export default function Index() {
 
 
   const [password, setPassword] = useState('');
+  const [savedPassword, setSavedPassword] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState(DEFAULT_ACCOUNT_NAME);
+  const [error, setError] = useState('');
 
   const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    let isActive = true;
+
+    Promise.all([
+      getAccountSettings(),
+      getAccountPassword(),
+    ]).then(([account, accountPassword]) => {
+      if (!isActive) {
+        return;
+      }
+
+      setDisplayName(account.displayName);
+      setSavedPassword(accountPassword);
+
+      if (!accountPassword) {
+        router.replace('/chat');
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
 
 
@@ -32,14 +64,23 @@ export default function Index() {
     const value = text.replace(/[^0-9]/g,'');
 
     setPassword(value);
+    setError('');
 
 
-    // 6位自动进入聊天
     if(value.length === 6){
 
       setTimeout(()=>{
 
-        router.replace('/chat');
+        if(value === savedPassword){
+
+          router.replace('/chat');
+
+          return;
+
+        }
+
+        setPassword('');
+        setError('密码不对，再试一次');
 
       },200);
 
@@ -63,7 +104,7 @@ export default function Index() {
 
 
         <Text style={styles.title}>
-          小C ♡ 小天使
+          小C ♡ {displayName}
         </Text>
 
 
@@ -94,6 +135,12 @@ export default function Index() {
 
 
         </Pressable>
+
+        {!!error && (
+          <Text style={styles.errorText}>
+            {error}
+          </Text>
+        )}
 
 
 
@@ -173,6 +220,13 @@ const styles = StyleSheet.create({
 
   activeDot:{
     color:'#555555',
+  },
+
+
+  errorText:{
+    marginTop:12,
+    fontSize:14,
+    color:'#B26A6A',
   },
 
 

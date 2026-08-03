@@ -46,6 +46,8 @@ import {
   parseDiaryText,
 } from "../data/observationDiary";
 import { saveFavorite } from "../lib/favoritesState";
+import { getSelectedChatModel } from "../lib/modelSettings";
+import { saveChatUsageFromResponse } from "../lib/costState";
 import {
   isTreeholeDraftSaved,
   saveTreeholeDraft,
@@ -104,6 +106,8 @@ type ChatResponse = {
   conversation_id?: string;
   user_message_id?: string | null;
   assistant_message_id?: string | null;
+  model?: string;
+  usage?: Record<string, unknown>;
 };
 
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -955,10 +959,13 @@ export default function ChatScreen() {
     }, 100);
 
     try {
+      const selectedModel = await getSelectedChatModel();
+
       const data = await postJson<ChatResponse>("/api/chat", {
         user_id: APP_USER_ID,
         message: userText,
         conversation_id: conversationId,
+        model: selectedModel.id,
         imageUrl: imageUrls[0],
         imageUrls,
         fileName: messageToSend.fileName,
@@ -982,6 +989,11 @@ export default function ChatScreen() {
           });
         }
       }
+
+      await saveChatUsageFromResponse({
+        model: data.model || selectedModel.id,
+        usage: data.usage,
+      });
 
       setMessages((prev) =>
         prev.map((item) =>

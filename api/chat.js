@@ -8,6 +8,7 @@ import {
   CACHE_POLICY,
   CONTEXT_BUDGET,
   SUMMARY_POLICY,
+  normalizeChatModel,
   normalizeCacheText,
   shouldRunMemoryJudge,
   trimList,
@@ -624,7 +625,7 @@ async function searchWeb(query) {
 // --------------------
 // Call LLM
 // --------------------
-async function callLLM(messages) {
+async function callLLM(messages, model = AI_MODELS.chat) {
   const res = await fetch(
     AI_ENDPOINTS.openRouterChatCompletions,
     {
@@ -634,13 +635,21 @@ async function callLLM(messages) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: AI_MODELS.chat,
+        model,
         messages
       })
     }
   )
 
   const data = await res.json()
+
+  if (!res.ok) {
+    throw new Error(
+      data?.error?.message ||
+      data?.message ||
+      `OpenRouter request failed: ${res.status}`
+    )
+  }
 
   return {
     reply: data?.choices?.[0]?.message?.content || "...",
@@ -666,10 +675,12 @@ export default async function handler(req, res) {
       fileName,
       fileText,
       fileMimeType,
-      fileSize
+      fileSize,
+      model
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
+    const selectedChatModel = normalizeChatModel(model)
     const normalizedImageUrls = Array.isArray(imageUrls)
       ? imageUrls.slice(0, 4).filter(Boolean)
       : imageUrl
@@ -826,6 +837,7 @@ console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
 console.log("TREEHOLE DRAFT ENABLED:", Boolean(treeholeDraftContext))
+console.log("CHAT MODEL:", selectedChatModel)
 
 // ==========================
 // Future Summary Layer
@@ -951,7 +963,7 @@ messages.forEach((m, i) => {
 console.log("==========================\n")
 
 // 5. reply
-const llm = await callLLM(messages)
+const llm = await callLLM(messages, selectedChatModel)
 const reply = llm.reply
 
 console.log("\n========== Prompt Inspector ==========")
@@ -1033,12 +1045,14 @@ console.log("======================================\n")
       }
     }
 
-    return res.status(200).json({
-      reply,
-      conversation_id: cid,
-      user_message_id: userMessageId,
-      assistant_message_id: assistantMessageId
-    })
+return res.status(200).json({
+  reply,
+  conversation_id: cid,
+  user_message_id: userMessageId,
+  assistant_message_id: assistantMessageId,
+  model: selectedChatModel,
+  usage: llm.usage || {}
+})
 
   } catch (e) {
     console.error(e)

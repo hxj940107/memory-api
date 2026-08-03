@@ -18,6 +18,10 @@ import {
   clearLastConversation,
   saveLastConversation,
 } from "../lib/conversationState";
+import {
+  DEFAULT_ACCOUNT_NAME,
+  getAccountSettings,
+} from "../lib/accountSettings";
 
 type Conversation = {
   id: string;
@@ -97,6 +101,8 @@ export default function ConversationList({
 }) {
   const [list, setList] = useState<Conversation[]>([]);
 
+  const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
+
   const [selected, setSelected] = useState<Conversation | null>(null);
 
   const [menuVisible, setMenuVisible] = useState(false);
@@ -110,7 +116,14 @@ export default function ConversationList({
 
   useEffect(() => {
     loadConversations();
+    loadAccountName();
   }, []);
+
+  const loadAccountName = async () => {
+    const account = await getAccountSettings();
+
+    setAccountName(account.displayName);
+  };
 
   const normalizeConversations = (data: Conversation[]) =>
     data
@@ -356,6 +369,12 @@ export default function ConversationList({
     showComingSoon(space.title);
   };
 
+  const openAccount = async () => {
+    await onNavigate?.();
+
+    router.push("/settings" as never);
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.spacesSection}>
@@ -444,6 +463,22 @@ export default function ConversationList({
         }}
         ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
       />
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.accountButton,
+          pressed && styles.accountButtonPressed,
+        ]}
+        onPress={openAccount}
+      >
+        <View style={styles.accountAvatar}>
+          <Text style={styles.accountAvatarText}>👼</Text>
+        </View>
+
+        <View style={styles.accountTextBox}>
+          <Text style={styles.accountName}>{accountName}</Text>
+        </View>
+      </Pressable>
 
       {menuVisible && selected && (
         <Pressable style={styles.menuLayer} onPress={hideMenu}>
@@ -613,7 +648,7 @@ const styles = StyleSheet.create({
   spacesSection: {
     marginTop: 0,
 
-    paddingBottom: 26,
+    paddingBottom: 24,
   },
 
   spaceItem: {
@@ -639,6 +674,60 @@ const styles = StyleSheet.create({
   },
 
   spaceTitle: {
+    fontSize: 16,
+
+    color: "#444",
+  },
+
+  accountButton: {
+    flexDirection: "row",
+
+    alignItems: "center",
+
+    marginTop: 12,
+
+    marginBottom: 4,
+
+    paddingHorizontal: 12,
+
+    paddingTop: 14,
+
+    paddingBottom: 10,
+
+    borderRadius: 18,
+
+    borderTopWidth: StyleSheet.hairlineWidth,
+
+    borderTopColor: "rgba(60,60,67,0.14)",
+  },
+
+  accountButtonPressed: {
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  accountAvatar: {
+    width: 34,
+
+    height: 34,
+
+    borderRadius: 17,
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    backgroundColor: "rgba(120,120,128,0.10)",
+  },
+
+  accountAvatarText: {
+    fontSize: 18,
+  },
+
+  accountTextBox: {
+    marginLeft: 10,
+  },
+
+  accountName: {
     fontSize: 16,
 
     color: "#444",
