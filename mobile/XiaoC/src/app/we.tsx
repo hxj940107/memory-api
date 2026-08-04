@@ -220,7 +220,7 @@ export default function WeScreen() {
           </View>
         </View>
 
-        {data.source !== "ombre" && hasAnyMemory && (
+        {!data.source.startsWith("ombre") && hasAnyMemory && (
           <Text style={styles.sourceHint}>
             现在先显示小C能浮起来的记忆。等“我们”再接深一点，这里会慢慢变完整。
           </Text>
