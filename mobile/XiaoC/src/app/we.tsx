@@ -89,6 +89,7 @@ function MemoryCard({
   pinned?: boolean;
 }) {
   const date = formatDate(memory.lastActiveAt || memory.createdAt);
+  const preview = trimContent(memory.content || memory.title, 42);
   const chips = [
     ...(memory.domains || []),
     ...(memory.tags || []),
@@ -97,7 +98,29 @@ function MemoryCard({
     .slice(0, 2);
 
   return (
-    <View style={[styles.memoryCard, pinned && styles.pinnedCard]}>
+    <Pressable
+      style={({ pressed }) => [
+        styles.memoryCard,
+        pinned && styles.pinnedCard,
+        pressed && styles.memoryCardPressed,
+      ]}
+      onPress={() =>
+        router.push({
+          pathname: "/we/[id]",
+          params: {
+            id: memory.id,
+            title: memory.title,
+            content: memory.content,
+            tags: JSON.stringify(memory.tags || []),
+            domains: JSON.stringify(memory.domains || []),
+            pinned: memory.pinned ? "1" : "0",
+            importance: String(memory.importance ?? ""),
+            createdAt: memory.createdAt || "",
+            lastActiveAt: memory.lastActiveAt || "",
+          },
+        })
+      }
+    >
       <View style={styles.memoryHeader}>
         <Text style={[styles.memoryTitle, pinned && styles.pinnedTitle]}>
           {pinned ? "📌 " : ""}
@@ -107,9 +130,7 @@ function MemoryCard({
         {!!date && <Text style={styles.memoryDate}>{date}</Text>}
       </View>
 
-      {!!memory.content && (
-        <Text style={styles.memoryContent}>{trimContent(memory.content)}</Text>
-      )}
+      {!!preview && <Text style={styles.memoryContent}>{preview}</Text>}
 
       {chips.length > 0 && (
         <View style={styles.chipRow}>
@@ -120,7 +141,7 @@ function MemoryCard({
           ))}
         </View>
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -363,7 +384,7 @@ const styles = StyleSheet.create({
   memoryCard: {
     borderRadius: 22,
     paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingVertical: 15,
     marginBottom: 12,
     backgroundColor: "rgba(255,255,255,0.58)",
     shadowColor: "#B8AFA7",
@@ -373,6 +394,10 @@ const styles = StyleSheet.create({
       width: 0,
       height: 6,
     },
+  },
+
+  memoryCardPressed: {
+    backgroundColor: "rgba(242,242,247,0.92)",
   },
 
   pinnedCard: {
@@ -406,8 +431,8 @@ const styles = StyleSheet.create({
   },
 
   memoryContent: {
-    fontSize: 15,
-    lineHeight: 23,
+    fontSize: 14,
+    lineHeight: 21,
     color: "#615B57",
   },
 
