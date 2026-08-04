@@ -78,15 +78,35 @@ const getShortModelName = (modelId: string) => findChatModel(modelId).name;
 
 function SectionCard({
   title,
+  summary,
+  expanded,
+  onToggle,
   children,
 }: {
   title: string;
+  summary: string;
+  expanded: boolean;
+  onToggle: () => void;
   children: ReactNode;
 }) {
   return (
     <View style={styles.sectionCard}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {children}
+      <Pressable
+        style={({ pressed }) => [
+          styles.sectionHeader,
+          pressed && styles.sectionHeaderPressed,
+        ]}
+        onPress={onToggle}
+      >
+        <View style={styles.sectionTitleBox}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          <Text style={styles.sectionSummary}>{summary}</Text>
+        </View>
+
+        <Text style={styles.sectionChevron}>{expanded ? "⌃" : "⌄"}</Text>
+      </Pressable>
+
+      {expanded && <View style={styles.sectionBody}>{children}</View>}
     </View>
   );
 }
@@ -142,6 +162,11 @@ export default function SettingsScreen() {
     hasPassword: false,
     faceIdEnabled: false,
   });
+  const [expandedSections, setExpandedSections] = useState({
+    model: false,
+    cost: false,
+    settings: false,
+  });
   const [refreshing, setRefreshing] = useState(false);
 
   const loadSettings = useCallback(async () => {
@@ -180,6 +205,13 @@ export default function SettingsScreen() {
   const selectModel = async (modelId: string) => {
     const model = await saveSelectedChatModel(modelId);
     setSelectedModel(model);
+  };
+
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
   };
 
   const editDisplayName = () => {
@@ -284,7 +316,12 @@ export default function SettingsScreen() {
           <Text style={styles.backText}>‹</Text>
         </Pressable>
 
-        <SectionCard title="🤖 模型">
+        <SectionCard
+          title="🤖 模型"
+          summary={selectedModel.name}
+          expanded={expandedSections.model}
+          onToggle={() => toggleSection("model")}
+        >
           {AVAILABLE_CHAT_MODELS.map((model) => {
             const isSelected = model.id === selectedModel.id;
 
@@ -305,7 +342,12 @@ export default function SettingsScreen() {
           })}
         </SectionCard>
 
-        <SectionCard title="💲 花费">
+        <SectionCard
+          title="💲 花费"
+          summary={`24h ${formatUsd(summary.last24hCost)}`}
+          expanded={expandedSections.cost}
+          onToggle={() => toggleSection("cost")}
+        >
           <InfoRow label="24h 消耗" value={formatUsd(summary.last24hCost)} />
           <InfoRow label="账户余额" value={formatUsd(credits?.balance)} />
           <InfoRow label="本月花费" value={formatUsd(summary.monthCost)} />
@@ -349,7 +391,12 @@ export default function SettingsScreen() {
           </Pressable>
         </SectionCard>
 
-        <SectionCard title="🔧 设置">
+        <SectionCard
+          title="🔧 设置"
+          summary={account.displayName}
+          expanded={expandedSections.settings}
+          onToggle={() => toggleSection("settings")}
+        >
           <InfoRow
             label="用户名"
             value={account.displayName}
@@ -407,8 +454,8 @@ const styles = StyleSheet.create({
   sectionCard: {
     backgroundColor: "rgba(255,255,255,0.82)",
     borderRadius: 26,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 16,
     shadowColor: "#B8AFA7",
     shadowOpacity: 0.08,
@@ -419,11 +466,47 @@ const styles = StyleSheet.create({
     },
   },
 
+  sectionHeader: {
+    minHeight: 58,
+    borderRadius: 20,
+    paddingHorizontal: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  sectionHeaderPressed: {
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  sectionTitleBox: {
+    flex: 1,
+    marginRight: 14,
+  },
+
   sectionTitle: {
     fontSize: 17,
     fontWeight: "600",
     color: "#333",
-    marginBottom: 12,
+  },
+
+  sectionSummary: {
+    marginTop: 6,
+    fontSize: 14,
+    color: "#9A9491",
+  },
+
+  sectionChevron: {
+    width: 28,
+    textAlign: "center",
+    fontSize: 22,
+    color: "#A49EA0",
+  },
+
+  sectionBody: {
+    paddingTop: 8,
+    paddingBottom: 4,
+    paddingHorizontal: 4,
   },
 
   modelRow: {

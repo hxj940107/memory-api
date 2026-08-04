@@ -59,6 +59,11 @@ const xiaoCSpaces = [
     title: "收藏",
   },
   {
+    id: "we",
+    icon: "🫶",
+    title: "我们",
+  },
+  {
     id: "moments",
     icon: "🫧",
     title: "朋友圈",
@@ -363,6 +368,13 @@ export default function ConversationList({
       await onNavigate?.();
 
       router.push("/favorites");
+      return;
+    }
+
+    if (space.id === "we") {
+      await onNavigate?.();
+
+      router.push("/we" as never);
       return;
     }
 
