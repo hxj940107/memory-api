@@ -10,61 +10,6 @@ function getMemoryUrl(pathname) {
   return new URL(pathname, AI_ENDPOINTS.memoryBaseUrl).toString()
 }
 
-function parseCookie(headers) {
-  const setCookie = headers.get("set-cookie")
-
-  if (!setCookie) {
-    return ""
-  }
-
-  return setCookie
-    .split(",")
-    .map((item) => item.split(";")[0].trim())
-    .filter(Boolean)
-    .join("; ")
-}
-
-async function fetchOmbreBuckets() {
-  const password = process.env.OMBRE_DASHBOARD_PASSWORD
-  let cookie = ""
-
-  if (password) {
-    const loginRes = await fetch(getMemoryUrl("/auth/login"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        password,
-      }),
-    })
-
-    if (loginRes.ok) {
-      cookie = parseCookie(loginRes.headers)
-    }
-  }
-
-  const bucketsRes = await fetch(getMemoryUrl("/api/buckets"), {
-    headers: cookie
-      ? {
-          Cookie: cookie,
-        }
-      : {},
-  })
-
-  if (!bucketsRes.ok) {
-    throw new Error(`Ombre buckets unavailable: ${bucketsRes.status}`)
-  }
-
-  const buckets = await bucketsRes.json()
-
-  if (!Array.isArray(buckets)) {
-    throw new Error("Ombre buckets response is not an array")
-  }
-
-  return buckets
-}
-
 async function fetchPinnedMemoryText(user_id) {
   const res = await fetch(
     `${getMemoryUrl(AI_ENDPOINTS.memoryBreathPath)}?user_id=${encodeURIComponent(user_id)}`
@@ -75,6 +20,30 @@ async function fetchPinnedMemoryText(user_id) {
   }
 
   return (await res.text()).trim()
+}
+
+async function fetchXiaoCMemories() {
+  const readKey = process.env.XIAOC_MEMORY_READ_KEY
+  const res = await fetch(getMemoryUrl("/xiaoc/memories"), {
+    headers: readKey
+      ? {
+          "X-XiaoC-Key": readKey,
+        }
+      : {},
+  })
+
+  if (!res.ok) {
+    throw new Error(`XiaoC memories unavailable: ${res.status}`)
+  }
+
+  const data = await res.json()
+  const memories = data?.memories
+
+  if (!Array.isArray(memories)) {
+    throw new Error("XiaoC memories response is not an array")
+  }
+
+  return memories
 }
 
 function cleanMemoryText(value) {
@@ -90,16 +59,20 @@ function normalizeMemoryBucket(bucket) {
 
   return {
     id: bucket.id,
-    title: bucket.name || "未命名记忆",
-    content: cleanMemoryText(bucket.content_preview || ""),
+    title: bucket.title || bucket.name || "未命名记忆",
+    content: cleanMemoryText(bucket.content || bucket.content_preview || ""),
     tags: Array.isArray(bucket.tags) ? bucket.tags : [],
-    domains: Array.isArray(bucket.domain) ? bucket.domain : [],
+    domains: Array.isArray(bucket.domains)
+      ? bucket.domains
+      : Array.isArray(bucket.domain)
+        ? bucket.domain
+        : [],
     type: bucket.type || "dynamic",
     importance: Number(bucket.importance || 0),
     pinned: Boolean(bucket.pinned),
     score: Number(bucket.score || 0),
-    createdAt,
-    lastActiveAt: bucket.last_active || createdAt,
+    createdAt: bucket.createdAt || createdAt,
+    lastActiveAt: bucket.lastActiveAt || bucket.last_active || createdAt,
   }
 }
 
@@ -176,12 +149,12 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && type === "we") {
       try {
-        const buckets = await fetchOmbreBuckets()
+        const buckets = await fetchXiaoCMemories()
         const memories = buckets.map(normalizeMemoryBucket)
 
-        return res.status(200).json(buildWeMemoryResponse(memories, "ombre"))
+        return res.status(200).json(buildWeMemoryResponse(memories, "ombre-xiaoc"))
       } catch (error) {
-        console.error("we memory ombre load failed:", error)
+        console.error("we memory xiaoc endpoint failed:", error)
 
         const [pinText, { data, error: supabaseError }] = await Promise.all([
           fetchPinnedMemoryText(user_id).catch(() => ""),
