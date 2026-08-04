@@ -222,7 +222,7 @@ export default function WeScreen() {
 
         {data.source !== "ombre" && hasAnyMemory && (
           <Text style={styles.sourceHint}>
-            现在先显示 XiaoC 能取到的记忆；等 Ombre Brain 全量入口授权后，这里会更完整。
+            现在先显示小C能浮起来的记忆。等“我们”再接深一点，这里会慢慢变完整。
           </Text>
         )}
 
