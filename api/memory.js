@@ -1,10 +1,155 @@
 import { createClient } from '@supabase/supabase-js'
-import { APP_USER } from "../lib/aiConfig.js"
+import { AI_ENDPOINTS, APP_USER } from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+function getMemoryUrl(pathname) {
+  return new URL(pathname, AI_ENDPOINTS.memoryBaseUrl).toString()
+}
+
+function parseCookie(headers) {
+  const setCookie = headers.get("set-cookie")
+
+  if (!setCookie) {
+    return ""
+  }
+
+  return setCookie
+    .split(",")
+    .map((item) => item.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ")
+}
+
+async function fetchOmbreBuckets() {
+  const password = process.env.OMBRE_DASHBOARD_PASSWORD
+  let cookie = ""
+
+  if (password) {
+    const loginRes = await fetch(getMemoryUrl("/auth/login"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        password,
+      }),
+    })
+
+    if (loginRes.ok) {
+      cookie = parseCookie(loginRes.headers)
+    }
+  }
+
+  const bucketsRes = await fetch(getMemoryUrl("/api/buckets"), {
+    headers: cookie
+      ? {
+          Cookie: cookie,
+        }
+      : {},
+  })
+
+  if (!bucketsRes.ok) {
+    throw new Error(`Ombre buckets unavailable: ${bucketsRes.status}`)
+  }
+
+  const buckets = await bucketsRes.json()
+
+  if (!Array.isArray(buckets)) {
+    throw new Error("Ombre buckets response is not an array")
+  }
+
+  return buckets
+}
+
+async function fetchPinnedMemoryText(user_id) {
+  const res = await fetch(
+    `${getMemoryUrl(AI_ENDPOINTS.memoryBreathPath)}?user_id=${encodeURIComponent(user_id)}`
+  )
+
+  if (!res.ok) {
+    return ""
+  }
+
+  return (await res.text()).trim()
+}
+
+function normalizeMemoryBucket(bucket) {
+  const createdAt = bucket.created || bucket.last_active || ""
+
+  return {
+    id: bucket.id,
+    title: bucket.name || "未命名记忆",
+    content: bucket.content_preview || "",
+    tags: Array.isArray(bucket.tags) ? bucket.tags : [],
+    domains: Array.isArray(bucket.domain) ? bucket.domain : [],
+    type: bucket.type || "dynamic",
+    importance: Number(bucket.importance || 0),
+    pinned: Boolean(bucket.pinned),
+    score: Number(bucket.score || 0),
+    createdAt,
+    lastActiveAt: bucket.last_active || createdAt,
+  }
+}
+
+function categorizeMemory(memory) {
+  const text = `${memory.title} ${memory.content} ${memory.tags.join(" ")} ${memory.domains.join(" ")}`
+
+  if (/关系|伴侣|老婆|老公|小C|小c|回应|互动|陪伴|喜欢.*说|称呼/.test(text)) {
+    return "我们之间"
+  }
+
+  if (/经历|一起|今天|昨天|那次|时刻|聊天|完成|项目|bug|diary|树洞/.test(text)) {
+    return "一起经历过"
+  }
+
+  if (/喜欢|偏好|习惯|常用|口味|小狗|狗|睡觉|饮食|生活|用户名|身份|生日/.test(text)) {
+    return "关于你"
+  }
+
+  return "小小偏好"
+}
+
+function buildWeMemoryResponse(memories, source = "ombre") {
+  const now = Date.now()
+  const recentSince = now - 7 * 24 * 60 * 60 * 1000
+  const recentCount = memories.filter((memory) => {
+    const timestamp = new Date(memory.createdAt || memory.lastActiveAt).getTime()
+
+    return !Number.isNaN(timestamp) && timestamp >= recentSince
+  }).length
+  const pinned = memories
+    .filter((memory) => memory.pinned)
+    .sort((a, b) => b.importance - a.importance || b.score - a.score)
+  const categories = ["关于你", "我们之间", "一起经历过", "小小偏好"].map((name) => ({
+    name,
+    items: memories
+      .filter((memory) => !memory.pinned && categorizeMemory(memory) === name)
+      .sort((a, b) => b.importance - a.importance || b.score - a.score)
+      .slice(0, 6),
+  }))
+  const recent = [...memories]
+    .sort((a, b) =>
+      String(b.lastActiveAt || b.createdAt).localeCompare(
+        String(a.lastActiveAt || a.createdAt)
+      )
+    )
+    .slice(0, 8)
+
+  return {
+    source,
+    total: memories.length,
+    pinnedTotal: pinned.length,
+    recentCount,
+    recentWindowLabel: "最近 7 天",
+    pinned: pinned.slice(0, 10),
+    categories,
+    recent,
+  }
+}
 
 export default async function handler(req, res) {
   try {
@@ -18,6 +163,71 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (req.method === "GET" && type === "we") {
+      try {
+        const buckets = await fetchOmbreBuckets()
+        const memories = buckets.map(normalizeMemoryBucket)
+
+        return res.status(200).json(buildWeMemoryResponse(memories, "ombre"))
+      } catch (error) {
+        console.error("we memory ombre load failed:", error)
+
+        const [pinText, { data, error: supabaseError }] = await Promise.all([
+          fetchPinnedMemoryText(user_id).catch(() => ""),
+          supabase
+            .from("memories")
+            .select("content, metadata, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", { ascending: false })
+            .limit(40),
+        ])
+
+        if (supabaseError) {
+          return res.status(500).json({
+            error: supabaseError.message,
+          })
+        }
+
+        const fallbackMemories = []
+
+        if (pinText) {
+          fallbackMemories.push({
+            id: "ombre_pinned_breath",
+            title: "被钉住的核心记忆",
+            content: pinText,
+            tags: ["钉选"],
+            domains: ["我们"],
+            type: "pinned",
+            importance: 10,
+            pinned: true,
+            score: 10,
+            createdAt: "",
+            lastActiveAt: "",
+          })
+        }
+
+        for (const item of data || []) {
+          fallbackMemories.push({
+            id: item.metadata?.id || item.created_at || item.content,
+            title: item.metadata?.title || item.content?.slice(0, 28) || "记忆",
+            content: item.content || "",
+            tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
+            domains: Array.isArray(item.metadata?.domain) ? item.metadata.domain : [],
+            type: item.metadata?.type || "stable",
+            importance: Number(item.metadata?.importance || 5),
+            pinned: Boolean(item.metadata?.pinned),
+            score: Number(item.metadata?.score || 0),
+            createdAt: item.created_at,
+            lastActiveAt: item.created_at,
+          })
+        }
+
+        return res.status(200).json(
+          buildWeMemoryResponse(fallbackMemories, pinText ? "fallback-with-pin" : "fallback")
+        )
+      }
+    }
 
     if (type === "diary") {
       if (req.method === "DELETE") {
