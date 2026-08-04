@@ -77,13 +77,21 @@ async function fetchPinnedMemoryText(user_id) {
   return (await res.text()).trim()
 }
 
+function cleanMemoryText(value) {
+  return String(value || "")
+    .replace(/\[Ombre Brain\s*-\s*记忆浮现\]/g, "")
+    .replace(/\[核心准则\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function normalizeMemoryBucket(bucket) {
   const createdAt = bucket.created || bucket.last_active || ""
 
   return {
     id: bucket.id,
     title: bucket.name || "未命名记忆",
-    content: bucket.content_preview || "",
+    content: cleanMemoryText(bucket.content_preview || ""),
     tags: Array.isArray(bucket.tags) ? bucket.tags : [],
     domains: Array.isArray(bucket.domain) ? bucket.domain : [],
     type: bucket.type || "dynamic",
@@ -124,6 +132,7 @@ function buildWeMemoryResponse(memories, source = "ombre") {
   const pinned = memories
     .filter((memory) => memory.pinned)
     .sort((a, b) => b.importance - a.importance || b.score - a.score)
+  const pinnedIds = new Set(pinned.map((memory) => memory.id))
   const categories = ["关于你", "我们之间", "一起经历过", "小小偏好"].map((name) => ({
     name,
     items: memories
@@ -132,6 +141,7 @@ function buildWeMemoryResponse(memories, source = "ombre") {
       .slice(0, 6),
   }))
   const recent = [...memories]
+    .filter((memory) => !(source !== "ombre" && pinnedIds.has(memory.id)))
     .sort((a, b) =>
       String(b.lastActiveAt || b.createdAt).localeCompare(
         String(a.lastActiveAt || a.createdAt)
@@ -194,8 +204,8 @@ export default async function handler(req, res) {
         if (pinText) {
           fallbackMemories.push({
             id: "ombre_pinned_breath",
-            title: "被钉住的核心记忆",
-            content: pinText,
+            title: "我们的约定",
+            content: cleanMemoryText(pinText),
             tags: ["钉选"],
             domains: ["我们"],
             type: "pinned",
