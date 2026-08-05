@@ -1069,10 +1069,11 @@ console.log("======================================\n")
       normalizedImageUrls.length === 0 &&
       shouldRunMemoryJudge(message)
     )
-      ? await judgeMemory(
+        ? await judgeMemory(
           message,
           {
-            previousContent: lastUserMessage?.content || ""
+            previousContent: lastUserMessage?.content || "",
+            assistantContext: reply
           }
         )
       : {
