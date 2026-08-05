@@ -1,11 +1,16 @@
 import { router, useLocalSearchParams } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { useState } from "react";
+
+import { APP_USER_ID, apiJson } from "../../config/api";
 
 const parseList = (value?: string | string[]) => {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -57,13 +62,100 @@ const normalizeText = (value?: string | string[]) => {
 
 export default function WeMemoryDetailScreen() {
   const params = useLocalSearchParams();
+  const id = normalizeText(params.id);
   const title = normalizeText(params.title) || "这条记忆";
   const content = normalizeText(params.content);
   const tags = parseList(params.tags);
   const domains = parseList(params.domains);
-  const pinned = normalizeText(params.pinned) === "1";
+  const [pinned, setPinned] = useState(normalizeText(params.pinned) === "1");
+  const [saving, setSaving] = useState(false);
   const date = formatDate(params.lastActiveAt || params.createdAt);
   const chips = [...domains, ...tags].filter(Boolean);
+
+  const copyMemory = async () => {
+    await Clipboard.setStringAsync(content || title);
+  };
+
+  const togglePin = async () => {
+    if (!id || saving) {
+      return;
+    }
+
+    const nextPinned = !pinned;
+
+    setSaving(true);
+
+    try {
+      await apiJson("/api/memory", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "we",
+          user_id: APP_USER_ID,
+          action: "pin",
+          bucket_id: id,
+          pinned: nextPinned,
+        }),
+      });
+
+      setPinned(nextPinned);
+    } catch (error) {
+      console.log("Pin memory failed:", error);
+      Alert.alert("操作失败", "这条记忆暂时没有改好，等一下再试。");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    if (!id || saving) {
+      return;
+    }
+
+    Alert.alert(
+      "删除这条记忆？",
+      "删除后，小C可能不再记得这件事。",
+      [
+        {
+          text: "取消",
+          style: "cancel",
+        },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: deleteMemory,
+        },
+      ],
+    );
+  };
+
+  const deleteMemory = async () => {
+    setSaving(true);
+
+    try {
+      await apiJson("/api/memory", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "we",
+          user_id: APP_USER_ID,
+          action: "delete",
+          bucket_id: id,
+        }),
+      });
+
+      router.back();
+    } catch (error) {
+      console.log("Delete memory failed:", error);
+      Alert.alert("删除失败", "这条记忆暂时没有删掉，等一下再试。");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <View style={styles.screen}>
@@ -103,6 +195,45 @@ export default function WeMemoryDetailScreen() {
           <Text style={styles.contentText}>
             {content || "这条记忆暂时没有更多内容。"}
           </Text>
+
+          <View style={styles.actionRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionButton,
+                pressed && styles.actionButtonPressed,
+              ]}
+              onPress={copyMemory}
+            >
+              <Text style={styles.actionText}>复制</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionButton,
+                pressed && styles.actionButtonPressed,
+                saving && styles.actionButtonDisabled,
+              ]}
+              onPress={togglePin}
+              disabled={saving}
+            >
+              <Text style={styles.actionText}>
+                {pinned ? "取消钉选" : "钉选"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionButton,
+                styles.deleteButton,
+                pressed && styles.deleteButtonPressed,
+                saving && styles.actionButtonDisabled,
+              ]}
+              onPress={confirmDelete}
+              disabled={saving}
+            >
+              <Text style={styles.deleteText}>删除</Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -214,5 +345,46 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 30,
     color: "#4A4542",
+  },
+
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 26,
+  },
+
+  actionButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  actionButtonPressed: {
+    backgroundColor: "rgba(120,120,128,0.14)",
+  },
+
+  actionButtonDisabled: {
+    opacity: 0.45,
+  },
+
+  actionText: {
+    fontSize: 15,
+    color: "#5C5753",
+  },
+
+  deleteButton: {
+    backgroundColor: "rgba(255,59,48,0.08)",
+  },
+
+  deleteButtonPressed: {
+    backgroundColor: "rgba(255,59,48,0.14)",
+  },
+
+  deleteText: {
+    fontSize: 15,
+    color: "#D94A42",
   },
 });
