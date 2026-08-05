@@ -46,6 +46,31 @@ async function fetchXiaoCMemories() {
   return memories
 }
 
+async function postXiaoCMemoryAction(pathname, body) {
+  const writeKey = process.env.XIAOC_MEMORY_WRITE_KEY
+
+  if (!writeKey) {
+    throw new Error("XIAOC_MEMORY_WRITE_KEY is not configured")
+  }
+
+  const res = await fetch(getMemoryUrl(pathname), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-XiaoC-Key": writeKey,
+    },
+    body: JSON.stringify(body),
+  })
+
+  const data = await res.json().catch(() => null)
+
+  if (!res.ok) {
+    throw new Error(data?.error || `XiaoC memory action failed: ${res.status}`)
+  }
+
+  return data
+}
+
 function cleanMemoryText(value) {
   return String(value || "")
     .replace(/\[Ombre Brain\s*-\s*记忆浮现\]/g, "")
@@ -146,6 +171,38 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (req.method === "POST" && type === "we") {
+      const action = req.body.action
+      const bucket_id = req.body.bucket_id
+
+      if (!bucket_id) {
+        return res.status(400).json({
+          error: "bucket_id required",
+        })
+      }
+
+      if (action === "pin") {
+        const result = await postXiaoCMemoryAction("/xiaoc/memory/pin", {
+          bucket_id,
+          pinned: Boolean(req.body.pinned),
+        })
+
+        return res.status(200).json(result)
+      }
+
+      if (action === "delete") {
+        const result = await postXiaoCMemoryAction("/xiaoc/memory/delete", {
+          bucket_id,
+        })
+
+        return res.status(200).json(result)
+      }
+
+      return res.status(400).json({
+        error: "unsupported we memory action",
+      })
+    }
 
     if (req.method === "GET" && type === "we") {
       try {

@@ -12,6 +12,7 @@ import {
 
 import { useEffect, useState, useRef } from "react";
 
+import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
 import {
@@ -44,31 +45,37 @@ type ConversationListRow =
 
 const xiaoCSpaces = [
   {
+    id: "we",
+    iconName: "heart",
+    title: "我们",
+  },
+  {
     id: "treehole",
-    icon: "🌙",
+    iconName: "moon",
     title: "深夜树洞",
   },
   {
     id: "diary",
-    icon: "📓",
+    iconName: "book.closed",
     title: "观察日记",
   },
   {
     id: "favorites",
-    icon: "⭐️",
+    iconName: "star",
     title: "收藏",
   },
   {
-    id: "we",
-    icon: "🫶",
-    title: "我们",
-  },
-  {
     id: "moments",
-    icon: "🫧",
+    iconName: "bubble.left.and.bubble.right",
     title: "朋友圈",
   },
 ];
+
+const getAccountInitial = (name: string) => {
+  const trimmed = String(name || "").trim();
+
+  return Array.from(trimmed || DEFAULT_ACCOUNT_NAME)[0] || "你";
+};
 
 function ConversationItem({
   item,
@@ -401,7 +408,13 @@ export default function ConversationList({
             ]}
             onPress={() => openSpace(space)}
           >
-            <Text style={styles.spaceIcon}>{space.icon}</Text>
+            <SymbolView
+              name={space.iconName as never}
+              size={15}
+              tintColor="#66666A"
+              weight="light"
+              style={styles.spaceIcon}
+            />
             <Text style={styles.spaceTitle}>{space.title}</Text>
           </Pressable>
         ))}
@@ -484,7 +497,9 @@ export default function ConversationList({
         onPress={openAccount}
       >
         <View style={styles.accountAvatar}>
-          <Text style={styles.accountAvatarText}>👼</Text>
+          <Text style={styles.accountAvatarText}>
+            {getAccountInitial(accountName)}
+          </Text>
         </View>
 
         <View style={styles.accountTextBox}>
@@ -680,9 +695,9 @@ const styles = StyleSheet.create({
   },
 
   spaceIcon: {
-    width: 30,
+    width: 27,
 
-    fontSize: 16,
+    height: 18,
   },
 
   spaceTitle: {
@@ -728,11 +743,15 @@ const styles = StyleSheet.create({
 
     justifyContent: "center",
 
-    backgroundColor: "rgba(120,120,128,0.10)",
+    backgroundColor: "rgba(120,120,128,0.11)",
   },
 
   accountAvatarText: {
-    fontSize: 18,
+    fontSize: 15,
+
+    fontWeight: "500",
+
+    color: "#66666A",
   },
 
   accountTextBox: {
