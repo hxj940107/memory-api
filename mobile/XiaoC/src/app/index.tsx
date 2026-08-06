@@ -4,6 +4,8 @@ import {
   StyleSheet, 
   Pressable,
   TextInput,
+  Animated,
+  Keyboard,
 } from 'react-native';
 
 import { useEffect, useState, useRef } from 'react';
@@ -23,8 +25,14 @@ export default function Index() {
   const [savedPassword, setSavedPassword] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(DEFAULT_ACCOUNT_NAME);
   const [error, setError] = useState('');
+  const [isWelcoming, setIsWelcoming] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
+  const passcodeOpacity = useRef(new Animated.Value(1)).current;
+  const welcomeCOpacity = useRef(new Animated.Value(0)).current;
+  const welcomeCTranslate = useRef(new Animated.Value(8)).current;
+  const welcomeTextOpacity = useRef(new Animated.Value(0)).current;
+  const welcomeTextTranslate = useRef(new Animated.Value(8)).current;
 
   useEffect(() => {
     let isActive = true;
@@ -73,7 +81,43 @@ export default function Index() {
 
         if(value === savedPassword){
 
-          router.replace('/chat');
+          setIsWelcoming(true);
+          setError('');
+
+          Animated.sequence([
+            Animated.timing(passcodeOpacity, {
+              toValue: 0,
+              duration: 260,
+              useNativeDriver: true,
+            }),
+            Animated.parallel([
+              Animated.timing(welcomeCOpacity, {
+                toValue: 1,
+                duration: 520,
+                useNativeDriver: true,
+              }),
+              Animated.timing(welcomeCTranslate, {
+                toValue: 0,
+                duration: 520,
+                useNativeDriver: true,
+              }),
+            ]),
+            Animated.parallel([
+              Animated.timing(welcomeTextOpacity, {
+                toValue: 1,
+                duration: 420,
+                useNativeDriver: true,
+              }),
+              Animated.timing(welcomeTextTranslate, {
+                toValue: 0,
+                duration: 420,
+                useNativeDriver: true,
+              }),
+            ]),
+            Animated.delay(620),
+          ]).start(() => {
+            router.replace('/chat');
+          });
 
           return;
 
@@ -92,49 +136,95 @@ export default function Index() {
 
   return (
 
-    <View style={styles.container}>
+    <Pressable
+      style={styles.container}
+      onPress={Keyboard.dismiss}
+    >
 
 
       <View style={styles.center}>
 
-
-        <Text style={styles.logo}>
-          🌊
-        </Text>
-
-
-        <Text style={styles.title}>
-          小C ♡ {displayName}
-        </Text>
-
-
-
-        <Pressable
-          style={styles.dotsContainer}
-          onPress={handlePress}
+        <Animated.View
+          pointerEvents={isWelcoming ? 'none' : 'auto'}
+          style={[
+            styles.passcodeContent,
+            {
+              opacity: passcodeOpacity,
+            },
+          ]}
         >
 
+            <View style={styles.logo}>
+            </View>
 
-          {
-            Array.from({length:6}).map((_,index)=>(
 
-              <Text
-                key={index}
-                style={[
-                  styles.dot,
-                  index < password.length && styles.activeDot
-                ]}
-              >
+            <Pressable
+              style={styles.dotsContainer}
+              onPress={handlePress}
+            >
 
-                {index < password.length ? '●' : '○'}
 
+              {
+                Array.from({length:6}).map((_,index)=>(
+
+                  <Text
+                    key={index}
+                    style={[
+                      styles.dot,
+                      index < password.length && styles.activeDot
+                    ]}
+                  >
+
+                    {index < password.length ? '●' : '○'}
+
+                  </Text>
+
+                ))
+              }
+
+
+            </Pressable>
+
+            <Text style={styles.hint}>
+              输入密码
+            </Text>
+
+        </Animated.View>
+
+        {isWelcoming && (
+          <View
+            pointerEvents="none"
+            style={styles.welcomeContent}
+          >
+            <Animated.View
+              style={[
+                styles.welcomeLogo,
+                {
+                  opacity: welcomeCOpacity,
+                  transform: [{ translateY: welcomeCTranslate }],
+                },
+              ]}
+            >
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.welcomeTextGroup,
+                {
+                  opacity: welcomeTextOpacity,
+                  transform: [{ translateY: welcomeTextTranslate }],
+                },
+              ]}
+            >
+              <Text style={styles.welcomeText}>
+                欢迎回来
               </Text>
-
-            ))
-          }
-
-
-        </Pressable>
+              <Text style={styles.welcomeName}>
+                {displayName}
+              </Text>
+            </Animated.View>
+          </View>
+        )}
 
         {!!error && (
           <Text style={styles.errorText}>
@@ -158,7 +248,9 @@ export default function Index() {
 
           onChangeText={handleChange}
 
-          autoFocus={false}
+          autoFocus={!isWelcoming}
+
+          editable={!isWelcoming}
 
         />
 
@@ -166,7 +258,7 @@ export default function Index() {
       </View>
 
 
-    </View>
+    </Pressable>
 
   );
 }
@@ -189,37 +281,44 @@ const styles = StyleSheet.create({
     alignItems:'center',
   },
 
+  passcodeContent:{
+    alignItems:'center',
+    justifyContent:'center',
+    transform:[{ translateY:-28 }],
+  },
 
   logo:{
-    fontSize:42,
-    marginBottom:24,
+    marginBottom:96,
   },
 
 
-  title:{
-    fontSize:22,
-    color:'#666666',
+  hint:{
+    marginTop:18,
+    fontSize:13,
+    color:'#B2AAA5',
     fontWeight:'400',
-    letterSpacing:1,
-    marginBottom:45,
+    letterSpacing:2,
   },
 
 
   dotsContainer:{
     flexDirection:'row',
     gap:12,
-    padding:20,
+    paddingHorizontal:20,
+    paddingVertical:12,
   },
 
 
   dot:{
-    fontSize:25,
-    color:'#999999',
+    fontSize:31,
+    lineHeight:34,
+    color:'#A8A8A8',
+    fontWeight:'200',
   },
 
 
   activeDot:{
-    color:'#555555',
+    color:'#6A6F6D',
   },
 
 
@@ -227,6 +326,44 @@ const styles = StyleSheet.create({
     marginTop:12,
     fontSize:14,
     color:'#B26A6A',
+  },
+
+  welcomeContent:{
+    position:'absolute',
+    alignItems:'center',
+    justifyContent:'center',
+    transform:[{ translateY:-12 }],
+  },
+
+
+  welcomeLogo:{
+    marginBottom:34,
+  },
+
+
+  welcomeTextGroup:{
+    alignItems:'center',
+  },
+
+
+  welcomeText:{
+    fontSize:15,
+    lineHeight:25,
+    color:'#9B9692',
+    fontWeight:'300',
+    letterSpacing:2,
+    textAlign:'center',
+  },
+
+
+  welcomeName:{
+    marginTop:2,
+    fontSize:15,
+    lineHeight:25,
+    color:'#87827E',
+    fontWeight:'300',
+    letterSpacing:3,
+    textAlign:'center',
   },
 
 
