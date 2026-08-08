@@ -633,6 +633,7 @@ function buildTreeholeDraftPrompt() {
 
 function shouldConsiderMoment({
   message,
+  isManualMomentRequest,
   isDiaryRequest,
   isTreeholeRequest,
   attributionCorrectionContext,
@@ -651,6 +652,10 @@ function shouldConsiderMoment({
     return false
   }
 
+  if (isManualMomentRequest) {
+    return true
+  }
+
   if (/diary|观察日记|树洞|小号|朋友圈|存入|保存|删除|修改|合并|置顶/.test(text)) {
     return false
   }
@@ -660,6 +665,17 @@ function shouldConsiderMoment({
   }
 
   return text.trim().length >= 6
+}
+
+function isMomentWritingRequest(message) {
+  const text = String(message || "").trim()
+
+  if (!text) return false
+
+  return (
+    /(发|写|来|生成|更新|补|试).{0,8}(朋友圈|动态)/.test(text) ||
+    /(朋友圈|动态).{0,8}(发|写|来|生成|更新|补|试)(一条|一下|一个)?/.test(text)
+  )
 }
 
 async function getUserMessageCount(user_id, conversation_id) {
@@ -746,6 +762,7 @@ async function maybeCreateMoment({
   assistant_message_id,
   message,
   reply,
+  isManualMomentRequest,
   isDiaryRequest,
   isTreeholeRequest,
   attributionCorrectionContext,
@@ -754,6 +771,7 @@ async function maybeCreateMoment({
 }) {
   if (!shouldConsiderMoment({
     message,
+    isManualMomentRequest,
     isDiaryRequest,
     isTreeholeRequest,
     attributionCorrectionContext,
@@ -766,17 +784,17 @@ async function maybeCreateMoment({
 
   const userMessageCount = await getUserMessageCount(user_id, conversation_id)
 
-  if (
+  if (!isManualMomentRequest && (
     userMessageCount < CONTEXT_BUDGET.momentCheckIntervalUserMessages ||
     userMessageCount % CONTEXT_BUDGET.momentCheckIntervalUserMessages !== 0
-  ) {
+  )) {
     console.log("MOMENT CHECK SKIPPED: interval", userMessageCount)
     return null
   }
 
   const recentMomentCount = await getRecentMomentCount(user_id)
 
-  if (recentMomentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
+  if (!isManualMomentRequest && recentMomentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
     console.log("MOMENT CHECK SKIPPED: daily cap", recentMomentCount)
     return null
   }
@@ -807,6 +825,7 @@ async function maybeCreateMoment({
 - 不要太久完全没有动态。
 - 更像偶尔想起来发一条，而不是固定任务。
 - 如果最近已经发过类似内容，应跳过。
+- 如果她明确让你发朋友圈，这是手动触发；可以发，但仍然要像小C自己随手发的，不要写成“她让我发朋友圈”。
 
 内容规则：
 - 长度：1 到 3 句，通常不超过 50 个中文字符。
@@ -887,6 +906,9 @@ ${trimText(message, 500)}
 
 小C刚刚回复：
 ${trimText(reply, 500)}
+
+触发方式：
+${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低频触发。"}
 `
     }
   ]
@@ -1072,6 +1094,7 @@ const history = await getRecentMessages(
 
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isTreeholeRequest = isTreeholeWritingRequest(message)
+const isManualMomentRequest = isMomentWritingRequest(message)
 const diaryContextMessages = isDiaryRequest
   ? await getDiaryContextMessages(user_id, cid)
   : []
@@ -1433,6 +1456,7 @@ console.log("======================================\n")
         assistant_message_id: assistantMessageId,
         message,
         reply,
+        isManualMomentRequest,
         isDiaryRequest,
         isTreeholeRequest,
         attributionCorrectionContext,
