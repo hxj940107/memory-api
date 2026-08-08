@@ -556,6 +556,21 @@ export default function ChatScreen() {
     });
   };
 
+  useEffect(() => {
+    const shortTimer = setTimeout(() => {
+      scrollToLatestMessage(true);
+    }, 80);
+
+    const layoutTimer = setTimeout(() => {
+      scrollToLatestMessage(true);
+    }, 260);
+
+    return () => {
+      clearTimeout(shortTimer);
+      clearTimeout(layoutTimer);
+    };
+  }, [messages.length, messages[messages.length - 1]?.text?.length, isTyping]);
+
   const openMessageMenu = (
     text: string,
     messageItem: Message | undefined,
@@ -1832,7 +1847,7 @@ const styles = StyleSheet.create({
 
     paddingTop: 0,
 
-    paddingBottom: 130,
+    paddingBottom: 170,
   },
 
   empty: {
@@ -1869,37 +1884,47 @@ const styles = StyleSheet.create({
 
   userBubble: {
     maxWidth: "80%",
+    flexShrink: 1,
     backgroundColor: "rgba(220,240,255,0.75)",
     borderColor: "#D5E9FF",
     borderWidth: 1,
     borderRadius: 20,
     paddingHorizontal: 18,
     paddingVertical: 9,
+    overflow: "visible",
   },
 
   userText: {
     fontSize: 17,
     color: "#4B5563",
     lineHeight: 25,
+    flexShrink: 1,
+    includeFontPadding: false,
   },
   aiBox: {
     maxWidth: "100%",
+    flexShrink: 1,
     alignSelf: "flex-start",
     backgroundColor: "#F4F4F4",
     borderRadius: 20,
     paddingHorizontal: 18,
     paddingVertical: 9,
+    overflow: "visible",
   },
 
   aiWrap: {
     alignSelf: "flex-start",
     maxWidth: "82%",
+    flexShrink: 1,
+    overflow: "visible",
   },
 
   aiText: {
     fontSize: 17,
     color: "#444",
     lineHeight: 25,
+    flexShrink: 1,
+    includeFontPadding: false,
   },
 
   treeholeDraftCard: {

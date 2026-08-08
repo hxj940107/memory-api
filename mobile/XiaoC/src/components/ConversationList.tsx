@@ -385,6 +385,13 @@ export default function ConversationList({
       return;
     }
 
+    if (space.id === "moments") {
+      await onNavigate?.();
+
+      router.push("/moments" as never);
+      return;
+    }
+
     showComingSoon(space.title);
   };
 
