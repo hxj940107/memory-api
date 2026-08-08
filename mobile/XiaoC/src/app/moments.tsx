@@ -65,6 +65,7 @@ const momentImages = {
 };
 
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
+const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
 
 export default function MomentsScreen() {
   const scrollRef = useRef<ScrollView>(null);
@@ -109,6 +110,18 @@ export default function MomentsScreen() {
     return normalizeComments(data, momentId, fallbackAccountName);
   };
 
+  const markMomentsAsRead = async (items: Moment[]) => {
+    const latestCreatedAt = items.find((item) => item.createdAt)?.createdAt;
+
+    if (!latestCreatedAt) return;
+
+    try {
+      await AsyncStorage.setItem(MOMENTS_LAST_READ_AT_KEY, latestCreatedAt);
+    } catch (error) {
+      console.log("Moment read marker save failed:", error);
+    }
+  };
+
   const loadMoments = async () => {
     const [data, account] = await Promise.all([
       apiJson<MomentsResponse>("/api/memory", {
@@ -145,6 +158,7 @@ export default function MomentsScreen() {
       });
 
     setMoments(mappedMoments);
+    await markMomentsAsRead(mappedMoments);
 
     const momentsWithComments = mappedMoments.filter((item) => item.commentsCount > 0);
 

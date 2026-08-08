@@ -12,6 +12,7 @@ import {
 
 import { useEffect, useState, useRef } from "react";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
@@ -71,6 +72,8 @@ const xiaoCSpaces = [
   },
 ];
 
+const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
+
 const getAccountInitial = (name: string) => {
   const trimmed = String(name || "").trim();
 
@@ -115,6 +118,8 @@ export default function ConversationList({
 
   const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
 
+  const [hasUnreadMoments, setHasUnreadMoments] = useState(false);
+
   const [selected, setSelected] = useState<Conversation | null>(null);
 
   const [menuVisible, setMenuVisible] = useState(false);
@@ -129,6 +134,7 @@ export default function ConversationList({
   useEffect(() => {
     loadConversations();
     loadAccountName();
+    loadMomentUnread();
   }, []);
 
   const loadAccountName = async () => {
@@ -166,6 +172,34 @@ export default function ConversationList({
       setList(await fetchConversations());
     } catch (error) {
       console.log(error);
+    }
+  };
+
+  const loadMomentUnread = async () => {
+    try {
+      const data = await apiJson<Array<{ createdAt?: string }>>("/api/memory", {
+        query: {
+          type: "moments",
+          user_id: APP_USER_ID,
+        },
+      });
+
+      const latestCreatedAt = data.find((item) => item.createdAt)?.createdAt;
+
+      if (!latestCreatedAt) {
+        setHasUnreadMoments(false);
+        return;
+      }
+
+      const lastReadAt = await AsyncStorage.getItem(MOMENTS_LAST_READ_AT_KEY);
+      const latestTime = new Date(latestCreatedAt).getTime();
+      const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+
+      setHasUnreadMoments(
+        Number.isFinite(latestTime) && latestTime > lastReadTime,
+      );
+    } catch (error) {
+      console.log("Moments unread check failed:", error);
     }
   };
 
@@ -386,6 +420,8 @@ export default function ConversationList({
     }
 
     if (space.id === "moments") {
+      setHasUnreadMoments(false);
+
       await onNavigate?.();
 
       router.push("/moments" as never);
@@ -423,6 +459,9 @@ export default function ConversationList({
               style={styles.spaceIcon}
             />
             <Text style={styles.spaceTitle}>{space.title}</Text>
+            {space.id === "moments" && hasUnreadMoments && (
+              <View style={styles.momentUnreadDot} />
+            )}
           </Pressable>
         ))}
       </View>
@@ -711,6 +750,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
 
     color: "#444",
+  },
+
+  momentUnreadDot: {
+    width: 7,
+
+    height: 7,
+
+    borderRadius: 3.5,
+
+    backgroundColor: "#FF3B30",
+
+    marginLeft: 8,
+
+    marginTop: 1,
   },
 
   accountButton: {
