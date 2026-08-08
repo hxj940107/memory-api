@@ -2,13 +2,14 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useEffect, useRef, useState } from "react";
 
 import { apiJson, APP_USER_ID } from "../config/api";
 import {
   DEFAULT_ACCOUNT_NAME,
+  DEFAULT_USER_MOMENT_AVATAR,
   DEFAULT_XIAOC_MOMENT_AVATAR,
   MOMENT_AVATAR_PRESETS,
   MomentAvatarId,
@@ -64,6 +65,8 @@ const momentImages = {
   night: require("../../assets/moments-night.svg"),
 };
 
+const profileCoverImage = require("../../assets/moments-cover.svg");
+
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
 const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
 
@@ -71,6 +74,11 @@ export default function MomentsScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [moments, setMoments] = useState<Moment[]>([]);
   const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
+  const [profileAvatar, setProfileAvatar] = useState<{
+    avatar: MomentAvatarId;
+    uri: string | null;
+  }>({ avatar: DEFAULT_USER_MOMENT_AVATAR, uri: null });
+  const [profileCoverUri] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [commentsByMomentId, setCommentsByMomentId] = useState<Record<string, MomentComment[]>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
@@ -134,6 +142,10 @@ export default function MomentsScreen() {
     ]);
 
     setAccountName(account.displayName);
+    setProfileAvatar({
+      avatar: account.userMomentAvatar,
+      uri: account.userMomentAvatarUri,
+    });
 
     const mappedMoments = data
       .filter((item) => item.id && item.text)
@@ -548,6 +560,50 @@ export default function MomentsScreen() {
     );
   };
 
+  const renderProfileAvatar = () => {
+    if (profileAvatar.uri) {
+      return (
+        <Image
+          source={{ uri: profileAvatar.uri }}
+          style={styles.profileAvatarImage}
+          contentFit="cover"
+        />
+      );
+    }
+
+    const preset =
+      MOMENT_AVATAR_PRESETS.find((item) => item.id === profileAvatar.avatar) ||
+      MOMENT_AVATAR_PRESETS.find((item) => item.id === DEFAULT_USER_MOMENT_AVATAR) ||
+      MOMENT_AVATAR_PRESETS[0];
+
+    const symbol = preset.useInitial
+      ? accountName.trim().slice(0, 1) || "我"
+      : preset.symbol;
+
+    return (
+      <View
+        style={[
+          styles.profileAvatarImage,
+          {
+            backgroundColor: preset.backgroundColor,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.profileAvatarText,
+            {
+              color: preset.color,
+              fontSize: preset.useInitial ? 24 : 30,
+            },
+          ]}
+        >
+          {symbol}
+        </Text>
+      </View>
+    );
+  };
+
   const renderImage = (image?: Moment["image"]) => {
     if (!image) {
       return null;
@@ -572,7 +628,7 @@ export default function MomentsScreen() {
           <SymbolView
             name="chevron.left"
             size={20}
-            tintColor="#7A7A7E"
+            tintColor="#FFFFFF"
             weight="light"
           />
         </Pressable>
@@ -587,7 +643,7 @@ export default function MomentsScreen() {
           <SymbolView
             name="camera"
             size={24}
-            tintColor={creatingMoment ? "#B8B8BE" : "#3C3C43"}
+            tintColor={creatingMoment ? "rgba(255,255,255,0.52)" : "#FFFFFF"}
             weight="light"
           />
         </Pressable>
@@ -601,11 +657,25 @@ export default function MomentsScreen() {
           focusedCommentMomentId && styles.contentWithFocusedComment,
         ]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        onScrollBeginDrag={Keyboard.dismiss}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#A6A6AA" />
         }
       >
+        <View style={styles.profileHeader}>
+          <Image
+            source={profileCoverUri ? { uri: profileCoverUri } : profileCoverImage}
+            style={styles.profileCover}
+            contentFit="cover"
+          />
+          <View style={styles.profileInfoRow}>
+            <Text style={styles.profileName}>{accountName}</Text>
+            <View style={styles.profileAvatarWrap}>{renderProfileAvatar()}</View>
+          </View>
+        </View>
+
         {moments.length === 0 && (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>小C还没有偷偷发动态。</Text>
@@ -614,10 +684,14 @@ export default function MomentsScreen() {
 
         {moments.map((moment) => {
           const comments = commentsByMomentId[moment.id] || [];
+          const commentAuthorById = comments.reduce<Record<string, string>>((items, comment) => {
+            items[comment.id] = comment.authorName;
+            return items;
+          }, {});
           const commentsCount = commentsByMomentId[moment.id]?.length ?? moment.commentsCount;
           const composerVisible = Boolean(expandedComments[moment.id]);
           const likedByMe = Boolean(likedMomentIds[moment.id]);
-          const shouldShowInteractionPanel = likedByMe || comments.length > 0 || composerVisible;
+          const shouldShowInteractionPanel = likedByMe || comments.length > 0;
           const actionMenuVisible = actionMenuMomentId === moment.id;
 
           return (
@@ -742,76 +816,81 @@ export default function MomentsScreen() {
                       </View>
                     )}
 
-                    {(comments.length > 0 || composerVisible) && (
+                    {comments.length > 0 && (
                       <View
                         style={[
                           styles.commentSection,
                           likedByMe && styles.commentSectionWithLikes,
                         ]}
                       >
-                        {comments.map((comment) => (
-                          <Pressable
-                            key={comment.id}
-                            style={({ pressed }) => [
-                              styles.commentRow,
-                              pressed && comment.authorType === "user" && styles.commentPressed,
-                            ]}
-                            onLongPress={() => confirmDeleteComment(moment, comment)}
-                          >
-                            <Text style={styles.commentLine}>
-                              <Text
-                                style={[
-                                  styles.commentAuthor,
-                                  comment.authorType === "xiaoc"
-                                    ? styles.xiaocCommentAuthor
-                                    : styles.userCommentAuthor,
-                                ]}
-                              >
-                                {comment.authorName}：
-                              </Text>
-                              <Text style={styles.commentContent}>{comment.content}</Text>
-                            </Text>
-                          </Pressable>
-                        ))}
+                        {comments.map((comment) => {
+                          const replyToName = comment.parentId
+                            ? commentAuthorById[comment.parentId]
+                            : "";
 
-                        {composerVisible && (
-                          <View style={styles.commentInputRow}>
-                            <TextInput
-                              style={styles.commentInput}
-                              value={commentDrafts[moment.id] || ""}
-                              onChangeText={(text) =>
-                                setCommentDrafts((items) => ({
-                                  ...items,
-                                  [moment.id]: text,
-                                }))
-                              }
-                              placeholder="写评论…"
-                              placeholderTextColor="#B1ACA7"
-                              multiline
-                              onFocus={() => {
-                                setFocusedCommentMomentId(moment.id);
-                                scrollCommentInputIntoView();
-                              }}
-                              onBlur={() => setFocusedCommentMomentId(null)}
-                            />
-                            {String(commentDrafts[moment.id] || "").trim() && (
-                              <Pressable
-                                style={({ pressed }) => [
-                                  styles.sendCommentButton,
-                                  pressed && styles.pressed,
-                                  postingCommentId === moment.id && styles.sendCommentDisabled,
-                                ]}
-                                disabled={postingCommentId === moment.id}
-                                onPress={() => postComment(moment)}
-                              >
-                                <Text style={styles.sendCommentText}>
-                                  {postingCommentId === moment.id ? "发送中" : "发送"}
-                                </Text>
-                              </Pressable>
-                            )}
-                          </View>
-                        )}
+                          return (
+                            <Pressable
+                              key={comment.id}
+                              style={({ pressed }) => [
+                                styles.commentRow,
+                                pressed && comment.authorType === "user" && styles.commentPressed,
+                              ]}
+                              onLongPress={() => confirmDeleteComment(moment, comment)}
+                            >
+                              <Text style={styles.commentLine}>
+                                <Text style={styles.commentAuthor}>{comment.authorName}</Text>
+                                {replyToName ? (
+                                  <Text>
+                                    <Text style={styles.commentReplyHint}> 回复 </Text>
+                                    <Text style={styles.commentAuthor}>{replyToName}</Text>
+                                  </Text>
+                                ) : null}
+                                <Text style={styles.commentColon}>：</Text>
+                                <Text style={styles.commentContent}>{comment.content}</Text>
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
                       </View>
+                    )}
+
+                  </View>
+                )}
+
+                {composerVisible && (
+                  <View style={styles.commentInputRow}>
+                    <TextInput
+                      style={styles.commentInput}
+                      value={commentDrafts[moment.id] || ""}
+                      onChangeText={(text) =>
+                        setCommentDrafts((items) => ({
+                          ...items,
+                          [moment.id]: text,
+                        }))
+                      }
+                      placeholder="写评论…"
+                      placeholderTextColor="#B1ACA7"
+                      multiline
+                      onFocus={() => {
+                        setFocusedCommentMomentId(moment.id);
+                        scrollCommentInputIntoView();
+                      }}
+                      onBlur={() => setFocusedCommentMomentId(null)}
+                    />
+                    {String(commentDrafts[moment.id] || "").trim() && (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.sendCommentButton,
+                          pressed && styles.pressed,
+                          postingCommentId === moment.id && styles.sendCommentDisabled,
+                        ]}
+                        disabled={postingCommentId === moment.id}
+                        onPress={() => postComment(moment)}
+                      >
+                        <Text style={styles.sendCommentText}>
+                          {postingCommentId === moment.id ? "发送中" : "发送"}
+                        </Text>
+                      </Pressable>
                     )}
                   </View>
                 )}
@@ -819,6 +898,8 @@ export default function MomentsScreen() {
             </Pressable>
           );
         })}
+
+        <Pressable style={styles.keyboardDismissArea} onPress={Keyboard.dismiss} />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -831,15 +912,18 @@ const styles = StyleSheet.create({
   },
 
   nav: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     height: 104,
     paddingTop: 54,
     paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(120,120,128,0.1)",
-    backgroundColor: "rgba(247,247,247,0.92)",
+    backgroundColor: "transparent",
   },
 
   backButton: {
@@ -859,7 +943,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 17,
     fontWeight: "400",
-    color: "#111111",
+    color: "transparent",
   },
 
   camera: {
@@ -885,8 +969,69 @@ const styles = StyleSheet.create({
     paddingBottom: 360,
   },
 
+  profileHeader: {
+    height: 428,
+    marginBottom: 24,
+    backgroundColor: "#FFFFFF",
+  },
+
+  profileCover: {
+    width: "100%",
+    height: 360,
+    backgroundColor: "#E8E6E1",
+  },
+
+  profileInfoRow: {
+    position: "absolute",
+    top: 312,
+    left: 20,
+    right: 20,
+    height: 96,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "flex-end",
+  },
+
+  profileName: {
+    maxWidth: "62%",
+    marginRight: 14,
+    marginBottom: 32,
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    textAlign: "right",
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+
+  profileAvatarWrap: {
+    width: 86,
+    height: 86,
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
+    padding: 4,
+    shadowColor: "#000000",
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+
+  profileAvatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  profileAvatarText: {
+    color: "#FFFFFF",
+  },
+
   empty: {
-    paddingTop: 120,
+    paddingTop: 72,
     paddingHorizontal: 40,
     alignItems: "center",
   },
@@ -1084,15 +1229,19 @@ const styles = StyleSheet.create({
   commentAuthor: {
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 0,
-  },
-
-  xiaocCommentAuthor: {
     color: "#576B95",
   },
 
-  userCommentAuthor: {
-    color: "#576B95",
+  commentReplyHint: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: "#A5A5AA",
+  },
+
+  commentColon: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: "#333333",
   },
 
   commentContent: {
@@ -1105,9 +1254,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(120,120,128,0.18)",
-    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: "#F7F7F7",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
 
   commentInput: {
@@ -1135,5 +1285,9 @@ const styles = StyleSheet.create({
   sendCommentText: {
     fontSize: 15,
     color: "#47658F",
+  },
+
+  keyboardDismissArea: {
+    minHeight: 160,
   },
 });

@@ -224,6 +224,7 @@ async function createXiaoCReplyForMomentComment({
   moment_id,
   userComment,
   userName,
+  parentCommentId,
 }) {
   const { data: moment, error: momentError } = await supabase
     .from("moment_entries")
@@ -320,7 +321,7 @@ ${trimText(userComment, 160)}
       author_type: "xiaoc",
       author_name: "小C",
       content,
-      parent_id: null,
+      parent_id: parentCommentId || null,
     })
     .select()
     .single()
@@ -768,6 +769,7 @@ export default async function handler(req, res) {
               moment_id,
               userComment: content,
               userName: author_name,
+              parentCommentId: data.id,
             })
           } catch (replyError) {
             console.error("moment xiaoc reply failed:", replyError)
