@@ -71,6 +71,35 @@ export default function MomentsScreen() {
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [postingCommentId, setPostingCommentId] = useState<string | null>(null);
 
+  const normalizeComments = (
+    data: MomentCommentsResponse,
+    momentId: string,
+    fallbackAccountName: string,
+  ): MomentComment[] =>
+    data
+      .filter((item) => item.id && item.content)
+      .map((item) => ({
+        id: item.id,
+        momentId: item.momentId || momentId,
+        authorType: item.authorType === "xiaoc" ? "xiaoc" : "user",
+        authorName: item.authorName || (item.authorType === "xiaoc" ? "小C" : fallbackAccountName),
+        content: item.content || "",
+        parentId: item.parentId || null,
+        createdAt: item.createdAt || new Date().toISOString(),
+      }));
+
+  const fetchComments = async (momentId: string, fallbackAccountName = accountName) => {
+    const data = await apiJson<MomentCommentsResponse>("/api/memory", {
+      query: {
+        type: "moment_comments",
+        user_id: APP_USER_ID,
+        moment_id: momentId,
+      },
+    });
+
+    return normalizeComments(data, momentId, fallbackAccountName);
+  };
+
   const loadMoments = async () => {
     const [data, account] = await Promise.all([
       apiJson<MomentsResponse>("/api/memory", {
@@ -84,29 +113,47 @@ export default function MomentsScreen() {
 
     setAccountName(account.displayName);
 
-    setMoments(
-      data
-        .filter((item) => item.id && item.text)
-        .map((item) => {
-          const isXiaoC = !item.author || item.author === "小C";
+    const mappedMoments = data
+      .filter((item) => item.id && item.text)
+      .map((item) => {
+        const isXiaoC = !item.author || item.author === "小C";
 
-          return {
-            id: item.id,
-            author: isXiaoC ? "小C" : item.author || account.displayName,
-            text: item.text || "",
-            image: item.image || null,
-            likes: Number(item.likes || 0),
-            commentsCount: Number(item.commentsCount || 0),
-            createdAt: item.createdAt || new Date().toISOString(),
-            avatar: isXiaoC
-              ? account.xiaocMomentAvatar
-              : account.userMomentAvatar,
-            avatarUri: isXiaoC
-              ? account.xiaocMomentAvatarUri
-              : account.userMomentAvatarUri,
-          };
-        }),
-    );
+        return {
+          id: item.id,
+          author: isXiaoC ? "小C" : item.author || account.displayName,
+          text: item.text || "",
+          image: item.image || null,
+          likes: Number(item.likes || 0),
+          commentsCount: Number(item.commentsCount || 0),
+          createdAt: item.createdAt || new Date().toISOString(),
+          avatar: isXiaoC
+            ? account.xiaocMomentAvatar
+            : account.userMomentAvatar,
+          avatarUri: isXiaoC
+            ? account.xiaocMomentAvatarUri
+            : account.userMomentAvatarUri,
+        };
+      });
+
+    setMoments(mappedMoments);
+
+    const momentsWithComments = mappedMoments.filter((item) => item.commentsCount > 0);
+
+    if (momentsWithComments.length > 0) {
+      const loadedComments = await Promise.all(
+        momentsWithComments.map(async (item) => ({
+          momentId: item.id,
+          comments: await fetchComments(item.id, account.displayName),
+        })),
+      );
+
+      setCommentsByMomentId((items) => ({
+        ...items,
+        ...Object.fromEntries(
+          loadedComments.map((item) => [item.momentId, item.comments]),
+        ),
+      }));
+    }
   };
 
   useEffect(() => {
@@ -127,25 +174,7 @@ export default function MomentsScreen() {
   };
 
   const loadComments = async (momentId: string) => {
-    const data = await apiJson<MomentCommentsResponse>("/api/memory", {
-      query: {
-        type: "moment_comments",
-        user_id: APP_USER_ID,
-        moment_id: momentId,
-      },
-    });
-
-    const comments: MomentComment[] = data
-      .filter((item) => item.id && item.content)
-      .map((item) => ({
-        id: item.id,
-        momentId: item.momentId || momentId,
-        authorType: item.authorType === "xiaoc" ? "xiaoc" : "user",
-        authorName: item.authorName || (item.authorType === "xiaoc" ? "小C" : accountName),
-        content: item.content || "",
-        parentId: item.parentId || null,
-        createdAt: item.createdAt || new Date().toISOString(),
-      }));
+    const comments = await fetchComments(momentId);
 
     setCommentsByMomentId((items) => ({
       ...items,
@@ -153,15 +182,13 @@ export default function MomentsScreen() {
     }));
   };
 
-  const toggleComments = async (moment: Moment) => {
-    const nextExpanded = !expandedComments[moment.id];
-
+  const toggleCommentComposer = async (moment: Moment) => {
     setExpandedComments((items) => ({
       ...items,
-      [moment.id]: nextExpanded,
+      [moment.id]: !items[moment.id],
     }));
 
-    if (nextExpanded && !commentsByMomentId[moment.id]) {
+    if (!commentsByMomentId[moment.id]) {
       try {
         await loadComments(moment.id);
       } catch (error) {
@@ -433,7 +460,8 @@ export default function MomentsScreen() {
         {moments.map((moment) => {
           const comments = commentsByMomentId[moment.id] || [];
           const commentsCount = commentsByMomentId[moment.id]?.length ?? moment.commentsCount;
-          const expanded = Boolean(expandedComments[moment.id]);
+          const composerVisible = Boolean(expandedComments[moment.id]);
+          const shouldShowComments = comments.length > 0 || composerVisible;
 
           return (
             <Pressable
@@ -472,12 +500,12 @@ export default function MomentsScreen() {
                         styles.commentButton,
                         pressed && styles.pressed,
                       ]}
-                      onPress={() => toggleComments(moment)}
+                      onPress={() => loadComments(moment.id)}
                     >
                       <SymbolView
                         name="message"
                         size={17}
-                        tintColor={expanded ? "#47658F" : "#8C8C91"}
+                        tintColor={comments.length > 0 ? "#47658F" : "#8C8C91"}
                         weight="thin"
                       />
                       {commentsCount > 0 && (
@@ -486,20 +514,24 @@ export default function MomentsScreen() {
                     </Pressable>
                   </View>
 
-                  <SymbolView
-                    name="ellipsis"
-                    size={15}
-                    tintColor="#A6A6AA"
-                    weight="light"
-                  />
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.moreButton,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={() => toggleCommentComposer(moment)}
+                  >
+                    <SymbolView
+                      name="ellipsis"
+                      size={15}
+                      tintColor={composerVisible ? "#47658F" : "#A6A6AA"}
+                      weight="light"
+                    />
+                  </Pressable>
                 </View>
 
-                {expanded && (
+                {shouldShowComments && (
                   <View style={styles.commentsBox}>
-                    {comments.length === 0 && (
-                      <Text style={styles.noComments}>还没有评论。</Text>
-                    )}
-
                     {comments.map((comment) => (
                       <Pressable
                         key={comment.id}
@@ -523,39 +555,41 @@ export default function MomentsScreen() {
                       </Pressable>
                     ))}
 
-                    <View style={styles.commentInputRow}>
-                      <TextInput
-                        style={styles.commentInput}
-                        value={commentDrafts[moment.id] || ""}
-                        onChangeText={(text) =>
-                          setCommentDrafts((items) => ({
-                            ...items,
-                            [moment.id]: text,
-                          }))
-                        }
-                        placeholder="写评论…"
-                        placeholderTextColor="#B1ACA7"
-                        multiline
-                      />
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.sendCommentButton,
-                          pressed && styles.pressed,
-                          (!String(commentDrafts[moment.id] || "").trim() ||
-                            postingCommentId === moment.id) &&
-                            styles.sendCommentDisabled,
-                        ]}
-                        disabled={
-                          !String(commentDrafts[moment.id] || "").trim() ||
-                          postingCommentId === moment.id
-                        }
-                        onPress={() => postComment(moment)}
-                      >
-                        <Text style={styles.sendCommentText}>
-                          {postingCommentId === moment.id ? "发送中" : "发送"}
-                        </Text>
-                      </Pressable>
-                    </View>
+                    {composerVisible && (
+                      <View style={styles.commentInputRow}>
+                        <TextInput
+                          style={styles.commentInput}
+                          value={commentDrafts[moment.id] || ""}
+                          onChangeText={(text) =>
+                            setCommentDrafts((items) => ({
+                              ...items,
+                              [moment.id]: text,
+                            }))
+                          }
+                          placeholder="写评论…"
+                          placeholderTextColor="#B1ACA7"
+                          multiline
+                        />
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.sendCommentButton,
+                            pressed && styles.pressed,
+                            (!String(commentDrafts[moment.id] || "").trim() ||
+                              postingCommentId === moment.id) &&
+                              styles.sendCommentDisabled,
+                          ]}
+                          disabled={
+                            !String(commentDrafts[moment.id] || "").trim() ||
+                            postingCommentId === moment.id
+                          }
+                          onPress={() => postComment(moment)}
+                        >
+                          <Text style={styles.sendCommentText}>
+                            {postingCommentId === moment.id ? "发送中" : "发送"}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
@@ -730,18 +764,18 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
+  moreButton: {
+    minWidth: 32,
+    minHeight: 28,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+
   commentsBox: {
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(120,120,128,0.12)",
-  },
-
-  noComments: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: "#B1ACA7",
-    marginBottom: 10,
   },
 
   commentRow: {
