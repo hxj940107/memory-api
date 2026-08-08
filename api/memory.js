@@ -159,6 +159,18 @@ function buildWeMemoryResponse(memories, source = "ombre") {
   }
 }
 
+function normalizeMomentComment(comment) {
+  return {
+    id: comment.id,
+    momentId: comment.moment_id,
+    authorType: comment.author_type || "user",
+    authorName: comment.author_name || (comment.author_type === "xiaoc" ? "小C" : "小天使"),
+    content: comment.content || "",
+    parentId: comment.parent_id || null,
+    createdAt: comment.created_at,
+  }
+}
+
 export default async function handler(req, res) {
   try {
 
@@ -416,6 +428,27 @@ export default async function handler(req, res) {
           })
         }
 
+        const momentIds = (data || []).map((item) => item.id)
+        const commentCounts = {}
+
+        if (momentIds.length > 0) {
+          const { data: comments, error: commentsError } = await supabase
+            .from("moment_comments")
+            .select("moment_id")
+            .eq("user_id", user_id)
+            .in("moment_id", momentIds)
+
+          if (commentsError && commentsError.code !== "42P01") {
+            return res.status(500).json({
+              error: commentsError.message
+            })
+          }
+
+          for (const comment of comments || []) {
+            commentCounts[comment.moment_id] = (commentCounts[comment.moment_id] || 0) + 1
+          }
+        }
+
         return res.status(200).json(
           (data || []).map((item) => ({
             id: item.id,
@@ -423,6 +456,7 @@ export default async function handler(req, res) {
             text: item.text || "",
             image: item.image_key || null,
             likes: Number(item.likes || 0),
+            commentsCount: commentCounts[item.id] || 0,
             createdAt: item.created_at
           }))
         )
@@ -463,6 +497,106 @@ export default async function handler(req, res) {
 
       return res.status(405).json({
         error: "Only GET, POST or DELETE allowed for moments"
+      })
+    }
+
+    if (type === "moment_comments") {
+      if (req.method === "GET") {
+        const moment_id = req.query.moment_id
+
+        if (!moment_id) {
+          return res.status(400).json({
+            error: "moment_id required"
+          })
+        }
+
+        const { data, error } = await supabase
+          .from("moment_comments")
+          .select("id,moment_id,author_type,author_name,content,parent_id,created_at")
+          .eq("user_id", user_id)
+          .eq("moment_id", moment_id)
+          .order("created_at", { ascending: true })
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message
+          })
+        }
+
+        return res.status(200).json((data || []).map(normalizeMomentComment))
+      }
+
+      if (req.method === "POST") {
+        const moment_id = req.body.moment_id
+        const content = String(req.body.content || "").trim()
+        const author_type = req.body.author_type === "xiaoc" ? "xiaoc" : "user"
+        const author_name =
+          String(req.body.author_name || "").trim() ||
+          (author_type === "xiaoc" ? "小C" : "小天使")
+
+        if (!moment_id) {
+          return res.status(400).json({
+            error: "moment_id required"
+          })
+        }
+
+        if (!content) {
+          return res.status(400).json({
+            error: "content required"
+          })
+        }
+
+        const { data, error } = await supabase
+          .from("moment_comments")
+          .insert({
+            user_id,
+            moment_id,
+            author_type,
+            author_name,
+            content,
+            parent_id: req.body.parent_id || null
+          })
+          .select()
+          .single()
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message
+          })
+        }
+
+        return res.status(200).json(normalizeMomentComment(data))
+      }
+
+      if (req.method === "DELETE") {
+        const id = req.body.id
+
+        if (!id) {
+          return res.status(400).json({
+            error: "id required"
+          })
+        }
+
+        const { error } = await supabase
+          .from("moment_comments")
+          .delete()
+          .eq("user_id", user_id)
+          .eq("id", id)
+          .eq("author_type", "user")
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message
+          })
+        }
+
+        return res.status(200).json({
+          success: true
+        })
+      }
+
+      return res.status(405).json({
+        error: "Only GET, POST or DELETE allowed for moment_comments"
       })
     }
 
