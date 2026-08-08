@@ -10,6 +10,7 @@ import {
 
 import { useEffect, useState, useRef } from 'react';
 import { router } from 'expo-router';
+import { Image } from 'expo-image';
 
 import {
   DEFAULT_ACCOUNT_NAME,
@@ -33,6 +34,14 @@ export default function Index() {
   const welcomeCTranslate = useRef(new Animated.Value(8)).current;
   const welcomeTextOpacity = useRef(new Animated.Value(0)).current;
   const welcomeTextTranslate = useRef(new Animated.Value(8)).current;
+
+  const XiaoCMark = () => (
+    <Image
+      source={require("../../assets/xiaoc-crescent.svg")}
+      style={styles.crescentMark}
+      contentFit="contain"
+    />
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -155,6 +164,7 @@ export default function Index() {
         >
 
             <View style={styles.logo}>
+              <XiaoCMark />
             </View>
 
 
@@ -205,6 +215,7 @@ export default function Index() {
                 },
               ]}
             >
+              <XiaoCMark />
             </Animated.View>
 
             <Animated.View
@@ -291,6 +302,10 @@ const styles = StyleSheet.create({
     marginBottom:96,
   },
 
+  crescentMark:{
+    width:44,
+    height:44,
+  },
 
   hint:{
     marginTop:18,
