@@ -66,6 +66,12 @@ const momentImages = {
   night: require("../../assets/moments-night.svg"),
 };
 
+const momentImageRatios: Record<NonNullable<Moment["image"]>, number> = {
+  sunset: 16 / 9,
+  notebook: 16 / 9,
+  night: 16 / 9,
+};
+
 const profileCoverImage = require("../../assets/moments-cover.svg");
 
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
@@ -611,17 +617,52 @@ export default function MomentsScreen() {
     );
   };
 
-  const renderImage = (image?: Moment["image"]) => {
+  const getMomentImages = (image?: Moment["image"]) => {
     if (!image) {
+      return [];
+    }
+
+    return [
+      {
+        id: image,
+        source: momentImages[image],
+        aspectRatio: momentImageRatios[image],
+      },
+    ];
+  };
+
+  const renderImages = (image?: Moment["image"]) => {
+    const images = getMomentImages(image);
+
+    if (images.length === 0) {
+      return null;
+    }
+
+    if (images.length > 1) {
+      return (
+        <View style={styles.photoGrid}>
+          {images.slice(0, 9).map((item) => (
+            <Image
+              key={item.id}
+              source={item.source}
+              style={styles.photoGridItem}
+              contentFit="cover"
+            />
+          ))}
+        </View>
+      );
+    }
+
+    const item = images[0];
+
+    if (!item) {
       return null;
     }
 
     return (
-      <Image
-        source={momentImages[image]}
-        style={styles.photo}
-        contentFit="cover"
-      />
+      <View style={[styles.singlePhotoFrame, { aspectRatio: item.aspectRatio }]}>
+        <Image source={item.source} style={styles.singlePhoto} contentFit="contain" />
+      </View>
     );
   };
 
@@ -715,7 +756,7 @@ export default function MomentsScreen() {
 
                 <Text style={styles.text}>{moment.text}</Text>
 
-                {renderImage(moment.image)}
+                {renderImages(moment.image)}
 
                 <View style={styles.footer}>
                   <View style={styles.reactions}>
@@ -1095,11 +1136,30 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  photo: {
-    height: 132,
+  singlePhotoFrame: {
+    width: "100%",
+    backgroundColor: "#F7F7F7",
     borderRadius: 7,
     overflow: "hidden",
     marginBottom: 13,
+  },
+
+  singlePhoto: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+    marginBottom: 13,
+  },
+
+  photoGridItem: {
+    width: 82,
+    height: 82,
+    borderRadius: 4,
+    backgroundColor: "#F7F7F7",
   },
 
   footer: {
