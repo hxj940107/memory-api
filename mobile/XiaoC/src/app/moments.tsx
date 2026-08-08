@@ -1,8 +1,9 @@
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -69,6 +70,7 @@ const profileCoverImage = require("../../assets/moments-cover.svg");
 
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
 const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
+const MOMENTS_COVER_URI_KEY = "xiaoc_moments_cover_uri_v1";
 
 export default function MomentsScreen() {
   const scrollRef = useRef<ScrollView>(null);
@@ -78,16 +80,14 @@ export default function MomentsScreen() {
     avatar: MomentAvatarId;
     uri: string | null;
   }>({ avatar: DEFAULT_USER_MOMENT_AVATAR, uri: null });
-  const [profileCoverUri] = useState<string | null>(null);
+  const [profileCoverUri, setProfileCoverUri] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [commentsByMomentId, setCommentsByMomentId] = useState<Record<string, MomentComment[]>>({});
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [postingCommentId, setPostingCommentId] = useState<string | null>(null);
-  const [creatingMoment, setCreatingMoment] = useState(false);
   const [likedMomentIds, setLikedMomentIds] = useState<Record<string, boolean>>({});
   const [actionMenuMomentId, setActionMenuMomentId] = useState<string | null>(null);
-  const [focusedCommentMomentId, setFocusedCommentMomentId] = useState<string | null>(null);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -209,6 +209,16 @@ export default function MomentsScreen() {
       .catch((error) => {
         console.log("Liked moments load failed:", error);
       });
+
+    AsyncStorage.getItem(MOMENTS_COVER_URI_KEY)
+      .then((uri) => {
+        if (uri) {
+          setProfileCoverUri(uri);
+        }
+      })
+      .catch((error) => {
+        console.log("Moment cover load failed:", error);
+      });
   }, []);
 
   const refresh = async () => {
@@ -222,28 +232,33 @@ export default function MomentsScreen() {
     }
   };
 
-  const createTestMoment = async () => {
-    if (creatingMoment) return;
-
-    setCreatingMoment(true);
+  const pickProfileCover = async () => {
     try {
-      await apiJson("/api/memory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "moments",
-          user_id: APP_USER_ID,
-          text: "我悄悄发一条测试动态。等自动触发稳定以后，这个按钮就可以退场了。",
-          image: null,
-          likes: 0,
-        }),
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert("需要相册权限", "允许访问相册后，才能更换朋友圈封面。");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.9,
+        base64: false,
       });
 
-      await loadMoments();
+      if (result.canceled || !result.assets[0]?.uri) {
+        return;
+      }
+
+      const uri = result.assets[0].uri;
+
+      setProfileCoverUri(uri);
+      await AsyncStorage.setItem(MOMENTS_COVER_URI_KEY, uri);
     } catch (error) {
-      Alert.alert("发布失败", error instanceof Error ? error.message : "请稍后再试。");
-    } finally {
-      setCreatingMoment(false);
+      Alert.alert("更换失败", error instanceof Error ? error.message : "请稍后再试。");
     }
   };
 
@@ -391,15 +406,7 @@ export default function MomentsScreen() {
     }
   };
 
-  const scrollCommentInputIntoView = () => {
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 260);
-
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 520);
-  };
+  const scrollCommentInputIntoView = () => {};
 
   const confirmDeleteComment = (moment: Moment, comment: MomentComment) => {
     if (comment.authorType !== "user") {
@@ -619,10 +626,7 @@ export default function MomentsScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.screen}>
       <View style={styles.nav}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <SymbolView
@@ -636,14 +640,13 @@ export default function MomentsScreen() {
         <Text style={styles.title}>朋友圈</Text>
 
         <Pressable
-          disabled={creatingMoment}
-          onPress={createTestMoment}
+          onPress={pickProfileCover}
           style={({ pressed }) => [styles.camera, pressed && styles.pressed]}
         >
           <SymbolView
             name="camera"
             size={24}
-            tintColor={creatingMoment ? "rgba(255,255,255,0.52)" : "#FFFFFF"}
+            tintColor="#FFFFFF"
             weight="light"
           />
         </Pressable>
@@ -652,10 +655,7 @@ export default function MomentsScreen() {
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={[
-          styles.content,
-          focusedCommentMomentId && styles.contentWithFocusedComment,
-        ]}
+        contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         onScrollBeginDrag={Keyboard.dismiss}
@@ -665,11 +665,13 @@ export default function MomentsScreen() {
         }
       >
         <View style={styles.profileHeader}>
-          <Image
-            source={profileCoverUri ? { uri: profileCoverUri } : profileCoverImage}
-            style={styles.profileCover}
-            contentFit="cover"
-          />
+          <Pressable onPress={pickProfileCover} style={styles.profileCoverButton}>
+            <Image
+              source={profileCoverUri ? { uri: profileCoverUri } : profileCoverImage}
+              style={styles.profileCover}
+              contentFit="cover"
+            />
+          </Pressable>
           <View style={styles.profileInfoRow}>
             <Text style={styles.profileName}>{accountName}</Text>
             <View style={styles.profileAvatarWrap}>{renderProfileAvatar()}</View>
@@ -871,11 +873,6 @@ export default function MomentsScreen() {
                       placeholder="写评论…"
                       placeholderTextColor="#B1ACA7"
                       multiline
-                      onFocus={() => {
-                        setFocusedCommentMomentId(moment.id);
-                        scrollCommentInputIntoView();
-                      }}
-                      onBlur={() => setFocusedCommentMomentId(null)}
                     />
                     {String(commentDrafts[moment.id] || "").trim() && (
                       <Pressable
@@ -901,7 +898,7 @@ export default function MomentsScreen() {
 
         <Pressable style={styles.keyboardDismissArea} onPress={Keyboard.dismiss} />
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -965,25 +962,26 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
   },
 
-  contentWithFocusedComment: {
-    paddingBottom: 360,
+  profileHeader: {
+    height: 430,
+    marginBottom: 30,
+    backgroundColor: "#FFFFFF",
   },
 
-  profileHeader: {
-    height: 428,
-    marginBottom: 24,
-    backgroundColor: "#FFFFFF",
+  profileCoverButton: {
+    width: "100%",
+    height: 360,
   },
 
   profileCover: {
     width: "100%",
-    height: 360,
+    height: "100%",
     backgroundColor: "#E8E6E1",
   },
 
   profileInfoRow: {
     position: "absolute",
-    top: 312,
+    top: 292,
     left: 20,
     right: 20,
     height: 96,
@@ -995,7 +993,7 @@ const styles = StyleSheet.create({
   profileName: {
     maxWidth: "62%",
     marginRight: 14,
-    marginBottom: 32,
+    marginBottom: 44,
     fontSize: 20,
     lineHeight: 26,
     fontWeight: "600",
