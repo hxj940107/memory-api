@@ -14,10 +14,16 @@ import { API_BASE_URL, APP_USER_ID, apiJson } from "../config/api";
 import {
   AccountSettings,
   DEFAULT_ACCOUNT_NAME,
+  DEFAULT_USER_MOMENT_AVATAR,
+  DEFAULT_XIAOC_MOMENT_AVATAR,
+  MOMENT_AVATAR_PRESETS,
+  MomentAvatarId,
   clearAccountPassword,
   getAccountSettings,
   saveAccountDisplayName,
   saveAccountPassword,
+  saveUserMomentAvatar,
+  saveXiaoCMomentAvatar,
 } from "../lib/accountSettings";
 import { CostSummary, getCostSummary } from "../lib/costState";
 import {
@@ -75,6 +81,9 @@ const getApiHost = () => {
 };
 
 const getShortModelName = (modelId: string) => findChatModel(modelId).name;
+
+const getMomentAvatarName = (avatar: MomentAvatarId) =>
+  MOMENT_AVATAR_PRESETS.find((preset) => preset.id === avatar)?.name || "默认";
 
 function SectionCard({
   title,
@@ -161,6 +170,8 @@ export default function SettingsScreen() {
     displayName: DEFAULT_ACCOUNT_NAME,
     hasPassword: false,
     faceIdEnabled: false,
+    userMomentAvatar: DEFAULT_USER_MOMENT_AVATAR,
+    xiaocMomentAvatar: DEFAULT_XIAOC_MOMENT_AVATAR,
   });
   const [expandedSections, setExpandedSections] = useState({
     model: false,
@@ -305,6 +316,40 @@ export default function SettingsScreen() {
     );
   };
 
+  const chooseMomentAvatar = (target: "user" | "xiaoc") => {
+    const title = target === "user" ? "我的朋友圈头像" : "小C朋友圈头像";
+
+    Alert.alert(
+      title,
+      "先选一个安静一点的预设头像。",
+      [
+        {
+          text: "取消",
+          style: "cancel",
+        },
+        ...MOMENT_AVATAR_PRESETS.map((preset) => ({
+          text: preset.name,
+          onPress: async () => {
+            if (target === "user") {
+              const userMomentAvatar = await saveUserMomentAvatar(preset.id);
+              setAccount((prev) => ({
+                ...prev,
+                userMomentAvatar,
+              }));
+              return;
+            }
+
+            const xiaocMomentAvatar = await saveXiaoCMomentAvatar(preset.id);
+            setAccount((prev) => ({
+              ...prev,
+              xiaocMomentAvatar,
+            }));
+          },
+        })),
+      ],
+    );
+  };
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -411,6 +456,16 @@ export default function SettingsScreen() {
             label="Face ID"
             value={account.faceIdEnabled ? "已开启" : "未接入"}
             onPress={showFaceIdInfo}
+          />
+          <InfoRow
+            label="我的朋友圈头像"
+            value={getMomentAvatarName(account.userMomentAvatar)}
+            onPress={() => chooseMomentAvatar("user")}
+          />
+          <InfoRow
+            label="小C朋友圈头像"
+            value={getMomentAvatarName(account.xiaocMomentAvatar)}
+            onPress={() => chooseMomentAvatar("xiaoc")}
           />
           <InfoRow label="当前 API" value={getApiHost()} />
         </SectionCard>
