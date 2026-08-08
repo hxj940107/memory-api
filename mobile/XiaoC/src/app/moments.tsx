@@ -1,9 +1,10 @@
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { apiJson, APP_USER_ID } from "../config/api";
 import {
@@ -62,7 +63,10 @@ const momentImages = {
   night: require("../../assets/moments-night.svg"),
 };
 
+const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
+
 export default function MomentsScreen() {
+  const scrollRef = useRef<ScrollView>(null);
   const [moments, setMoments] = useState<Moment[]>([]);
   const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,6 +74,10 @@ export default function MomentsScreen() {
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [postingCommentId, setPostingCommentId] = useState<string | null>(null);
+  const [creatingMoment, setCreatingMoment] = useState(false);
+  const [likedMomentIds, setLikedMomentIds] = useState<Record<string, boolean>>({});
+  const [actionMenuMomentId, setActionMenuMomentId] = useState<string | null>(null);
+  const [focusedCommentMomentId, setFocusedCommentMomentId] = useState<string | null>(null);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -160,6 +168,20 @@ export default function MomentsScreen() {
     loadMoments().catch((error) => {
       console.log("Moments load failed:", error);
     });
+
+    AsyncStorage.getItem(LIKED_MOMENTS_KEY)
+      .then((raw) => {
+        const ids = raw ? JSON.parse(raw) : [];
+
+        if (Array.isArray(ids)) {
+          setLikedMomentIds(
+            Object.fromEntries(ids.filter((id) => typeof id === "string").map((id) => [id, true])),
+          );
+        }
+      })
+      .catch((error) => {
+        console.log("Liked moments load failed:", error);
+      });
   }, []);
 
   const refresh = async () => {
@@ -173,6 +195,31 @@ export default function MomentsScreen() {
     }
   };
 
+  const createTestMoment = async () => {
+    if (creatingMoment) return;
+
+    setCreatingMoment(true);
+    try {
+      await apiJson("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "moments",
+          user_id: APP_USER_ID,
+          text: "我悄悄发一条测试动态。等自动触发稳定以后，这个按钮就可以退场了。",
+          image: null,
+          likes: 0,
+        }),
+      });
+
+      await loadMoments();
+    } catch (error) {
+      Alert.alert("发布失败", error instanceof Error ? error.message : "请稍后再试。");
+    } finally {
+      setCreatingMoment(false);
+    }
+  };
+
   const loadComments = async (momentId: string) => {
     const comments = await fetchComments(momentId);
 
@@ -182,10 +229,64 @@ export default function MomentsScreen() {
     }));
   };
 
-  const toggleCommentComposer = async (moment: Moment) => {
+  const persistLikedMoments = async (items: Record<string, boolean>) => {
+    await AsyncStorage.setItem(
+      LIKED_MOMENTS_KEY,
+      JSON.stringify(Object.keys(items).filter((id) => items[id])),
+    );
+  };
+
+  const syncMomentLikes = async (momentId: string, likes: number) => {
+    await apiJson("/api/memory", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "moments",
+        user_id: APP_USER_ID,
+        id: momentId,
+        likes,
+      }),
+    });
+  };
+
+  const toggleLike = async (moment: Moment) => {
+    const wasLiked = Boolean(likedMomentIds[moment.id]);
+    const nextLikes = Math.max(0, moment.likes + (wasLiked ? -1 : 1));
+    const previousLikedMomentIds = likedMomentIds;
+    const previousMoments = moments;
+    const nextLikedMomentIds = { ...likedMomentIds };
+
+    if (wasLiked) {
+      delete nextLikedMomentIds[moment.id];
+    } else {
+      nextLikedMomentIds[moment.id] = true;
+    }
+
+    setActionMenuMomentId(null);
+    setLikedMomentIds(nextLikedMomentIds);
+    setMoments((items) =>
+      items.map((item) =>
+        item.id === moment.id
+          ? { ...item, likes: nextLikes }
+          : item,
+      ),
+    );
+
+    try {
+      await persistLikedMoments(nextLikedMomentIds);
+      await syncMomentLikes(moment.id, nextLikes);
+    } catch (error) {
+      setLikedMomentIds(previousLikedMomentIds);
+      setMoments(previousMoments);
+      Alert.alert("点赞失败", error instanceof Error ? error.message : "请稍后再试。");
+    }
+  };
+
+  const openCommentComposer = async (moment: Moment) => {
+    setActionMenuMomentId(null);
     setExpandedComments((items) => ({
       ...items,
-      [moment.id]: !items[moment.id],
+      [moment.id]: true,
     }));
 
     if (!commentsByMomentId[moment.id]) {
@@ -196,6 +297,20 @@ export default function MomentsScreen() {
         Alert.alert("评论加载失败", error instanceof Error ? error.message : "请稍后再试。");
       }
     }
+
+    scrollCommentInputIntoView();
+  };
+
+  const toggleCommentComposer = async (moment: Moment) => {
+    if (expandedComments[moment.id]) {
+      setExpandedComments((items) => ({
+        ...items,
+        [moment.id]: false,
+      }));
+      return;
+    }
+
+    await openCommentComposer(moment);
   };
 
   const updateCommentCount = (momentId: string, delta: number) => {
@@ -244,6 +359,16 @@ export default function MomentsScreen() {
     } finally {
       setPostingCommentId(null);
     }
+  };
+
+  const scrollCommentInputIntoView = () => {
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 260);
+
+    setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 520);
   };
 
   const confirmDeleteComment = (moment: Moment, comment: MomentComment) => {
@@ -420,7 +545,10 @@ export default function MomentsScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <View style={styles.nav}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <SymbolView
@@ -433,19 +561,28 @@ export default function MomentsScreen() {
 
         <Text style={styles.title}>朋友圈</Text>
 
-        <Pressable style={({ pressed }) => [styles.camera, pressed && styles.pressed]}>
+        <Pressable
+          disabled={creatingMoment}
+          onPress={createTestMoment}
+          style={({ pressed }) => [styles.camera, pressed && styles.pressed]}
+        >
           <SymbolView
             name="camera"
             size={24}
-            tintColor="#3C3C43"
+            tintColor={creatingMoment ? "#B8B8BE" : "#3C3C43"}
             weight="light"
           />
         </Pressable>
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          focusedCommentMomentId && styles.contentWithFocusedComment,
+        ]}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#A6A6AA" />
@@ -461,7 +598,9 @@ export default function MomentsScreen() {
           const comments = commentsByMomentId[moment.id] || [];
           const commentsCount = commentsByMomentId[moment.id]?.length ?? moment.commentsCount;
           const composerVisible = Boolean(expandedComments[moment.id]);
-          const shouldShowComments = comments.length > 0 || composerVisible;
+          const likedByMe = Boolean(likedMomentIds[moment.id]);
+          const shouldShowComments = likedByMe || comments.length > 0 || composerVisible;
+          const actionMenuVisible = actionMenuMomentId === moment.id;
 
           return (
             <Pressable
@@ -489,8 +628,8 @@ export default function MomentsScreen() {
                     <SymbolView
                       name="heart"
                       size={18}
-                      tintColor="#8C8C91"
-                      weight="thin"
+                      tintColor={likedByMe ? "#E85D5D" : "#8C8C91"}
+                      weight={likedByMe ? "regular" : "thin"}
                       style={styles.actionIcon}
                     />
                     <Text style={styles.likeCount}>{moment.likes}</Text>
@@ -519,19 +658,72 @@ export default function MomentsScreen() {
                       styles.moreButton,
                       pressed && styles.pressed,
                     ]}
-                    onPress={() => toggleCommentComposer(moment)}
+                    onPress={() =>
+                      setActionMenuMomentId((id) => (id === moment.id ? null : moment.id))
+                    }
                   >
                     <SymbolView
                       name="ellipsis"
                       size={15}
-                      tintColor={composerVisible ? "#47658F" : "#A6A6AA"}
+                      tintColor={actionMenuVisible ? "#47658F" : "#A6A6AA"}
                       weight="light"
                     />
                   </Pressable>
                 </View>
 
+                {actionMenuVisible && (
+                  <View style={styles.actionMenu}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.actionMenuItem,
+                        pressed && styles.actionMenuPressed,
+                      ]}
+                      onPress={() => toggleLike(moment)}
+                    >
+                      <SymbolView
+                        name="heart"
+                        size={15}
+                        tintColor="#F4F4F6"
+                        weight="regular"
+                      />
+                      <Text style={styles.actionMenuText}>{likedByMe ? "取消" : "赞"}</Text>
+                    </Pressable>
+
+                    <View style={styles.actionMenuDivider} />
+
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.actionMenuItem,
+                        pressed && styles.actionMenuPressed,
+                      ]}
+                      onPress={() => openCommentComposer(moment)}
+                    >
+                      <SymbolView
+                        name="message"
+                        size={15}
+                        tintColor="#F4F4F6"
+                        weight="regular"
+                      />
+                      <Text style={styles.actionMenuText}>评论</Text>
+                    </Pressable>
+                  </View>
+                )}
+
                 {shouldShowComments && (
                   <View style={styles.commentsBox}>
+                    {likedByMe && (
+                      <View style={styles.likedByRow}>
+                        <SymbolView
+                          name="heart.fill"
+                          size={13}
+                          tintColor="#E85D5D"
+                          weight="regular"
+                          style={styles.likedByIcon}
+                        />
+                        <Text style={styles.likedByText}>{accountName}</Text>
+                      </View>
+                    )}
+
                     {comments.map((comment) => (
                       <Pressable
                         key={comment.id}
@@ -541,17 +733,19 @@ export default function MomentsScreen() {
                         ]}
                         onLongPress={() => confirmDeleteComment(moment, comment)}
                       >
-                        <Text
-                          style={[
-                            styles.commentAuthor,
-                            comment.authorType === "xiaoc"
-                              ? styles.xiaocCommentAuthor
-                              : styles.userCommentAuthor,
-                          ]}
-                        >
-                          {comment.authorName}
+                        <Text style={styles.commentLine}>
+                          <Text
+                            style={[
+                              styles.commentAuthor,
+                              comment.authorType === "xiaoc"
+                                ? styles.xiaocCommentAuthor
+                                : styles.userCommentAuthor,
+                            ]}
+                          >
+                            {comment.authorName}：
+                          </Text>
+                          <Text style={styles.commentContent}>{comment.content}</Text>
                         </Text>
-                        <Text style={styles.commentContent}>{comment.content}</Text>
                       </Pressable>
                     ))}
 
@@ -569,25 +763,27 @@ export default function MomentsScreen() {
                           placeholder="写评论…"
                           placeholderTextColor="#B1ACA7"
                           multiline
+                          onFocus={() => {
+                            setFocusedCommentMomentId(moment.id);
+                            scrollCommentInputIntoView();
+                          }}
+                          onBlur={() => setFocusedCommentMomentId(null)}
                         />
-                        <Pressable
-                          style={({ pressed }) => [
-                            styles.sendCommentButton,
-                            pressed && styles.pressed,
-                            (!String(commentDrafts[moment.id] || "").trim() ||
-                              postingCommentId === moment.id) &&
-                              styles.sendCommentDisabled,
-                          ]}
-                          disabled={
-                            !String(commentDrafts[moment.id] || "").trim() ||
-                            postingCommentId === moment.id
-                          }
-                          onPress={() => postComment(moment)}
-                        >
-                          <Text style={styles.sendCommentText}>
-                            {postingCommentId === moment.id ? "发送中" : "发送"}
-                          </Text>
-                        </Pressable>
+                        {String(commentDrafts[moment.id] || "").trim() && (
+                          <Pressable
+                            style={({ pressed }) => [
+                              styles.sendCommentButton,
+                              pressed && styles.pressed,
+                              postingCommentId === moment.id && styles.sendCommentDisabled,
+                            ]}
+                            disabled={postingCommentId === moment.id}
+                            onPress={() => postComment(moment)}
+                          >
+                            <Text style={styles.sendCommentText}>
+                              {postingCommentId === moment.id ? "发送中" : "发送"}
+                            </Text>
+                          </Pressable>
+                        )}
                       </View>
                     )}
                   </View>
@@ -597,7 +793,7 @@ export default function MomentsScreen() {
           );
         })}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -656,6 +852,10 @@ const styles = StyleSheet.create({
 
   content: {
     paddingBottom: 34,
+  },
+
+  contentWithFocusedComment: {
+    paddingBottom: 360,
   },
 
   empty: {
@@ -771,67 +971,121 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
+  actionMenu: {
+    alignSelf: "flex-end",
+    marginTop: 4,
+    marginBottom: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 7,
+    backgroundColor: "rgba(45,45,48,0.94)",
+    overflow: "hidden",
+  },
+
+  actionMenuItem: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+
+  actionMenuPressed: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+
+  actionMenuDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 18,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+
+  actionMenuText: {
+    fontSize: 14,
+    color: "#F4F4F6",
+  },
+
   commentsBox: {
-    marginTop: 12,
-    paddingTop: 10,
+    marginTop: 8,
+    marginLeft: 8,
+    paddingTop: 7,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(120,120,128,0.12)",
+    borderTopColor: "rgba(120,120,128,0.09)",
+  },
+
+  likedByRow: {
+    paddingVertical: 4,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  likedByIcon: {
+    marginRight: 5,
+  },
+
+  likedByText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: "#47658F",
   },
 
   commentRow: {
-    paddingVertical: 5,
+    paddingVertical: 4,
   },
 
   commentPressed: {
     opacity: 0.55,
   },
 
+  commentLine: {
+    fontSize: 16,
+    lineHeight: 23,
+    color: "#3A3A3C",
+  },
+
   commentAuthor: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 1,
+    fontSize: 15,
+    lineHeight: 23,
+    marginBottom: 0,
   },
 
   xiaocCommentAuthor: {
-    color: "#47658F",
+    color: "#7A7671",
   },
 
   userCommentAuthor: {
-    color: "#8E7F73",
+    color: "#7A7671",
   },
 
   commentContent: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 16,
+    lineHeight: 23,
     color: "#3A3A3C",
   },
 
   commentInputRow: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: "row",
-    alignItems: "flex-end",
-    borderRadius: 16,
-    backgroundColor: "rgba(120,120,128,0.08)",
-    paddingLeft: 12,
-    paddingRight: 6,
-    paddingVertical: 6,
+    alignItems: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(120,120,128,0.18)",
+    paddingVertical: 4,
   },
 
   commentInput: {
     flex: 1,
     minHeight: 28,
-    maxHeight: 88,
-    paddingTop: 4,
-    paddingBottom: 4,
-    fontSize: 14,
-    lineHeight: 20,
+    maxHeight: 76,
+    paddingTop: 2,
+    paddingBottom: 2,
+    fontSize: 16,
+    lineHeight: 23,
     color: "#2F2F31",
   },
 
   sendCommentButton: {
-    minHeight: 28,
-    paddingHorizontal: 10,
-    borderRadius: 14,
+    minHeight: 24,
+    paddingLeft: 12,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -841,7 +1095,7 @@ const styles = StyleSheet.create({
   },
 
   sendCommentText: {
-    fontSize: 13,
+    fontSize: 15,
     color: "#47658F",
   },
 });
