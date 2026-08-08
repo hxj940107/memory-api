@@ -6,12 +6,19 @@ import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } 
 import { useEffect, useState } from "react";
 
 import { apiJson, APP_USER_ID } from "../config/api";
+import {
+  DEFAULT_ACCOUNT_NAME,
+  DEFAULT_XIAOC_MOMENT_AVATAR,
+  MOMENT_AVATAR_PRESETS,
+  MomentAvatarId,
+  getAccountSettings,
+} from "../lib/accountSettings";
 
 type Moment = {
   id: string;
   createdAt: string;
   author: string;
-  avatar: "moon" | "sparkle";
+  avatar: MomentAvatarId;
   likes: number;
   image?: "sunset" | "notebook" | "night" | null;
   text: string;
@@ -34,28 +41,40 @@ const momentImages = {
 
 export default function MomentsScreen() {
   const [moments, setMoments] = useState<Moment[]>([]);
+  const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadMoments = async () => {
-    const data = await apiJson<MomentsResponse>("/api/memory", {
-      query: {
-        type: "moments",
-        user_id: APP_USER_ID,
-      },
-    });
+    const [data, account] = await Promise.all([
+      apiJson<MomentsResponse>("/api/memory", {
+        query: {
+          type: "moments",
+          user_id: APP_USER_ID,
+        },
+      }),
+      getAccountSettings(),
+    ]);
+
+    setAccountName(account.displayName);
 
     setMoments(
       data
         .filter((item) => item.id && item.text)
-        .map((item) => ({
-          id: item.id,
-          author: item.author || "小C",
-          text: item.text || "",
-          image: item.image || null,
-          likes: Number(item.likes || 0),
-          createdAt: item.createdAt || new Date().toISOString(),
-          avatar: item.author === "小天使" ? "sparkle" : "moon",
-        })),
+        .map((item) => {
+          const isXiaoC = !item.author || item.author === "小C";
+
+          return {
+            id: item.id,
+            author: isXiaoC ? "小C" : item.author || account.displayName,
+            text: item.text || "",
+            image: item.image || null,
+            likes: Number(item.likes || 0),
+            createdAt: item.createdAt || new Date().toISOString(),
+            avatar: isXiaoC
+              ? account.xiaocMomentAvatar
+              : account.userMomentAvatar,
+          };
+        }),
     );
   };
 
@@ -141,18 +160,45 @@ export default function MomentsScreen() {
     });
   };
 
-  const renderAvatar = (moment: Moment) => (
-    <View
-      style={[
-        styles.avatar,
-        moment.avatar === "sparkle" ? styles.sparkleAvatar : styles.moonAvatar,
-      ]}
-    >
-      <Text style={styles.avatarText}>
-        {moment.avatar === "sparkle" ? "✦" : "☾"}
-      </Text>
-    </View>
-  );
+  const getAccountInitial = (author: string) => {
+    const name = author === "小C" ? "C" : accountName;
+    return name.trim().slice(0, 1) || "我";
+  };
+
+  const renderAvatar = (moment: Moment) => {
+    const preset =
+      MOMENT_AVATAR_PRESETS.find((item) => item.id === moment.avatar) ||
+      MOMENT_AVATAR_PRESETS.find(
+        (item) => item.id === DEFAULT_XIAOC_MOMENT_AVATAR,
+      ) ||
+      MOMENT_AVATAR_PRESETS[0];
+    const symbol = preset.useInitial
+      ? getAccountInitial(moment.author)
+      : preset.symbol;
+
+    return (
+      <View
+        style={[
+          styles.avatar,
+          {
+            backgroundColor: preset.backgroundColor,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.avatarText,
+            {
+              color: preset.color,
+              fontSize: preset.useInitial ? 18 : 24,
+            },
+          ]}
+        >
+          {symbol}
+        </Text>
+      </View>
+    );
+  };
 
   const renderImage = (image?: Moment["image"]) => {
     if (!image) {
@@ -348,14 +394,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
-  },
-
-  moonAvatar: {
-    backgroundColor: "#2B2E35",
-  },
-
-  sparkleAvatar: {
-    backgroundColor: "#B7A8EB",
   },
 
   avatarText: {
