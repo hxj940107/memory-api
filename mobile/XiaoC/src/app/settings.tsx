@@ -18,15 +18,11 @@ import {
   DEFAULT_ACCOUNT_NAME,
   DEFAULT_USER_MOMENT_AVATAR,
   DEFAULT_XIAOC_MOMENT_AVATAR,
-  MOMENT_AVATAR_PRESETS,
-  MomentAvatarId,
   clearAccountPassword,
   getAccountSettings,
   saveAccountDisplayName,
   saveAccountPassword,
-  saveUserMomentAvatar,
   saveUserMomentAvatarUri,
-  saveXiaoCMomentAvatar,
   saveXiaoCMomentAvatarUri,
 } from "../lib/accountSettings";
 import { CostSummary, getCostSummary } from "../lib/costState";
@@ -85,9 +81,6 @@ const getApiHost = () => {
 };
 
 const getShortModelName = (modelId: string) => findChatModel(modelId).name;
-
-const getMomentAvatarName = (avatar: MomentAvatarId) =>
-  MOMENT_AVATAR_PRESETS.find((preset) => preset.id === avatar)?.name || "默认";
 
 const MOMENT_AVATAR_DIR = `${FileSystem.documentDirectory || ""}moment-avatars/`;
 
@@ -396,7 +389,7 @@ export default function SettingsScreen() {
 
     Alert.alert(
       title,
-      "可以从相册选照片，也可以使用预设头像。",
+      "从相册里选一张照片作为朋友圈头像。",
       [
         {
           text: "取消",
@@ -406,25 +399,6 @@ export default function SettingsScreen() {
           text: "从相册选择",
           onPress: () => pickMomentAvatarPhoto(target),
         },
-        ...MOMENT_AVATAR_PRESETS.map((preset) => ({
-          text: preset.name,
-          onPress: async () => {
-            if (target === "user") {
-              const userMomentAvatar = await saveUserMomentAvatar(preset.id);
-              setAccount((prev) => ({
-                ...prev,
-                userMomentAvatar,
-              }));
-              return;
-            }
-
-            const xiaocMomentAvatar = await saveXiaoCMomentAvatar(preset.id);
-            setAccount((prev) => ({
-              ...prev,
-              xiaocMomentAvatar,
-            }));
-          },
-        })),
       ],
     );
   };
@@ -538,20 +512,12 @@ export default function SettingsScreen() {
           />
           <InfoRow
             label="我的朋友圈头像"
-            value={
-              account.userMomentAvatarUri
-                ? "相册照片"
-                : getMomentAvatarName(account.userMomentAvatar)
-            }
+            value={account.userMomentAvatarUri ? "相册照片" : "未选择"}
             onPress={() => chooseMomentAvatar("user")}
           />
           <InfoRow
             label="小C朋友圈头像"
-            value={
-              account.xiaocMomentAvatarUri
-                ? "相册照片"
-                : getMomentAvatarName(account.xiaocMomentAvatar)
-            }
+            value={account.xiaocMomentAvatarUri ? "相册照片" : "未选择"}
             onPress={() => chooseMomentAvatar("xiaoc")}
           />
           <InfoRow label="当前 API" value={getApiHost()} />
