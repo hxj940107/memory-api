@@ -6,6 +6,8 @@ export type AccountSettings = {
   faceIdEnabled: boolean;
   userMomentAvatar: MomentAvatarId;
   xiaocMomentAvatar: MomentAvatarId;
+  userMomentAvatarUri: string | null;
+  xiaocMomentAvatarUri: string | null;
 };
 
 const ACCOUNT_DISPLAY_NAME_KEY = "xiaoc:account_display_name";
@@ -13,6 +15,8 @@ const ACCOUNT_PASSWORD_KEY = "xiaoc:account_password";
 const ACCOUNT_FACE_ID_KEY = "xiaoc:account_face_id";
 const ACCOUNT_USER_MOMENT_AVATAR_KEY = "xiaoc:user_moment_avatar";
 const ACCOUNT_XIAOC_MOMENT_AVATAR_KEY = "xiaoc:xiaoc_moment_avatar";
+const ACCOUNT_USER_MOMENT_AVATAR_URI_KEY = "xiaoc:user_moment_avatar_uri";
+const ACCOUNT_XIAOC_MOMENT_AVATAR_URI_KEY = "xiaoc:xiaoc_moment_avatar_uri";
 
 export const DEFAULT_ACCOUNT_NAME = "小天使";
 
@@ -80,12 +84,16 @@ export async function getAccountSettings(): Promise<AccountSettings> {
     faceIdEnabled,
     userMomentAvatar,
     xiaocMomentAvatar,
+    userMomentAvatarUri,
+    xiaocMomentAvatarUri,
   ] = await Promise.all([
     AsyncStorage.getItem(ACCOUNT_DISPLAY_NAME_KEY),
     AsyncStorage.getItem(ACCOUNT_PASSWORD_KEY),
     AsyncStorage.getItem(ACCOUNT_FACE_ID_KEY),
     AsyncStorage.getItem(ACCOUNT_USER_MOMENT_AVATAR_KEY),
     AsyncStorage.getItem(ACCOUNT_XIAOC_MOMENT_AVATAR_KEY),
+    AsyncStorage.getItem(ACCOUNT_USER_MOMENT_AVATAR_URI_KEY),
+    AsyncStorage.getItem(ACCOUNT_XIAOC_MOMENT_AVATAR_URI_KEY),
   ]);
 
   return {
@@ -100,6 +108,8 @@ export async function getAccountSettings(): Promise<AccountSettings> {
       xiaocMomentAvatar,
       DEFAULT_XIAOC_MOMENT_AVATAR,
     ),
+    userMomentAvatarUri,
+    xiaocMomentAvatarUri,
   };
 }
 
@@ -136,10 +146,22 @@ export async function clearAccountPassword() {
 
 export async function saveUserMomentAvatar(avatar: MomentAvatarId) {
   await AsyncStorage.setItem(ACCOUNT_USER_MOMENT_AVATAR_KEY, avatar);
+  await AsyncStorage.removeItem(ACCOUNT_USER_MOMENT_AVATAR_URI_KEY);
   return avatar;
 }
 
 export async function saveXiaoCMomentAvatar(avatar: MomentAvatarId) {
   await AsyncStorage.setItem(ACCOUNT_XIAOC_MOMENT_AVATAR_KEY, avatar);
+  await AsyncStorage.removeItem(ACCOUNT_XIAOC_MOMENT_AVATAR_URI_KEY);
   return avatar;
+}
+
+export async function saveUserMomentAvatarUri(uri: string) {
+  await AsyncStorage.setItem(ACCOUNT_USER_MOMENT_AVATAR_URI_KEY, uri);
+  return uri;
+}
+
+export async function saveXiaoCMomentAvatarUri(uri: string) {
+  await AsyncStorage.setItem(ACCOUNT_XIAOC_MOMENT_AVATAR_URI_KEY, uri);
+  return uri;
 }

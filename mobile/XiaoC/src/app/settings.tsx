@@ -1,3 +1,5 @@
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import {
   Alert,
@@ -23,7 +25,9 @@ import {
   saveAccountDisplayName,
   saveAccountPassword,
   saveUserMomentAvatar,
+  saveUserMomentAvatarUri,
   saveXiaoCMomentAvatar,
+  saveXiaoCMomentAvatarUri,
 } from "../lib/accountSettings";
 import { CostSummary, getCostSummary } from "../lib/costState";
 import {
@@ -84,6 +88,27 @@ const getShortModelName = (modelId: string) => findChatModel(modelId).name;
 
 const getMomentAvatarName = (avatar: MomentAvatarId) =>
   MOMENT_AVATAR_PRESETS.find((preset) => preset.id === avatar)?.name || "默认";
+
+const MOMENT_AVATAR_DIR = `${FileSystem.documentDirectory || ""}moment-avatars/`;
+
+const copyMomentAvatarToAppStorage = async (
+  sourceUri: string,
+  target: "user" | "xiaoc",
+) => {
+  await FileSystem.makeDirectoryAsync(MOMENT_AVATAR_DIR, {
+    intermediates: true,
+  }).catch(() => {});
+
+  const extension = sourceUri.split(".").pop()?.split("?")[0] || "jpg";
+  const targetUri = `${MOMENT_AVATAR_DIR}${target}-${Date.now()}.${extension}`;
+
+  await FileSystem.copyAsync({
+    from: sourceUri,
+    to: targetUri,
+  });
+
+  return targetUri;
+};
 
 function SectionCard({
   title,
@@ -172,6 +197,8 @@ export default function SettingsScreen() {
     faceIdEnabled: false,
     userMomentAvatar: DEFAULT_USER_MOMENT_AVATAR,
     xiaocMomentAvatar: DEFAULT_XIAOC_MOMENT_AVATAR,
+    userMomentAvatarUri: null,
+    xiaocMomentAvatarUri: null,
   });
   const [expandedSections, setExpandedSections] = useState({
     model: false,
@@ -316,16 +343,68 @@ export default function SettingsScreen() {
     );
   };
 
+  const pickMomentAvatarPhoto = async (target: "user" | "xiaoc") => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert("需要相册权限", "允许访问相册后，才能选择朋友圈头像。");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+      base64: false,
+    });
+
+    if (result.canceled || !result.assets[0]?.uri) {
+      return;
+    }
+
+    try {
+      const avatarUri = await copyMomentAvatarToAppStorage(
+        result.assets[0].uri,
+        target,
+      );
+
+      if (target === "user") {
+        await saveUserMomentAvatarUri(avatarUri);
+        setAccount((prev) => ({
+          ...prev,
+          userMomentAvatarUri: avatarUri,
+        }));
+        return;
+      }
+
+      await saveXiaoCMomentAvatarUri(avatarUri);
+      setAccount((prev) => ({
+        ...prev,
+        xiaocMomentAvatarUri: avatarUri,
+      }));
+    } catch (error) {
+      Alert.alert(
+        "头像保存失败",
+        error instanceof Error ? error.message : "请稍后再试。",
+      );
+    }
+  };
+
   const chooseMomentAvatar = (target: "user" | "xiaoc") => {
     const title = target === "user" ? "我的朋友圈头像" : "小C朋友圈头像";
 
     Alert.alert(
       title,
-      "先选一个安静一点的预设头像。",
+      "可以从相册选照片，也可以使用预设头像。",
       [
         {
           text: "取消",
           style: "cancel",
+        },
+        {
+          text: "从相册选择",
+          onPress: () => pickMomentAvatarPhoto(target),
         },
         ...MOMENT_AVATAR_PRESETS.map((preset) => ({
           text: preset.name,
@@ -459,12 +538,20 @@ export default function SettingsScreen() {
           />
           <InfoRow
             label="我的朋友圈头像"
-            value={getMomentAvatarName(account.userMomentAvatar)}
+            value={
+              account.userMomentAvatarUri
+                ? "相册照片"
+                : getMomentAvatarName(account.userMomentAvatar)
+            }
             onPress={() => chooseMomentAvatar("user")}
           />
           <InfoRow
             label="小C朋友圈头像"
-            value={getMomentAvatarName(account.xiaocMomentAvatar)}
+            value={
+              account.xiaocMomentAvatarUri
+                ? "相册照片"
+                : getMomentAvatarName(account.xiaocMomentAvatar)
+            }
             onPress={() => chooseMomentAvatar("xiaoc")}
           />
           <InfoRow label="当前 API" value={getApiHost()} />
