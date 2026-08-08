@@ -35,6 +35,7 @@ type MomentComment = {
   content: string;
   parentId: string | null;
   createdAt: string;
+  xiaocReply?: MomentComment | null;
 };
 
 type MomentsResponse = Array<{
@@ -347,13 +348,16 @@ export default function MomentsScreen() {
           content,
         }),
       });
+      const nextComments = comment.xiaocReply
+        ? [comment, comment.xiaocReply]
+        : [comment];
 
       setCommentsByMomentId((items) => ({
         ...items,
-        [moment.id]: [...(items[moment.id] || []), comment],
+        [moment.id]: [...(items[moment.id] || []), ...nextComments],
       }));
       setCommentDrafts((items) => ({ ...items, [moment.id]: "" }));
-      updateCommentCount(moment.id, 1);
+      updateCommentCount(moment.id, nextComments.length);
     } catch (error) {
       Alert.alert("发送失败", error instanceof Error ? error.message : "请稍后再试。");
     } finally {

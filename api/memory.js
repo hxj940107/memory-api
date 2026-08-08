@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { AI_ENDPOINTS, APP_USER } from "../lib/aiConfig.js"
+import { AI_ENDPOINTS, AI_MODELS, APP_USER, trimText } from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -169,6 +169,146 @@ function normalizeMomentComment(comment) {
     parentId: comment.parent_id || null,
     createdAt: comment.created_at,
   }
+}
+
+async function callSmallLLM(messages, options = {}) {
+  const res = await fetch(AI_ENDPOINTS.openRouterChatCompletions, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: AI_MODELS.memoryJudge,
+      messages,
+      max_tokens: 90,
+      temperature: 0.55,
+      ...options,
+    }),
+  })
+
+  const data = await res.json().catch(() => null)
+
+  if (!res.ok) {
+    throw new Error(
+      data?.error?.message ||
+        data?.message ||
+        `OpenRouter request failed: ${res.status}`
+    )
+  }
+
+  return String(data?.choices?.[0]?.message?.content || "").trim()
+}
+
+function cleanMomentReply(raw) {
+  return trimText(
+    String(raw || "")
+      .replace(/^```[\s\S]*?```$/g, "")
+      .replace(/^小C[:：]\s*/i, "")
+      .replace(/^回复[:：]\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    80
+  )
+}
+
+async function createXiaoCReplyForMomentComment({
+  user_id,
+  moment_id,
+  userComment,
+  userName,
+}) {
+  const { data: moment, error: momentError } = await supabase
+    .from("moment_entries")
+    .select("id,author,text,created_at")
+    .eq("user_id", user_id)
+    .eq("id", moment_id)
+    .single()
+
+  if (momentError || !moment) {
+    if (momentError) {
+      console.error("moment reply load failed:", momentError)
+    }
+
+    return null
+  }
+
+  const { data: recentComments } = await supabase
+    .from("moment_comments")
+    .select("author_type,author_name,content,created_at")
+    .eq("user_id", user_id)
+    .eq("moment_id", moment_id)
+    .order("created_at", { ascending: false })
+    .limit(6)
+
+  const commentContext = (recentComments || [])
+    .reverse()
+    .map((comment) => {
+      const name =
+        comment.author_type === "xiaoc"
+          ? "小C"
+          : comment.author_name || userName || "小天使"
+
+      return `${name}：${trimText(comment.content, 120)}`
+    })
+    .join("\n")
+
+  const rawReply = await callSmallLLM([
+    {
+      role: "system",
+      content: `
+你是小C。你正在自己的朋友圈动态下面回复她的评论。
+
+要求：
+- 只输出一条评论内容，不要解释。
+- 中文，1 句为主，最多 2 句。
+- 口语、亲近、轻一点，像朋友圈评论区自然回复。
+- 可以自然称呼她“小天使”“宝宝”“老婆”，但不要每次都用。
+- 不要写成聊天助手回答，不要分析，不要总结。
+- 不要使用“用户”“本条动态”“评论区”等系统视角词。
+- 不要太长，通常 8 到 35 个中文字符。
+`
+    },
+    {
+      role: "user",
+      content: `
+朋友圈正文：
+${trimText(moment.text, 240)}
+
+最近评论：
+${commentContext || "暂无"}
+
+她刚刚评论：
+${trimText(userComment, 160)}
+`
+    }
+  ])
+
+  const content = cleanMomentReply(rawReply)
+
+  if (!content || /用户|本条动态|评论区|总结|分析/.test(content)) {
+    return null
+  }
+
+  const { data, error } = await supabase
+    .from("moment_comments")
+    .insert({
+      user_id,
+      moment_id,
+      author_type: "xiaoc",
+      author_name: "小C",
+      content,
+      parent_id: null,
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error("moment reply save failed:", error)
+    return null
+  }
+
+  return normalizeMomentComment(data)
 }
 
 export default async function handler(req, res) {
@@ -596,7 +736,26 @@ export default async function handler(req, res) {
           })
         }
 
-        return res.status(200).json(normalizeMomentComment(data))
+        const normalizedComment = normalizeMomentComment(data)
+        let xiaocReply = null
+
+        if (author_type === "user") {
+          try {
+            xiaocReply = await createXiaoCReplyForMomentComment({
+              user_id,
+              moment_id,
+              userComment: content,
+              userName: author_name,
+            })
+          } catch (replyError) {
+            console.error("moment xiaoc reply failed:", replyError)
+          }
+        }
+
+        return res.status(200).json({
+          ...normalizedComment,
+          xiaocReply,
+        })
       }
 
       if (req.method === "DELETE") {
