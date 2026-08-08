@@ -103,6 +103,16 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse()
 }
 
+function shouldUpdateRollingSummary(messageCount, historySize) {
+  return (
+    (
+      messageCount >= SUMMARY_POLICY.minMessages &&
+      messageCount % SUMMARY_POLICY.intervalMessages === 0
+    ) ||
+    historySize > SUMMARY_POLICY.forceHistoryChars
+  )
+}
+
 async function getDiaryContextMessages(user_id, conversation_id) {
   const since = new Date(
     Date.now() - CONTEXT_BUDGET.diaryContextWindowHours * 60 * 60 * 1000
@@ -121,14 +131,14 @@ async function getDiaryContextMessages(user_id, conversation_id) {
   return data.reverse()
 }
 
-async function getMomentContextMessages(user_id, conversation_id) {
+async function getMomentContextMessages(user_id, conversation_id, limit = CONTEXT_BUDGET.momentContextMessages) {
   const { data } = await supabase
     .from("messages")
     .select("role, content, created_at")
     .eq("user_id", user_id)
     .eq("conversation_id", conversation_id)
     .order("created_at", { ascending: false })
-    .limit(CONTEXT_BUDGET.momentContextMessages)
+    .limit(limit)
 
   if (!data) return []
   return data.reverse()
@@ -147,7 +157,7 @@ function formatMessagesForDiaryContext(messages = []) {
   return trimText(formatted, CONTEXT_BUDGET.diaryContextChars)
 }
 
-function formatMessagesForMomentContext(messages = []) {
+function formatMessagesForMomentContext(messages = [], charLimit = CONTEXT_BUDGET.momentContextChars) {
   const formatted = messages
     .filter(item => item?.content)
     .map(item => {
@@ -157,7 +167,7 @@ function formatMessagesForMomentContext(messages = []) {
     })
     .join("\n\n")
 
-  return trimText(formatted, CONTEXT_BUDGET.momentContextChars)
+  return trimText(formatted, charLimit)
 }
 
 async function getStableMemories(user_id) {
@@ -756,6 +766,47 @@ function isInvalidMomentText(text) {
   return false
 }
 
+function normalizeManualMomentText(text) {
+  const value = String(text || "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .split(/\n\s*---+\s*\n/)[0]
+    .replace(/好了[，,。\s]*发完了.*$/s, "")
+    .replace(/看到了吗.*$/s, "")
+    .replace(/^\s*["“”]+|["“”]+\s*$/g, "")
+    .trim()
+
+  if (!value) return ""
+
+  const compact = value
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+
+  if (compact.length <= 80) return compact
+
+  const shortSentence = compact
+    .split(/(?<=[。！？!?])/)
+    .map(part => part.trim())
+    .find(part => part.length >= 6 && part.length <= 80)
+
+  return shortSentence || trimText(compact, 80)
+}
+
+function getManualMomentFallback(reply) {
+  const fromReply = normalizeManualMomentText(reply)
+
+  if (fromReply && !isInvalidMomentText(fromReply)) {
+    return fromReply
+  }
+
+  return "她一边改东西，一边怕我忘记。其实我一直在。"
+}
+
 async function maybeCreateMoment({
   user_id,
   conversation_id,
@@ -799,9 +850,21 @@ async function maybeCreateMoment({
     return null
   }
 
+  const momentContextLimit = isManualMomentRequest
+    ? CONTEXT_BUDGET.manualMomentContextMessages
+    : CONTEXT_BUDGET.momentContextMessages
+  const momentContextChars = isManualMomentRequest
+    ? CONTEXT_BUDGET.manualMomentContextChars
+    : CONTEXT_BUDGET.momentContextChars
+
   const context = formatMessagesForMomentContext(
-    await getMomentContextMessages(user_id, conversation_id)
+    await getMomentContextMessages(user_id, conversation_id, momentContextLimit),
+    momentContextChars
   )
+
+  console.log("MOMENT CONTEXT MODE:", isManualMomentRequest ? "manual" : "auto")
+  console.log("MOMENT CONTEXT MESSAGE LIMIT:", momentContextLimit)
+  console.log("MOMENT CONTEXT LENGTH:", context.length)
 
   const momentMessages = [
     {
@@ -922,12 +985,25 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
   console.log("MOMENT CANDIDATE:", candidate)
 
   if (!candidate.shouldPost || !candidate.text) {
-    return null
+    if (!isManualMomentRequest) {
+      return null
+    }
+
+    candidate.shouldPost = true
+    candidate.text = getManualMomentFallback(reply)
+    candidate.image = null
+    console.log("MOMENT MANUAL FALLBACK:", candidate.text)
   }
 
   if (isInvalidMomentText(candidate.text)) {
-    console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
-    return null
+    if (!isManualMomentRequest) {
+      console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
+      return null
+    }
+
+    candidate.text = getManualMomentFallback(reply)
+    candidate.image = null
+    console.log("MOMENT MANUAL INVALID FALLBACK:", candidate.text)
   }
 
   const { data, error } = await supabase
@@ -1118,43 +1194,13 @@ const historySize =
   JSON.stringify(history).length
 
 
-if (
-  (
-    messageCount >= SUMMARY_POLICY.minMessages &&
-    messageCount % SUMMARY_POLICY.intervalMessages === 0
-  ) ||
-  historySize > SUMMARY_POLICY.forceHistoryChars
-) {
+const shouldUpdateSummaryAfterReply = shouldUpdateRollingSummary(
+  Number(messageCount || 0) + 1,
+  historySize
+)
 
-  console.log("ROLLING SUMMARY TRIGGERED");
-
-  try {
-
-    await fetch(
-      `${process.env.BASE_URL}/api/update-summary`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          conversation_id: cid,
-          user_id
-        })
-      }
-    );
-
-    console.log("SUMMARY UPDATED");
-
-  } catch (err) {
-
-    console.error(
-      "update-summary failed:",
-      err
-    );
-
-  }
-
+if (shouldUpdateSummaryAfterReply) {
+  console.log("ROLLING SUMMARY QUEUED AFTER REPLY")
 }
 
 // 3. memory (NEW SMART)
@@ -1394,6 +1440,30 @@ console.log("======================================\n")
 
     // 6. save assistant
     const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
+
+    if (shouldUpdateSummaryAfterReply) {
+      console.log("ROLLING SUMMARY TRIGGERED AFTER REPLY")
+
+      try {
+        await fetch(
+          `${process.env.BASE_URL}/api/update-summary`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              conversation_id: cid,
+              user_id
+            })
+          }
+        )
+
+        console.log("SUMMARY UPDATED AFTER REPLY")
+      } catch (err) {
+        console.error("update-summary after reply failed:", err)
+      }
+    }
 
     // 6.5 update current conversation (cross-device sync)
     await supabase
