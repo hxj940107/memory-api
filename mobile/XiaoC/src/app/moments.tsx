@@ -599,7 +599,7 @@ export default function MomentsScreen() {
           const commentsCount = commentsByMomentId[moment.id]?.length ?? moment.commentsCount;
           const composerVisible = Boolean(expandedComments[moment.id]);
           const likedByMe = Boolean(likedMomentIds[moment.id]);
-          const shouldShowComments = likedByMe || comments.length > 0 || composerVisible;
+          const shouldShowInteractionPanel = likedByMe || comments.length > 0 || composerVisible;
           const actionMenuVisible = actionMenuMomentId === moment.id;
 
           return (
@@ -665,7 +665,7 @@ export default function MomentsScreen() {
                     <SymbolView
                       name="ellipsis"
                       size={15}
-                      tintColor={actionMenuVisible ? "#47658F" : "#A6A6AA"}
+                      tintColor="#9B9BA0"
                       weight="light"
                     />
                   </Pressable>
@@ -709,10 +709,10 @@ export default function MomentsScreen() {
                   </View>
                 )}
 
-                {shouldShowComments && (
-                  <View style={styles.commentsBox}>
+                {shouldShowInteractionPanel && (
+                  <View style={styles.interactionPanel}>
                     {likedByMe && (
-                      <View style={styles.likedByRow}>
+                      <View style={styles.likedSection}>
                         <SymbolView
                           name="heart.fill"
                           size={13}
@@ -724,65 +724,74 @@ export default function MomentsScreen() {
                       </View>
                     )}
 
-                    {comments.map((comment) => (
-                      <Pressable
-                        key={comment.id}
-                        style={({ pressed }) => [
-                          styles.commentRow,
-                          pressed && comment.authorType === "user" && styles.commentPressed,
+                    {(comments.length > 0 || composerVisible) && (
+                      <View
+                        style={[
+                          styles.commentSection,
+                          likedByMe && styles.commentSectionWithLikes,
                         ]}
-                        onLongPress={() => confirmDeleteComment(moment, comment)}
                       >
-                        <Text style={styles.commentLine}>
-                          <Text
-                            style={[
-                              styles.commentAuthor,
-                              comment.authorType === "xiaoc"
-                                ? styles.xiaocCommentAuthor
-                                : styles.userCommentAuthor,
-                            ]}
-                          >
-                            {comment.authorName}：
-                          </Text>
-                          <Text style={styles.commentContent}>{comment.content}</Text>
-                        </Text>
-                      </Pressable>
-                    ))}
-
-                    {composerVisible && (
-                      <View style={styles.commentInputRow}>
-                        <TextInput
-                          style={styles.commentInput}
-                          value={commentDrafts[moment.id] || ""}
-                          onChangeText={(text) =>
-                            setCommentDrafts((items) => ({
-                              ...items,
-                              [moment.id]: text,
-                            }))
-                          }
-                          placeholder="写评论…"
-                          placeholderTextColor="#B1ACA7"
-                          multiline
-                          onFocus={() => {
-                            setFocusedCommentMomentId(moment.id);
-                            scrollCommentInputIntoView();
-                          }}
-                          onBlur={() => setFocusedCommentMomentId(null)}
-                        />
-                        {String(commentDrafts[moment.id] || "").trim() && (
+                        {comments.map((comment) => (
                           <Pressable
+                            key={comment.id}
                             style={({ pressed }) => [
-                              styles.sendCommentButton,
-                              pressed && styles.pressed,
-                              postingCommentId === moment.id && styles.sendCommentDisabled,
+                              styles.commentRow,
+                              pressed && comment.authorType === "user" && styles.commentPressed,
                             ]}
-                            disabled={postingCommentId === moment.id}
-                            onPress={() => postComment(moment)}
+                            onLongPress={() => confirmDeleteComment(moment, comment)}
                           >
-                            <Text style={styles.sendCommentText}>
-                              {postingCommentId === moment.id ? "发送中" : "发送"}
+                            <Text style={styles.commentLine}>
+                              <Text
+                                style={[
+                                  styles.commentAuthor,
+                                  comment.authorType === "xiaoc"
+                                    ? styles.xiaocCommentAuthor
+                                    : styles.userCommentAuthor,
+                                ]}
+                              >
+                                {comment.authorName}：
+                              </Text>
+                              <Text style={styles.commentContent}>{comment.content}</Text>
                             </Text>
                           </Pressable>
+                        ))}
+
+                        {composerVisible && (
+                          <View style={styles.commentInputRow}>
+                            <TextInput
+                              style={styles.commentInput}
+                              value={commentDrafts[moment.id] || ""}
+                              onChangeText={(text) =>
+                                setCommentDrafts((items) => ({
+                                  ...items,
+                                  [moment.id]: text,
+                                }))
+                              }
+                              placeholder="写评论…"
+                              placeholderTextColor="#B1ACA7"
+                              multiline
+                              onFocus={() => {
+                                setFocusedCommentMomentId(moment.id);
+                                scrollCommentInputIntoView();
+                              }}
+                              onBlur={() => setFocusedCommentMomentId(null)}
+                            />
+                            {String(commentDrafts[moment.id] || "").trim() && (
+                              <Pressable
+                                style={({ pressed }) => [
+                                  styles.sendCommentButton,
+                                  pressed && styles.pressed,
+                                  postingCommentId === moment.id && styles.sendCommentDisabled,
+                                ]}
+                                disabled={postingCommentId === moment.id}
+                                onPress={() => postComment(moment)}
+                              >
+                                <Text style={styles.sendCommentText}>
+                                  {postingCommentId === moment.id ? "发送中" : "发送"}
+                                </Text>
+                              </Pressable>
+                            )}
+                          </View>
                         )}
                       </View>
                     )}
@@ -919,8 +928,8 @@ const styles = StyleSheet.create({
   },
 
   text: {
-    fontSize: 16,
-    lineHeight: 25,
+    fontSize: 18,
+    lineHeight: 29,
     color: "#161616",
     marginBottom: 12,
   },
@@ -1005,16 +1014,17 @@ const styles = StyleSheet.create({
     color: "#F4F4F6",
   },
 
-  commentsBox: {
+  interactionPanel: {
     marginTop: 8,
-    marginLeft: 8,
-    paddingTop: 7,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(120,120,128,0.09)",
+    marginLeft: 0,
+    borderRadius: 4,
+    backgroundColor: "#F7F7F7",
+    overflow: "hidden",
   },
 
-  likedByRow: {
-    paddingVertical: 4,
+  likedSection: {
+    paddingHorizontal: 9,
+    paddingVertical: 7,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -1024,13 +1034,23 @@ const styles = StyleSheet.create({
   },
 
   likedByText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: "#47658F",
+    fontSize: 16,
+    lineHeight: 23,
+    color: "#576B95",
+  },
+
+  commentSection: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+
+  commentSectionWithLikes: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(120,120,128,0.14)",
   },
 
   commentRow: {
-    paddingVertical: 4,
+    paddingVertical: 3,
   },
 
   commentPressed: {
@@ -1039,32 +1059,32 @@ const styles = StyleSheet.create({
 
   commentLine: {
     fontSize: 16,
-    lineHeight: 23,
+    lineHeight: 24,
     color: "#3A3A3C",
   },
 
   commentAuthor: {
-    fontSize: 15,
-    lineHeight: 23,
+    fontSize: 16,
+    lineHeight: 24,
     marginBottom: 0,
   },
 
   xiaocCommentAuthor: {
-    color: "#7A7671",
+    color: "#576B95",
   },
 
   userCommentAuthor: {
-    color: "#7A7671",
+    color: "#576B95",
   },
 
   commentContent: {
     fontSize: 16,
-    lineHeight: 23,
-    color: "#3A3A3C",
+    lineHeight: 24,
+    color: "#333333",
   },
 
   commentInputRow: {
-    marginTop: 8,
+    marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: StyleSheet.hairlineWidth,
