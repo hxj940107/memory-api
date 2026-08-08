@@ -19,6 +19,7 @@ type Moment = {
   createdAt: string;
   author: string;
   avatar: MomentAvatarId;
+  avatarUri: string | null;
   likes: number;
   image?: "sunset" | "notebook" | "night" | null;
   text: string;
@@ -73,6 +74,9 @@ export default function MomentsScreen() {
             avatar: isXiaoC
               ? account.xiaocMomentAvatar
               : account.userMomentAvatar,
+            avatarUri: isXiaoC
+              ? account.xiaocMomentAvatarUri
+              : account.userMomentAvatarUri,
           };
         }),
     );
@@ -166,6 +170,16 @@ export default function MomentsScreen() {
   };
 
   const renderAvatar = (moment: Moment) => {
+    if (moment.avatarUri) {
+      return (
+        <Image
+          source={{ uri: moment.avatarUri }}
+          style={styles.avatar}
+          contentFit="cover"
+        />
+      );
+    }
+
     const preset =
       MOMENT_AVATAR_PRESETS.find((item) => item.id === moment.avatar) ||
       MOMENT_AVATAR_PRESETS.find(
