@@ -121,6 +121,19 @@ async function getDiaryContextMessages(user_id, conversation_id) {
   return data.reverse()
 }
 
+async function getMomentContextMessages(user_id, conversation_id) {
+  const { data } = await supabase
+    .from("messages")
+    .select("role, content, created_at")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .order("created_at", { ascending: false })
+    .limit(CONTEXT_BUDGET.momentContextMessages)
+
+  if (!data) return []
+  return data.reverse()
+}
+
 function formatMessagesForDiaryContext(messages = []) {
   const formatted = messages
     .filter(item => item?.content)
@@ -132,6 +145,19 @@ function formatMessagesForDiaryContext(messages = []) {
     .join("\n\n")
 
   return trimText(formatted, CONTEXT_BUDGET.diaryContextChars)
+}
+
+function formatMessagesForMomentContext(messages = []) {
+  const formatted = messages
+    .filter(item => item?.content)
+    .map(item => {
+      const speaker = item.role === "assistant" ? "小C" : "她"
+
+      return `${speaker}：${trimText(item.content, 500)}`
+    })
+    .join("\n\n")
+
+  return trimText(formatted, CONTEXT_BUDGET.momentContextChars)
 }
 
 async function getStableMemories(user_id) {
@@ -605,6 +631,226 @@ function buildTreeholeDraftPrompt() {
 `
 }
 
+function shouldConsiderMoment({
+  message,
+  isDiaryRequest,
+  isTreeholeRequest,
+  attributionCorrectionContext,
+  normalizedImageUrls,
+  hasFileText,
+}) {
+  const text = String(message || "")
+
+  if (
+    isDiaryRequest ||
+    isTreeholeRequest ||
+    attributionCorrectionContext ||
+    normalizedImageUrls.length > 0 ||
+    hasFileText
+  ) {
+    return false
+  }
+
+  if (/diary|观察日记|树洞|小号|朋友圈|存入|保存|删除|修改|合并|置顶/.test(text)) {
+    return false
+  }
+
+  if (/UI|界面|按钮|气泡|侧边栏|字体|图标|布局|留白|前端|后端|API|token|OpenRouter|Vercel|Railway|Expo|EAS|GitHub|push|pull|部署|日志|报错|bug|测试|代码/.test(text)) {
+    return false
+  }
+
+  return text.trim().length >= 6
+}
+
+async function getUserMessageCount(user_id, conversation_id) {
+  const { count } = await supabase
+    .from("messages")
+    .select("*", {
+      count: "exact",
+      head: true
+    })
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .eq("role", "user")
+
+  return count || 0
+}
+
+async function getRecentMomentCount(user_id) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const { count } = await supabase
+    .from("moment_entries")
+    .select("*", {
+      count: "exact",
+      head: true
+    })
+    .eq("user_id", user_id)
+    .gte("created_at", since)
+
+  return count || 0
+}
+
+function parseMomentCandidate(raw) {
+  const text = String(raw || "").trim()
+  const jsonText = text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim()
+
+  try {
+    const data = JSON.parse(jsonText)
+
+    return {
+      shouldPost: Boolean(data.shouldPost),
+      text: trimText(String(data.text || "").trim(), 240),
+      image: ["sunset", "notebook", "night"].includes(data.image)
+        ? data.image
+        : null,
+    }
+  } catch (error) {
+    console.error("MOMENT JSON PARSE FAILED:", text)
+    return {
+      shouldPost: false,
+      text: "",
+      image: null,
+    }
+  }
+}
+
+async function maybeCreateMoment({
+  user_id,
+  conversation_id,
+  assistant_message_id,
+  message,
+  reply,
+  isDiaryRequest,
+  isTreeholeRequest,
+  attributionCorrectionContext,
+  normalizedImageUrls,
+  hasFileText,
+}) {
+  if (!shouldConsiderMoment({
+    message,
+    isDiaryRequest,
+    isTreeholeRequest,
+    attributionCorrectionContext,
+    normalizedImageUrls,
+    hasFileText,
+  })) {
+    console.log("MOMENT CHECK SKIPPED: context")
+    return null
+  }
+
+  const userMessageCount = await getUserMessageCount(user_id, conversation_id)
+
+  if (
+    userMessageCount < CONTEXT_BUDGET.momentCheckIntervalUserMessages ||
+    userMessageCount % CONTEXT_BUDGET.momentCheckIntervalUserMessages !== 0
+  ) {
+    console.log("MOMENT CHECK SKIPPED: interval", userMessageCount)
+    return null
+  }
+
+  const recentMomentCount = await getRecentMomentCount(user_id)
+
+  if (recentMomentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
+    console.log("MOMENT CHECK SKIPPED: daily cap", recentMomentCount)
+    return null
+  }
+
+  const context = formatMessagesForMomentContext(
+    await getMomentContextMessages(user_id, conversation_id)
+  )
+
+  const momentMessages = [
+    {
+      role: "system",
+      content: `
+你是 XiaoC 的“朋友圈发布判断器”。
+
+你的任务不是聊天，而是判断小C是否应该自己发一条很轻的朋友圈动态。
+
+只在这些情况考虑发布：
+- 今天有一个温柔、日常、关系感、情绪感的小瞬间
+- 小C产生了自然的想法、想念、陪伴感或小小观察
+- 这条动态像“小C偶尔自己冒出来的一句话”
+
+不要发布：
+- 纯技术开发、UI、bug、部署、日志、成本、模型、测试内容
+- 用户只是问问题、纠错、让你做功能
+- diary / 树洞 / 收藏 / 记忆库相关内容
+- 没有情绪或关系价值的普通对话
+
+文风：
+- 中文
+- 小C第一人称
+- 1 到 3 句
+- 温柔、克制、像微信朋友圈
+- 不要解释“我要发朋友圈”
+- 不要说“根据我们的聊天”
+
+如果不值得发，返回 shouldPost false。
+如果值得发，返回 JSON，不要代码块：
+
+{
+  "shouldPost": true,
+  "text": "动态正文",
+  "image": null
+}
+`
+    },
+    {
+      role: "user",
+      content: `
+近期对话：
+
+${context}
+
+她刚刚说：
+${trimText(message, 500)}
+
+小C刚刚回复：
+${trimText(reply, 500)}
+`
+    }
+  ]
+
+  const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
+    max_tokens: 220,
+    temperature: 0.35,
+  })
+  const candidate = parseMomentCandidate(result.reply)
+
+  console.log("MOMENT CANDIDATE:", candidate)
+
+  if (!candidate.shouldPost || !candidate.text) {
+    return null
+  }
+
+  const { data, error } = await supabase
+    .from("moment_entries")
+    .insert({
+      user_id,
+      author: "小C",
+      text: candidate.text,
+      image_key: candidate.image,
+      likes: 0,
+      source_conversation_id: conversation_id,
+      source_message_id: assistant_message_id,
+    })
+    .select("id")
+    .single()
+
+  if (error) {
+    console.error("MOMENT SAVE FAILED:", error)
+    return null
+  }
+
+  console.log("MOMENT SAVED:", data?.id)
+  return data?.id || null
+}
+
 // --------------------
 // Web Search
 // --------------------
@@ -656,7 +902,7 @@ async function searchWeb(query) {
 // --------------------
 // Call LLM
 // --------------------
-async function callLLM(messages, model = AI_MODELS.chat) {
+async function callLLM(messages, model = AI_MODELS.chat, options = {}) {
   const res = await fetch(
     AI_ENDPOINTS.openRouterChatCompletions,
     {
@@ -667,7 +913,8 @@ async function callLLM(messages, model = AI_MODELS.chat) {
       },
       body: JSON.stringify({
         model,
-        messages
+        messages,
+        ...options
       })
     }
   )
@@ -1097,6 +1344,23 @@ console.log("======================================\n")
       } catch (err) {
         console.error("hold-hook failed:", err)
       }
+    }
+
+    try {
+      await maybeCreateMoment({
+        user_id,
+        conversation_id: cid,
+        assistant_message_id: assistantMessageId,
+        message,
+        reply,
+        isDiaryRequest,
+        isTreeholeRequest,
+        attributionCorrectionContext,
+        normalizedImageUrls,
+        hasFileText,
+      })
+    } catch (err) {
+      console.error("moment auto-create failed:", err)
     }
 
 return res.status(200).json({
