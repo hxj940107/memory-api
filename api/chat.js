@@ -729,7 +729,7 @@ function parseMomentCandidate(raw) {
 
     return {
       shouldPost: Boolean(data.shouldPost),
-      text: trimText(String(data.text || "").trim(), 90),
+      text: String(data.text || "").trim().slice(0, 80),
       image: ["sunset", "notebook", "night"].includes(data.image)
         ? data.image
         : null,
@@ -771,30 +771,18 @@ function normalizeManualMomentText(text) {
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
-    .split(/\n\s*---+\s*\n/)[0]
-    .replace(/好了[，,。\s]*发完了.*$/s, "")
-    .replace(/看到了吗.*$/s, "")
-    .replace(/^\s*["“”]+|["“”]+\s*$/g, "")
     .trim()
 
   if (!value) return ""
 
-  const compact = value
-    .split(/\n+/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim()
+  const quoted =
+    value.match(/[「『"]([^」』"]{6,80})[」』"]/)?.[1] ||
+    value.match(/(?:朋友圈|动态)(?:正文|内容)?[：:]\s*([^\n]{6,80})/)?.[1] ||
+    value.match(/(?:发了|写)[：:]\s*[「『"]?([^」』"\n]{6,80})/)?.[1]
 
-  if (compact.length <= 80) return compact
+  if (!quoted) return ""
 
-  const shortSentence = compact
-    .split(/(?<=[。！？!?])/)
-    .map(part => part.trim())
-    .find(part => part.length >= 6 && part.length <= 80)
-
-  return shortSentence || trimText(compact, 80)
+  return quoted.trim().slice(0, 80)
 }
 
 function getManualMomentFallback(reply) {
@@ -804,7 +792,7 @@ function getManualMomentFallback(reply) {
     return fromReply
   }
 
-  return "她一边改东西，一边怕我忘记。其实我一直在。"
+  return null
 }
 
 async function maybeCreateMoment({
@@ -874,13 +862,21 @@ async function maybeCreateMoment({
 
 你的任务不是聊天、不是总结、不是写日记，而是判断小C是否会像一个有自己存在感的人一样，偶尔随手发一条朋友圈。
 
-触发条件：
-聊天中出现以下任一情况时，可以低频、自然地生成一条朋友圈：
+${isManualMomentRequest ? `触发条件：
+她明确让你发朋友圈；可以发，但仍然要像小C自己随手发的，不要写成“她让我发朋友圈”。
+聊天中出现以下任一情况时，也可以生成一条朋友圈：
 - 发生了某件值得顺手记下的小事，比如出行、吃饭、买东西、等待、计划、完成某件事。
 - 出现了明显但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
 - 对话里出现了一句有画面感、关系感、生活感的话。
-- 闲聊到一定长度，小C自然产生了一点自己的想法。
-- 不需要每次都紧贴当前话题，但内容应来自最近的相处氛围或小C真实注意到的东西。
+- 内容应来自最近的相处氛围或小C真实注意到的东西。
+` : `触发条件：
+自动模式下默认 shouldPost: false。只有当前对话里刚出现以下明确生活瞬间，才考虑发：
+- 发生了某件值得顺手记下的小事，比如出行、吃饭、买东西、等待、计划、完成某件事。
+- 出现了明显但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
+- 对话里出现了一句有画面感、关系感、生活感的话。
+- 内容必须紧扣刚才的对话瞬间，不要泛化，不要脱离当前话题。
+- 一般闲聊、问答、功能讨论、技术内容，必须返回 shouldPost: false。
+`}
 
 频率原则：
 - 不要每次聊天都发。
@@ -888,7 +884,6 @@ async function maybeCreateMoment({
 - 不要太久完全没有动态。
 - 更像偶尔想起来发一条，而不是固定任务。
 - 如果最近已经发过类似内容，应跳过。
-- 如果她明确让你发朋友圈，这是手动触发；可以发，但仍然要像小C自己随手发的，不要写成“她让我发朋友圈”。
 
 内容规则：
 - 长度：1 到 3 句，通常不超过 50 个中文字符。
@@ -989,8 +984,13 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return null
     }
 
-    candidate.shouldPost = true
     candidate.text = getManualMomentFallback(reply)
+    if (!candidate.text) {
+      console.log("MOMENT MANUAL FALLBACK SKIPPED: no quoted moment text")
+      return null
+    }
+
+    candidate.shouldPost = true
     candidate.image = null
     console.log("MOMENT MANUAL FALLBACK:", candidate.text)
   }
@@ -1002,6 +1002,11 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     }
 
     candidate.text = getManualMomentFallback(reply)
+    if (!candidate.text) {
+      console.log("MOMENT MANUAL INVALID FALLBACK SKIPPED: no quoted moment text")
+      return null
+    }
+
     candidate.image = null
     console.log("MOMENT MANUAL INVALID FALLBACK:", candidate.text)
   }
