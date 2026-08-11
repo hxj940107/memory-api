@@ -860,14 +860,22 @@ async function maybeCreateMoment({
     ? CONTEXT_BUDGET.manualMomentContextChars
     : CONTEXT_BUDGET.momentContextChars
 
+  const momentContextMessages = await getMomentContextMessages(
+    user_id,
+    conversation_id,
+    momentContextLimit + 2
+  )
+  const historyContextMessages = momentContextMessages.slice(0, -2)
   const context = formatMessagesForMomentContext(
-    await getMomentContextMessages(user_id, conversation_id, momentContextLimit),
+    historyContextMessages,
     momentContextChars
   )
 
   console.log("MOMENT CONTEXT MODE:", isManualMomentRequest ? "manual" : "auto")
   console.log("MOMENT CONTEXT MESSAGE LIMIT:", momentContextLimit)
-  console.log("MOMENT CONTEXT LENGTH:", context.length)
+  console.log("MOMENT CONTEXT MESSAGE COUNT:", historyContextMessages.length)
+  console.log("MOMENT CONTEXT CHAR COUNT:", context.length)
+  console.log("MOMENT CONTEXT PREVIEW:", context.slice(0, 500))
 
   const momentMessages = [
     {
