@@ -102,8 +102,8 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   if (!data) return []
   return data.reverse().map(item => ({
     role: item.role,
-    content: item.metadata?.visionSummary
-      ? `${item.content}\n\n[图片背景信息]: ${item.metadata.visionSummary}`
+    content: item.metadata?.imageDescription || item.metadata?.visionSummary
+      ? `${item.content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
       : item.content
   }))
 }
@@ -1422,6 +1422,33 @@ messages.forEach((m, i) => {
 console.log("==========================\n")
 
 // 5. reply
+const imageDescriptionPromise = normalizedImageUrls.length > 0
+  ? callLLM(
+      [
+        {
+          role: "user",
+          content: [
+            ...normalizedImageUrls.map(url => ({
+              type: "image_url",
+              image_url: { url }
+            })),
+            {
+              type: "text",
+              text: "你正在为图片建立可供后续对话使用的记忆。请只输出150字以内的客观图片描述，覆盖主体、关键物体、可见文字、数量、颜色、位置和环境。不要对话，不要评价，不要推测看不见的信息。"
+            }
+          ]
+        }
+      ],
+      AI_MODELS.imageDescription,
+      { max_tokens: 220 }
+    )
+      .then(result => String(result.reply || "").trim().slice(0, 150))
+      .catch(err => {
+        console.error("image description failed:", err)
+        return ""
+      })
+  : Promise.resolve("")
+
 const llm = await callLLM(messages, selectedChatModel)
 const reply = llm.reply
 
@@ -1452,6 +1479,7 @@ console.log("======================================\n")
     const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
 
     if (userMessageId && normalizedImageUrls.length > 0) {
+      const imageDescription = await imageDescriptionPromise
       const { data: imageMessage } = await supabase
         .from("messages")
         .select("metadata")
@@ -1462,7 +1490,11 @@ console.log("======================================\n")
       const { error: visionSummaryError } = await supabase
         .from("messages")
         .update({
-          metadata: { ...(imageMessage?.metadata || {}), visionSummary: reply }
+          metadata: {
+            ...(imageMessage?.metadata || {}),
+            visionSummary: reply,
+            ...(imageDescription ? { imageDescription } : {})
+          }
         })
         .eq("user_id", user_id)
         .eq("id", userMessageId)
