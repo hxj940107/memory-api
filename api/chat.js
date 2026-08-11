@@ -297,7 +297,17 @@ async function getMemorySmart(user_id, message, conversation_id, history = []) {
         const pinTxt = await pinRes.text();
 
         if (pinTxt) {
-          pinMemory = [pinTxt];
+          const pinEntries = pinTxt
+            .split("\n---\n")
+            .map(entry => entry.trim())
+            .filter(Boolean)
+          const factEntryPattern =
+            /她是谁|用户事实|个人资料|基本信息|家情况|家庭|宠物|健康|生日|年龄|所在地|职业/
+
+          pinMemory = [
+            ...pinEntries.filter(entry => factEntryPattern.test(entry)),
+            ...pinEntries.filter(entry => !factEntryPattern.test(entry))
+          ];
         }
 
       }
@@ -1273,10 +1283,20 @@ if (message.startsWith("/搜 ")) {
 }
 
 // 4. build context
-    
+
+const injectedPinMemory = trimList(
+  pinMemory,
+  CONTEXT_BUDGET.pinMemoryChars
+).join("\n")
+
 console.log("MEMORY LOAD CHECK:", history.length)
 
 console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
+console.log("INJECTED PIN:", {
+  length: injectedPinMemory.length,
+  start: injectedPinMemory.slice(0, 100),
+  end: injectedPinMemory.slice(-100)
+})
 console.log("STABLE MEMORY LENGTH:", JSON.stringify(stableMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
@@ -1326,7 +1346,7 @@ ${systemPrompt}
 
 【Identity｜人格层】
 
-${trimList(pinMemory, CONTEXT_BUDGET.pinMemoryChars).join("\n")}
+${injectedPinMemory}
 
 
 【User Profile｜用户长期事实】
