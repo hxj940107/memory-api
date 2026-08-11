@@ -44,6 +44,29 @@ The highest principle is Experience First. Every change should be judged by whet
 
 ## Latest Progress
 
+### 2026-08-11 Milestone
+
+- Added server-generated time awareness to every main chat request.
+  - Current timezone is centralized as `USER_TIMEZONE = "Asia/Shanghai"`.
+  - The current date, time, weekday, timezone, and UTC offset are injected only into the current system context.
+  - Environment context is not saved to conversation history, memory, summary, or diary.
+- Stabilized multi-turn image understanding.
+  - New images are still sent to the main vision-capable chat model for the current turn.
+  - A separate Haiku 4.5 vision task creates `metadata.imageDescription` without chat history or personality prompts.
+  - Historical context prefers `imageDescription` and falls back to the earlier `visionSummary` field.
+  - Historical base64 images are not re-injected into the model context.
+- Moved non-critical post-chat work off the main response path so saved assistant replies can return to the mobile app without waiting for image metadata, memory, user-state, summary, or Moment follow-up work.
+- Improved pinned-memory injection within the existing character budget.
+  - PIN memory is handled as entries instead of slicing one long string blindly.
+  - Fact-oriented entries receive priority without hard-coding a specific fact.
+  - Debug logs report only the injected length and short beginning/end previews.
+- Expanded the Moment context window from 10 to 18 messages and from 2,600 to 4,000 characters without changing the existing trigger frequency or generation logic.
+- Refined the mobile experience.
+  - The left drawer now presents XiaoC as a restrained private space instead of an AI feature directory.
+  - Sidebar hierarchy, spacing, safe-area behavior, SF Symbols, and small-screen scrolling were polished.
+  - Chat bubbles now use an iMessage-inspired visual language with softer system blue, iOS secondary gray, compact sender-aware spacing, and content-sized bubbles.
+  - Assistant inline bold Markdown renders correctly, and single images preserve their display aspect ratio.
+
 ### Mobile Chat
 
 - Mobile chat is now the primary experience.
@@ -52,6 +75,9 @@ The highest principle is Experience First. Every change should be judged by whet
 - Conversations support create, rename, pin/unpin, delete, and current-conversation highlight.
 - Drawer open/close is animated and navigation waits for drawer close.
 - Keyboard behavior has been improved so the latest messages stay visible when typing.
+- Chat messages use compact sender-aware spacing: consecutive messages stay close while sender changes retain a clearer break.
+- Long assistant replies use a constrained reading width and render inline bold Markdown without exposing `**` markers.
+- User and assistant bubbles use a unified rounded iMessage-inspired shape without tails, delivery states, borders, or shadows.
 - Message bubbles now support long-press actions:
   - copy
   - select text
@@ -67,7 +93,10 @@ The highest principle is Experience First. Every change should be judged by whet
 - Up to 4 images can be selected in one message.
 - Images are compressed before sending.
 - Image metadata is saved in message history.
+- Independent image descriptions are saved to the current user message metadata for later visual continuity.
+- Historical image context uses text descriptions instead of re-sending image base64 data.
 - Image thumbnails can open a full-screen preview.
+- Single-image messages preserve the source display ratio; multi-image messages retain the compact grid.
 - Image send failures show retry affordances instead of staying stuck.
 - Text-like file attachments are supported, including `txt`, `md`, `csv`, `json`, `html`, `css`, `js`, `ts`, `tsx`, and `jsx`.
 - Uploaded file text is sent only with the current request and is not stored as long-term message content.
@@ -102,6 +131,7 @@ The highest principle is Experience First. Every change should be judged by whet
 - XiaoC can remember the user's identity and dog-related pinned memory.
 - Recent history, summary memory, pinned memory, stable memory, and dynamic memory are combined in `api/chat.js`.
 - PIN memory cache has a 30-minute TTL and does not cache empty results.
+- PIN memory entries are selected within the existing 700-character budget with fact-oriented entries prioritized before injection.
 - Dynamic memory search query includes recent user messages plus the current message.
 - Supabase `memories` acts as a stable memory fallback in chat context.
 - Attribution-correction handling was added so XiaoC is less likely to confuse who said/wrote something.
@@ -110,6 +140,13 @@ The highest principle is Experience First. Every change should be judged by whet
   - rely on summaries and memory search
   - use Haiku for memory judge / summary tasks
   - avoid storing full uploaded file text in history
+  - use a low-cost independent vision task once per new image request rather than repeatedly sending historical images
+
+### Time Awareness
+
+- XiaoC receives a server-generated Environment block in the current main-chat system message.
+- The first-stage timezone is fixed to `Asia/Shanghai`, with the timezone value centralized for later replacement by a user or device timezone.
+- Time context is request-only and deliberately excluded from all persistent memory and content pipelines.
 
 ### Documentation
 
@@ -147,6 +184,11 @@ add column if not exists updated_at timestamptz;
 - Favorites work locally.
 - Single-message deletion works and should survive refresh after Vercel deploy.
 - Memory retrieval from Ombre Brain is confirmed working in Vercel logs.
+- Multi-turn image continuity works through `imageDescription`, with `visionSummary` retained as a compatibility fallback.
+- Main chat responses are no longer intentionally blocked by non-critical post-chat tasks.
+- The prioritized PIN injection has been verified with the user's dog-name fact reaching the final system context.
+- Server-side Beijing time awareness has been verified in a live XiaoC reply.
+- The expanded Moment context window logs message count, character count, and a preview for deployment verification.
 - Vercel Hobby plan has a 12 Serverless Functions limit. Do not add new files under `api/` casually; prefer extending existing endpoints when reasonable.
 
 Check Vercel logs after deployment for:
@@ -170,18 +212,27 @@ If `PIN MEMORY` becomes empty again, investigate Ombre Brain `/breath-hook`, Rai
 
 ### Product / Feature Priorities
 
-1. Cloud sync for treehole posts.
+1. Verify the expanded Moment context in deployed logs and live conversations.
+   - Confirm the triggering user/assistant turn is present exactly once.
+   - Confirm the 18-message / 4,000-character window is used consistently by the asynchronous post-chat task.
+2. Add image awareness to Moment generation without re-injecting historical image data.
+   - Reuse saved `imageDescription`, with `visionSummary` as the compatibility fallback.
+   - Keep image Moment work independent from the main chat response path.
+3. Continue monitoring post-chat task reliability.
+   - Main replies must return immediately after the assistant message is saved.
+   - Image description, summary, memory, user-state, and Moment failures must remain isolated.
+4. Cloud sync for treehole posts.
    - Current state: local AsyncStorage only.
    - Reason: should survive reinstall / device switching.
-2. Cloud sync for favorites.
+5. Cloud sync for favorites.
    - Current state: local AsyncStorage only.
    - Reason: ordinary chat quotes should also be available across devices.
-3. Improve Diary / Treehole generation quality.
+6. Improve Diary / Treehole generation quality.
    - Goal: closer to XiaoC's previous “self-written” official-Claude style.
    - Keep app-rendered cards, but let XiaoC own the content and structure.
-4. Continue attachment support.
+7. Continue attachment support.
    - Add PDF / Word reading after text and HTML are stable.
-5. Continue cost control.
+8. Continue cost control.
    - Avoid increasing every chat request's token load.
    - Prefer task-specific context expansion only when writing Diary / Treehole or reading files.
 
