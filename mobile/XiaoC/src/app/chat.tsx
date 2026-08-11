@@ -156,6 +156,17 @@ const getDisplayAiText = (text: string) =>
     ? normalizeShortAiText(text)
     : text.replace(/\s*\n\s*/g, "\n");
 
+const renderInlineMarkdown = (text: string) =>
+  text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**") ? (
+      <Text key={`${part}_${index}`} style={styles.aiTextStrong}>
+        {part.slice(2, -2)}
+      </Text>
+    ) : (
+      part
+    ),
+  );
+
 const normalizeTreeholeDraftJson = (rawJson: string) =>
   rawJson
     .replace(/^```(?:json)?\s*/i, "")
@@ -336,6 +347,38 @@ function AnimatedMessage({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ChatMessageImage({
+  uri,
+  multiple,
+  subdued,
+}: {
+  uri: string;
+  multiple: boolean;
+  subdued: boolean;
+}) {
+  const [aspectRatio, setAspectRatio] = useState(1);
+
+  return (
+    <Image
+      source={{ uri }}
+      resizeMode="cover"
+      onLoad={(event) => {
+        const { width, height } = event.nativeEvent.source;
+
+        if (width && height) {
+          setAspectRatio(Math.min(Math.max(width / height, 0.72), 1.5));
+        }
+      }}
+      style={[
+        styles.messageImage,
+        !multiple && { aspectRatio },
+        multiple && styles.messageImageGridItem,
+        subdued && styles.messageImageSending,
+      ]}
+    />
+  );
+}
+
 function TreeholeDraftCard({
   draft,
   saveStatus,
@@ -505,7 +548,7 @@ function DiaryPreviewCard({
 export default function ChatScreen() {
   const params = useLocalSearchParams();
 
-  const drawerWidth = Dimensions.get("window").width * 0.76;
+  const drawerWidth = Dimensions.get("window").width * 0.82;
 
   const incomingConversationId = params.conversationId as string | undefined;
   const shouldStartNewChat = params.newChat === "1";
@@ -1361,10 +1404,17 @@ export default function ChatScreen() {
             )
           )}
 
-          {messages.map((item) =>
+          {messages.map((item, index) =>
             item.role === "user" ? (
               <AnimatedMessage key={item.id}>
-                <View style={styles.userRow}>
+                <View
+                  style={[
+                    styles.userRow,
+                    index > 0 && messages[index - 1].role === item.role
+                      ? styles.messageFromSameSender
+                      : styles.messageFromNewSender,
+                  ]}
+                >
                   {(item.imageUris?.length || item.imageUri) && (
                     <View style={styles.messageImageWrap}>
                       <View
@@ -1384,16 +1434,16 @@ export default function ChatScreen() {
                                   setPreviewImageUri(imageUri)
                                 }
                               >
-                                <Image
-                                  source={{ uri: imageUri }}
-                                  style={[
-                                    styles.messageImage,
+                                <ChatMessageImage
+                                  uri={imageUri}
+                                  multiple={
                                     (item.imageUris || [item.imageUri]).length >
-                                      1 && styles.messageImageGridItem,
-                                    (item.status === "sending" ||
-                                      item.status === "failed") &&
-                                      styles.messageImageSending,
-                                  ]}
+                                    1
+                                  }
+                                  subdued={
+                                    item.status === "sending" ||
+                                    item.status === "failed"
+                                  }
                                 />
                               </Pressable>
                             ),
@@ -1467,7 +1517,14 @@ export default function ChatScreen() {
               </AnimatedMessage>
 	            ) : (
 	              <AnimatedMessage key={item.id}>
-	                <View style={styles.aiWrap}>
+	                <View
+	                  style={[
+	                    styles.aiWrap,
+	                    index > 0 && messages[index - 1].role === item.role
+	                      ? styles.messageFromSameSender
+	                      : styles.messageFromNewSender,
+	                  ]}
+	                >
 	                  {item.treeholeDraft ? (
 	                    <TreeholeDraftCard
 	                      draft={item.treeholeDraft}
@@ -1494,7 +1551,9 @@ export default function ChatScreen() {
 	                        )
 	                      }
 	                    >
-	                      <Text style={styles.aiText}>{getDisplayAiText(item.text)}</Text>
+	                      <Text style={styles.aiText}>
+	                        {renderInlineMarkdown(getDisplayAiText(item.text))}
+	                      </Text>
 	                    </Pressable>
 	                  )}
                 </View>
@@ -1774,7 +1833,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
 
-    width: "24%",
+    width: "18%",
   },
   drawerOverlay: {
     position: "absolute",
@@ -1784,24 +1843,24 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
 
-    backgroundColor: "rgba(0,0,0,0.06)",
+    backgroundColor: "rgba(0,0,0,0.10)",
 
     zIndex: 100,
   },
 
   drawer: {
-    width: "76%",
+    width: "82%",
 
     height: "100%",
 
-    backgroundColor: "#F7F7F8",
+    backgroundColor: "#F8F8FA",
 
     paddingTop: 0,
 
     paddingHorizontal: 0,
 
-    borderTopRightRadius: 18,
-    borderBottomRightRadius: 18,
+    borderTopRightRadius: 28,
+    borderBottomRightRadius: 28,
 
     overflow: "hidden",
 
@@ -1845,9 +1904,9 @@ const styles = StyleSheet.create({
   chatContent: {
     paddingHorizontal: 20,
 
-    paddingTop: 0,
+    paddingTop: 16,
 
-    paddingBottom: 170,
+    paddingBottom: 24,
   },
 
   empty: {
@@ -1876,47 +1935,55 @@ const styles = StyleSheet.create({
 
   userRow: {
     alignItems: "flex-end",
-
-    marginTop: 12,
-
-    marginBottom: 18,
+    marginBottom: 2,
   },
 
   userBubble: {
-    maxWidth: "80%",
+    maxWidth: "78%",
+    minHeight: 42,
     flexShrink: 1,
-    backgroundColor: "rgba(220,240,255,0.75)",
-    borderColor: "#D5E9FF",
-    borderWidth: 1,
+    justifyContent: "center",
+    backgroundColor: "#4A9EFF",
     borderRadius: 20,
-    paddingHorizontal: 18,
+    paddingHorizontal: 17,
     paddingVertical: 9,
     overflow: "visible",
   },
 
   userText: {
     fontSize: 17,
-    color: "#4B5563",
-    lineHeight: 25,
+    color: "#FFFFFF",
+    lineHeight: 23,
     flexShrink: 1,
     includeFontPadding: false,
   },
   aiBox: {
     maxWidth: "100%",
+    minHeight: 42,
     flexShrink: 1,
     alignSelf: "flex-start",
-    backgroundColor: "#F4F4F4",
+    justifyContent: "center",
+    backgroundColor: "#F2F2F7",
     borderRadius: 20,
-    paddingHorizontal: 18,
+    paddingHorizontal: 17,
     paddingVertical: 9,
     overflow: "visible",
   },
 
   aiWrap: {
     alignSelf: "flex-start",
-    maxWidth: "82%",
+    maxWidth: "80%",
     flexShrink: 1,
+    marginBottom: 2,
     overflow: "visible",
+  },
+
+  messageFromSameSender: {
+    marginTop: 4,
+  },
+
+  messageFromNewSender: {
+    marginTop: 14,
   },
 
   aiText: {
@@ -1925,6 +1992,11 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     flexShrink: 1,
     includeFontPadding: false,
+  },
+
+  aiTextStrong: {
+    fontWeight: "600",
+    color: "#38383A",
   },
 
   treeholeDraftCard: {
@@ -2418,18 +2490,17 @@ const styles = StyleSheet.create({
   },
 
   messageImage: {
-    width: 180,
-    height: 180,
-    borderRadius: 16,
+    width: 240,
+    borderRadius: 18,
     marginBottom: 8,
-    backgroundColor: "#E9EEF5",
+    backgroundColor: "#F2F2F4",
   },
 
   messageImageGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "flex-end",
-    maxWidth: 190,
+    maxWidth: 240,
   },
 
   messageImageGridMultiple: {

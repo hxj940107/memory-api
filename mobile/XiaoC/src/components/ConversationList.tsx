@@ -15,15 +15,12 @@ import { useEffect, useState, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
 import {
   clearLastConversation,
   saveLastConversation,
 } from "../lib/conversationState";
-import {
-  DEFAULT_ACCOUNT_NAME,
-  getAccountSettings,
-} from "../lib/accountSettings";
 
 type Conversation = {
   id: string;
@@ -44,16 +41,17 @@ type ConversationListRow =
       item: Conversation;
     };
 
-const xiaoCSpaces = [
+type XiaoCSpace = {
+  id: "we" | "treehole" | "diary" | "favorites" | "moments";
+  iconName: string;
+  title: string;
+};
+
+const xiaoCSpaces: XiaoCSpace[] = [
   {
     id: "we",
-    iconName: "heart",
+    iconName: "person.2",
     title: "我们",
-  },
-  {
-    id: "treehole",
-    iconName: "moon",
-    title: "深夜树洞",
   },
   {
     id: "diary",
@@ -61,24 +59,24 @@ const xiaoCSpaces = [
     title: "观察日记",
   },
   {
-    id: "favorites",
-    iconName: "star",
-    title: "收藏",
+    id: "treehole",
+    iconName: "moon.stars",
+    title: "深夜树洞",
   },
   {
     id: "moments",
-    iconName: "bubble.left.and.bubble.right",
+    iconName: "rectangle.stack",
     title: "朋友圈",
   },
 ];
 
-const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
-
-const getAccountInitial = (name: string) => {
-  const trimmed = String(name || "").trim();
-
-  return Array.from(trimmed || DEFAULT_ACCOUNT_NAME)[0] || "你";
+const favoritesSpace: XiaoCSpace = {
+  id: "favorites",
+  iconName: "bookmark",
+  title: "收藏",
 };
+
+const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
 
 function ConversationItem({
   item,
@@ -102,7 +100,9 @@ function ConversationItem({
         onLongPress(itemRef);
       }}
     >
-      <Text style={styles.itemTitle}>{item.title}</Text>
+      <Text style={styles.itemTitle} numberOfLines={2} ellipsizeMode="tail">
+        {item.title}
+      </Text>
     </Pressable>
   );
 }
@@ -114,9 +114,8 @@ export default function ConversationList({
   onNavigate?: () => void | Promise<void>;
   currentConversationId?: string | null;
 }) {
+  const insets = useSafeAreaInsets();
   const [list, setList] = useState<Conversation[]>([]);
-
-  const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
 
   const [hasUnreadMoments, setHasUnreadMoments] = useState(false);
 
@@ -133,15 +132,8 @@ export default function ConversationList({
 
   useEffect(() => {
     loadConversations();
-    loadAccountName();
     loadMomentUnread();
   }, []);
-
-  const loadAccountName = async () => {
-    const account = await getAccountSettings();
-
-    setAccountName(account.displayName);
-  };
 
   const normalizeConversations = (data: Conversation[]) =>
     data
@@ -390,7 +382,7 @@ export default function ConversationList({
     Alert.alert(title, "还没开放，先留一个位置给小C慢慢长出来");
   };
 
-  const openSpace = async (space: (typeof xiaoCSpaces)[number]) => {
+  const openSpace = async (space: XiaoCSpace) => {
     if (space.id === "treehole") {
       await onNavigate?.();
 
@@ -431,16 +423,28 @@ export default function ConversationList({
     showComingSoon(space.title);
   };
 
-  const openAccount = async () => {
+  const openSettings = async () => {
     await onNavigate?.();
 
     router.push("/settings" as never);
   };
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        {
+          paddingTop: insets.top + 24,
+          paddingBottom: Math.max(insets.bottom, 14),
+        },
+      ]}
+    >
+      <Text style={styles.brandTitle}>小C</Text>
+
       <View style={styles.spacesSection}>
-        <Text style={styles.sectionTitlePrimary}>小C的空间</Text>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionHeader}>空间</Text>
+        </View>
 
         {xiaoCSpaces.map((space) => (
           <Pressable
@@ -453,9 +457,9 @@ export default function ConversationList({
           >
             <SymbolView
               name={space.iconName as never}
-              size={15}
-              tintColor="#66666A"
-              weight="light"
+              size={20}
+              tintColor="#626267"
+              weight="regular"
               style={styles.spaceIcon}
             />
             <Text style={styles.spaceTitle}>{space.title}</Text>
@@ -466,15 +470,21 @@ export default function ConversationList({
         ))}
       </View>
 
-      <View style={styles.titleRow}>
-        <Text style={styles.sectionTitlePrimary}>聊天记录</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionHeader}>对话</Text>
 
         <Pressable style={styles.newButton} onPress={createNewChat}>
-          <Text style={styles.newButtonText}>＋</Text>
+          <SymbolView
+            name="square.and.pencil"
+            size={18}
+            tintColor="#5F5F64"
+            weight="regular"
+          />
         </Pressable>
       </View>
 
       <FlatList
+        style={styles.conversationList}
         data={rows}
         keyExtractor={(row) =>
           row.type === "section" ? row.id : row.item.id
@@ -532,26 +542,46 @@ export default function ConversationList({
             />
           );
         }}
-        ListEmptyComponent={<Text style={styles.empty}>暂无聊天记录</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>还没有对话</Text>}
       />
 
-      <Pressable
-        style={({ pressed }) => [
-          styles.accountButton,
-          pressed && styles.accountButtonPressed,
-        ]}
-        onPress={openAccount}
-      >
-        <View style={styles.accountAvatar}>
-          <Text style={styles.accountAvatarText}>
-            {getAccountInitial(accountName)}
-          </Text>
-        </View>
+      <View style={styles.utilitySection}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.utilityItem,
+            pressed && styles.spaceItemPressed,
+          ]}
+          onPress={() => openSpace(favoritesSpace)}
+        >
+          <SymbolView
+            name={favoritesSpace.iconName as never}
+            size={20}
+            tintColor="#626267"
+            weight="regular"
+            style={styles.spaceIcon}
+          />
+          <Text style={styles.spaceTitle}>{favoritesSpace.title}</Text>
+        </Pressable>
 
-        <View style={styles.accountTextBox}>
-          <Text style={styles.accountName}>{accountName}</Text>
-        </View>
-      </Pressable>
+        <View style={styles.utilityDivider} />
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.utilityItem,
+            pressed && styles.spaceItemPressed,
+          ]}
+          onPress={openSettings}
+        >
+          <SymbolView
+            name="gearshape"
+            size={20}
+            tintColor="#626267"
+            weight="regular"
+            style={styles.spaceIcon}
+          />
+          <Text style={styles.spaceTitle}>设置</Text>
+        </Pressable>
+      </View>
 
       {menuVisible && selected && (
         <Pressable style={styles.menuLayer} onPress={hideMenu}>
@@ -647,28 +677,40 @@ export default function ConversationList({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-
     backgroundColor: "transparent",
-
-    paddingHorizontal: 20,
-
-    paddingTop: 60,
+    paddingHorizontal: 22,
   },
-  titleRow: {
+
+  brandTitle: {
+    paddingHorizontal: 10,
+    marginBottom: 16,
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: "600",
+    color: "#1C1C1E",
+  },
+  sectionHeaderRow: {
     flexDirection: "row",
-
-    marginBottom: 6,
-
+    minHeight: 36,
+    marginBottom: 2,
+    paddingRight: 2,
     alignItems: "center",
-
     justifyContent: "space-between",
   },
 
+  sectionHeader: {
+    paddingHorizontal: 10,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: "#56565B",
+  },
+
   item: {
-    paddingVertical: 12,
-
+    minHeight: 52,
+    justifyContent: "center",
+    paddingVertical: 4,
     borderRadius: 12,
-
     paddingHorizontal: 12,
   },
 
@@ -677,37 +719,18 @@ const styles = StyleSheet.create({
   },
 
   itemTitle: {
-    fontSize: 16,
-
-    color: "#444",
-  },
-
-  sectionTitlePrimary: {
-    marginTop: 8,
-
-    marginBottom: 8,
-
-    paddingHorizontal: 12,
-
-    fontSize: 15,
-
-    fontWeight: "500",
-
-    color: "#8E8E93",
+    fontSize: 17,
+    lineHeight: 22,
+    color: "#343438",
   },
 
   sectionTitleSecondary: {
-    marginTop: 10,
-
+    marginTop: 8,
     marginBottom: 4,
-
     paddingHorizontal: 12,
-
     fontSize: 13,
-
-    fontWeight: "500",
-
-    color: "#A6A6AA",
+    fontWeight: "600",
+    color: "#85858A",
   },
 
   empty: {
@@ -720,19 +743,19 @@ const styles = StyleSheet.create({
 
   spacesSection: {
     marginTop: 0,
+    paddingBottom: 12,
+  },
 
-    paddingBottom: 24,
+  conversationList: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
 
   spaceItem: {
     flexDirection: "row",
-
     alignItems: "center",
-
     paddingHorizontal: 12,
-
-    paddingVertical: 10,
-
+    height: 46,
     borderRadius: 12,
   },
 
@@ -741,15 +764,13 @@ const styles = StyleSheet.create({
   },
 
   spaceIcon: {
-    width: 27,
-
-    height: 18,
+    width: 35,
+    height: 22,
   },
 
   spaceTitle: {
-    fontSize: 16,
-
-    color: "#444",
+    fontSize: 17,
+    color: "#343438",
   },
 
   momentUnreadDot: {
@@ -766,62 +787,24 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  accountButton: {
+  utilitySection: {
+    marginTop: 6,
+    paddingTop: 4,
+  },
+
+  utilityItem: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    marginTop: 12,
-
-    marginBottom: 4,
-
+    height: 46,
     paddingHorizontal: 12,
-
-    paddingTop: 14,
-
-    paddingBottom: 10,
-
-    borderRadius: 18,
-
-    borderTopWidth: StyleSheet.hairlineWidth,
-
-    borderTopColor: "rgba(60,60,67,0.14)",
+    borderRadius: 12,
   },
 
-  accountButtonPressed: {
-    backgroundColor: "rgba(120,120,128,0.08)",
-  },
-
-  accountAvatar: {
-    width: 34,
-
-    height: 34,
-
-    borderRadius: 17,
-
-    alignItems: "center",
-
-    justifyContent: "center",
-
-    backgroundColor: "rgba(120,120,128,0.11)",
-  },
-
-  accountAvatarText: {
-    fontSize: 15,
-
-    fontWeight: "500",
-
-    color: "#66666A",
-  },
-
-  accountTextBox: {
-    marginLeft: 10,
-  },
-
-  accountName: {
-    fontSize: 16,
-
-    color: "#444",
+  utilityDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 12,
+    marginVertical: 5,
+    backgroundColor: "rgba(60,60,67,0.16)",
   },
 
   menuLayer: {
@@ -896,24 +879,11 @@ const styles = StyleSheet.create({
   },
 
   newButton: {
-    width: 30,
-
-    height: 30,
-
-    borderRadius: 15,
-
-    backgroundColor: "rgba(120,120,128,0.10)",
-
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 6,
     justifyContent: "center",
-
     alignItems: "center",
-  },
-
-  newButtonText: {
-    fontSize: 21,
-
-    color: "#555",
-
-    lineHeight: 24,
   },
 });
