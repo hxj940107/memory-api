@@ -1434,7 +1434,7 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
             })),
             {
               type: "text",
-              text: "你正在为后续聊天建立一条小C的视觉记忆笔记。请用150字以内记录图片中的主体、关键物体、可见文字、数量、颜色、位置和环境，并保留与用户生活相关的场景、关系和可观察的情绪线索。可以谨慎记录如‘用户可能分享了自己准备的餐食’这类有画面依据的生活语境，但不要把推测写成事实。只写第三人称记忆笔记，不要直接回复用户，不要提问，不要使用聊天句式、小C口吻或夸赞用户的话。"
+              text: "你正在为后续聊天建立一条小C的视觉记忆笔记。先准确辨别主体类别，尤其要谨慎区分猫、狗等相似宠物；无法确定时写‘白色长毛宠物’等可确认特征，不要武断判断。请用150字以内记录主体、关键物体、可见文字、数量、颜色、位置和环境，并保留有画面依据的生活场景、关系和可观察情绪线索。只输出一段连续的第三人称纯文本，不要标题、Markdown、列表或换行，不要直接回复用户、提问、使用聊天句式、小C口吻或夸赞用户。"
             }
           ]
         }
@@ -1479,75 +1479,89 @@ console.log("======================================\n")
     const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
 
     if (userMessageId && normalizedImageUrls.length > 0) {
-      const imageDescription = await imageDescriptionPromise
-      console.log("IMAGE DESCRIPTION CHECK:", {
-        userMessageId,
-        imageCount: normalizedImageUrls.length,
-        imageLengths: normalizedImageUrls.map(url => url.length),
-        imageDescription
-      })
-      const { data: imageMessage } = await supabase
-        .from("messages")
-        .select("metadata")
-        .eq("user_id", user_id)
-        .eq("id", userMessageId)
-        .maybeSingle()
+      void (async () => {
+        try {
+          const imageDescription = await imageDescriptionPromise
+          console.log("IMAGE DESCRIPTION CHECK:", {
+            userMessageId,
+            imageCount: normalizedImageUrls.length,
+            imageLengths: normalizedImageUrls.map(url => url.length),
+            imageDescription
+          })
+          const { data: imageMessage } = await supabase
+            .from("messages")
+            .select("metadata")
+            .eq("user_id", user_id)
+            .eq("id", userMessageId)
+            .maybeSingle()
 
-      const { error: visionSummaryError } = await supabase
-        .from("messages")
-        .update({
-          metadata: {
-            ...(imageMessage?.metadata || {}),
-            visionSummary: reply,
-            ...(imageDescription ? { imageDescription } : {})
+          const { error: visionSummaryError } = await supabase
+            .from("messages")
+            .update({
+              metadata: {
+                ...(imageMessage?.metadata || {}),
+                visionSummary: reply,
+                ...(imageDescription ? { imageDescription } : {})
+              }
+            })
+            .eq("user_id", user_id)
+            .eq("id", userMessageId)
+
+          if (visionSummaryError) {
+            console.error("vision summary save failed:", visionSummaryError)
           }
-        })
-        .eq("user_id", user_id)
-        .eq("id", userMessageId)
 
-      if (visionSummaryError) {
-        console.error("vision summary save failed:", visionSummaryError)
-      }
-
-      console.log("IMAGE DESCRIPTION SAVED:", {
-        userMessageId,
-        error: visionSummaryError?.message || null
-      })
+          console.log("IMAGE DESCRIPTION SAVED:", {
+            userMessageId,
+            error: visionSummaryError?.message || null
+          })
+        } catch (err) {
+          console.error("image metadata task failed:", err)
+        }
+      })()
     }
 
     if (shouldUpdateSummaryAfterReply) {
       console.log("ROLLING SUMMARY TRIGGERED AFTER REPLY")
 
-      try {
-        await fetch(
-          `${process.env.BASE_URL}/api/update-summary`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              conversation_id: cid,
-              user_id
-            })
-          }
-        )
+      void (async () => {
+        try {
+          await fetch(
+            `${process.env.BASE_URL}/api/update-summary`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                conversation_id: cid,
+                user_id
+              })
+            }
+          )
 
-        console.log("SUMMARY UPDATED AFTER REPLY")
-      } catch (err) {
-        console.error("update-summary after reply failed:", err)
-      }
+          console.log("SUMMARY UPDATED AFTER REPLY")
+        } catch (err) {
+          console.error("update-summary after reply failed:", err)
+        }
+      })()
     }
 
     // 6.5 update current conversation (cross-device sync)
-    await supabase
-      .from("user_state")
-      .upsert({
-        user_id,
-        last_conversation_id: cid,
-        last_conversation: cid,
-        updated_at: new Date().toISOString()
-      })
+    void (async () => {
+      try {
+        await supabase
+          .from("user_state")
+          .upsert({
+            user_id,
+            last_conversation_id: cid,
+            last_conversation: cid,
+            updated_at: new Date().toISOString()
+          })
+      } catch (err) {
+        console.error("user state update failed:", err)
+      }
+    })()
 
     // 7. memory write
 
@@ -1556,60 +1570,67 @@ console.log("======================================\n")
       .filter(m => m.role === "user")
       .slice(1)[0]
 
-    const judgeResult = (
-      !diaryStyleContext &&
-      !treeholeDraftContext &&
-      !attributionCorrectionContext &&
-      normalizedImageUrls.length === 0 &&
-      shouldRunMemoryJudge(message)
-    )
-        ? await judgeMemory(
-          message,
-          {
-            previousContent: lastUserMessage?.content || "",
-            assistantContext: reply
-          }
-        )
-      : {
-          save: false,
-          content: ""
-        }
-
-    if (judgeResult.save) {
+    void (async () => {
       try {
-        const saved = await saveLongTermMemory(
-          user_id,
-          judgeResult.content
+        const judgeResult = (
+          !diaryStyleContext &&
+          !treeholeDraftContext &&
+          !attributionCorrectionContext &&
+          normalizedImageUrls.length === 0 &&
+          shouldRunMemoryJudge(message)
         )
+            ? await judgeMemory(
+              message,
+              {
+                previousContent: lastUserMessage?.content || "",
+                assistantContext: reply
+              }
+            )
+          : {
+              save: false,
+              content: ""
+            }
 
-        if (saved) {
-          clearUserMemoryCache(user_id)
-          clearConversationMemorySearchCache(cid)
-          console.log("Saved memory:", judgeResult.content)
+        if (judgeResult.save) {
+          try {
+            const saved = await saveLongTermMemory(
+              user_id,
+              judgeResult.content
+            )
+
+            if (saved) {
+              clearUserMemoryCache(user_id)
+              clearConversationMemorySearchCache(cid)
+              console.log("Saved memory:", judgeResult.content)
+            }
+          } catch (err) {
+            console.error("hold-hook failed:", err)
+          }
         }
-
       } catch (err) {
-        console.error("hold-hook failed:", err)
+        console.error("memory judge task failed:", err)
       }
-    }
+    })()
 
-    try {
-      await maybeCreateMoment({
-        user_id,
-        conversation_id: cid,
-        assistant_message_id: assistantMessageId,
-        message,
-        reply,
-        isManualMomentRequest,
-        isDiaryRequest,
-        isTreeholeRequest,
-        attributionCorrectionContext,
-        normalizedImageUrls,
-        hasFileText,
-      })
-    } catch (err) {
-      console.error("moment auto-create failed:", err)
-    }
+    void (async () => {
+      try {
+        await maybeCreateMoment({
+          user_id,
+          conversation_id: cid,
+          assistant_message_id: assistantMessageId,
+          message,
+          reply,
+          isManualMomentRequest,
+          isDiaryRequest,
+          isTreeholeRequest,
+          attributionCorrectionContext,
+          normalizedImageUrls,
+          hasFileText,
+        })
+      } catch (err) {
+        console.error("moment auto-create failed:", err)
+      }
+    })()
 
 return res.status(200).json({
   reply,
