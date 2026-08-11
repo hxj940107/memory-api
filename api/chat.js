@@ -93,14 +93,19 @@ async function saveUserMessage(
 async function getRecentMessages(user_id, conversation_id, limit = 20) {
   const { data } = await supabase
     .from("messages")
-    .select("role, content")
+    .select("role, content, metadata")
     .eq("user_id", user_id)
     .eq("conversation_id", conversation_id)
     .order("created_at", { ascending: false })
     .limit(limit)
 
   if (!data) return []
-  return data.reverse()
+  return data.reverse().map(item => ({
+    role: item.role,
+    content: item.metadata?.visionSummary
+      ? `${item.content}\n\n[图片背景信息]: ${item.metadata.visionSummary}`
+      : item.content
+  }))
 }
 
 function shouldUpdateRollingSummary(messageCount, historySize) {
@@ -1445,6 +1450,27 @@ console.log("======================================\n")
 
     // 6. save assistant
     const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
+
+    if (userMessageId && normalizedImageUrls.length > 0) {
+      const { data: imageMessage } = await supabase
+        .from("messages")
+        .select("metadata")
+        .eq("user_id", user_id)
+        .eq("id", userMessageId)
+        .maybeSingle()
+
+      const { error: visionSummaryError } = await supabase
+        .from("messages")
+        .update({
+          metadata: { ...(imageMessage?.metadata || {}), visionSummary: reply }
+        })
+        .eq("user_id", user_id)
+        .eq("id", userMessageId)
+
+      if (visionSummaryError) {
+        console.error("vision summary save failed:", visionSummaryError)
+      }
+    }
 
     if (shouldUpdateSummaryAfterReply) {
       console.log("ROLLING SUMMARY TRIGGERED AFTER REPLY")
