@@ -1480,6 +1480,12 @@ console.log("======================================\n")
 
     if (userMessageId && normalizedImageUrls.length > 0) {
       const imageDescription = await imageDescriptionPromise
+      console.log("IMAGE DESCRIPTION CHECK:", {
+        userMessageId,
+        imageCount: normalizedImageUrls.length,
+        imageLengths: normalizedImageUrls.map(url => url.length),
+        imageDescription
+      })
       const { data: imageMessage } = await supabase
         .from("messages")
         .select("metadata")
@@ -1502,6 +1508,11 @@ console.log("======================================\n")
       if (visionSummaryError) {
         console.error("vision summary save failed:", visionSummaryError)
       }
+
+      console.log("IMAGE DESCRIPTION SAVED:", {
+        userMessageId,
+        error: visionSummaryError?.message || null
+      })
     }
 
     if (shouldUpdateSummaryAfterReply) {
