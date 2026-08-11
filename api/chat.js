@@ -26,6 +26,36 @@ const systemPrompt = fs.readFileSync(
   "utf-8"
 )
 
+const USER_TIMEZONE = "Asia/Shanghai"
+
+function buildEnvironmentContext(timeZone = USER_TIMEZONE) {
+  const now = new Date()
+  const dateTimeParts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(now)
+  const getPart = type => dateTimeParts.find(part => part.type === type)?.value || ""
+  const weekday = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    weekday: "long"
+  }).format(now)
+  const offset = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "shortOffset"
+  }).formatToParts(now).find(part => part.type === "timeZoneName")?.value
+    ?.replace("GMT", "UTC") || "UTC"
+
+  return `【Environment】
+当前时间：${getPart("year")}-${getPart("month")}-${getPart("day")} ${getPart("hour")}:${getPart("minute")}
+星期：${weekday}
+时区：${timeZone} (${offset})`
+}
+
 // --------------------
 // MEMORY CACHE (NEW)
 // --------------------
@@ -1345,11 +1375,16 @@ try {
 
 }
 
+const environmentContext = buildEnvironmentContext()
+
 const messages = [
   {
     role: "system",
     content: `
 ${systemPrompt}
+
+
+${environmentContext}
 
 
 【Identity｜人格层】
