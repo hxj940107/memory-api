@@ -690,11 +690,12 @@ export default async function handler(req, res) {
           })
         }
 
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("moment_entries")
           .delete()
           .eq("user_id", user_id)
           .eq("id", id)
+          .select("id")
 
         if (error) {
           return res.status(500).json({
@@ -702,8 +703,15 @@ export default async function handler(req, res) {
           })
         }
 
+        if (!data?.length) {
+          return res.status(404).json({
+            error: "moment not found or not deleted"
+          })
+        }
+
         return res.status(200).json({
-          success: true
+          success: true,
+          id: data[0].id
         })
       }
 

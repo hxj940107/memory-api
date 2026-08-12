@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Keyboard, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Dimensions, Keyboard, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -552,7 +552,7 @@ export default function MomentsScreen() {
           updateCommentCount(moment.id, -1);
 
           try {
-            await apiJson("/api/memory", {
+            const result = await apiJson<{ success: boolean; id: string }>("/api/memory", {
               method: "DELETE",
               headers: {
                 "Content-Type": "application/json",
@@ -590,7 +590,7 @@ export default function MomentsScreen() {
           setMoments((items) => items.filter((item) => item.id !== moment.id));
 
           try {
-            await apiJson("/api/memory", {
+            const result = await apiJson<{ success: boolean; id: string }>("/api/memory", {
               method: "DELETE",
               headers: {
                 "Content-Type": "application/json",
@@ -601,9 +601,20 @@ export default function MomentsScreen() {
                 id: moment.id,
               }),
             });
+
+            if (!result.success || result.id !== moment.id) {
+              throw new Error("动态没有从数据库删除。");
+            }
           } catch (error) {
             setMoments(previous);
             Alert.alert("删除失败", error instanceof Error ? error.message : "请稍后再试。");
+            return;
+          }
+
+          try {
+            await loadMoments();
+          } catch (error) {
+            Alert.alert("刷新失败", "动态已删除，下次刷新时会同步最新列表。");
           }
         },
       },
@@ -783,8 +794,12 @@ export default function MomentsScreen() {
       return null;
     }
 
+    const maxWidth = Math.min(Dimensions.get("window").width - 98, 320);
+    const width = Math.min(maxWidth, 420 * item.aspectRatio);
+    const height = width / item.aspectRatio;
+
     return (
-      <View style={[styles.singlePhotoFrame, { aspectRatio: item.aspectRatio }]}>
+      <View style={[styles.singlePhotoFrame, { width, height }]}>
         <Image source={item.source} style={styles.singlePhoto} contentFit="contain" />
       </View>
     );
@@ -804,19 +819,7 @@ export default function MomentsScreen() {
 
         <Text style={styles.title}>朋友圈</Text>
 
-        <Pressable
-          style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]}
-          onPress={() => setPostComposerVisible(true)}
-          hitSlop={10}
-        >
-          <SymbolView
-            name="camera"
-            size={28}
-            tintColor="#FFFFFF"
-            weight="regular"
-            style={styles.cameraIcon}
-          />
-        </Pressable>
+        <View style={styles.navSpacer} />
       </View>
 
       <ScrollView
@@ -843,6 +846,19 @@ export default function MomentsScreen() {
               source={profileCoverUri ? { uri: profileCoverUri } : profileCoverImage}
               style={styles.profileCover}
               contentFit="cover"
+            />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]}
+            onPress={() => setPostComposerVisible(true)}
+            hitSlop={10}
+          >
+            <SymbolView
+              name="camera"
+              size={28}
+              tintColor="#FFFFFF"
+              weight="regular"
+              style={styles.cameraIcon}
             />
           </Pressable>
           <View style={styles.profileInfoRow}>
@@ -1193,6 +1209,9 @@ const styles = StyleSheet.create({
   },
 
   cameraButton: {
+    position: "absolute",
+    top: 54,
+    right: 20,
     width: 44,
     height: 44,
     borderRadius: 22,
