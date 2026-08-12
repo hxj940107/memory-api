@@ -16,6 +16,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { XiaoCColors } from "../constants/theme";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
 import {
   clearLastConversation,
@@ -458,7 +459,7 @@ export default function ConversationList({
             <SymbolView
               name={space.iconName as never}
               size={20}
-              tintColor="#626267"
+              tintColor={XiaoCColors.icon}
               weight="regular"
               style={styles.spaceIcon}
             />
@@ -477,7 +478,7 @@ export default function ConversationList({
           <SymbolView
             name="square.and.pencil"
             size={18}
-            tintColor="#5F5F64"
+            tintColor={XiaoCColors.icon}
             weight="regular"
           />
         </Pressable>
@@ -556,7 +557,7 @@ export default function ConversationList({
           <SymbolView
             name={favoritesSpace.iconName as never}
             size={20}
-            tintColor="#626267"
+            tintColor={XiaoCColors.icon}
             weight="regular"
             style={styles.spaceIcon}
           />
@@ -575,7 +576,7 @@ export default function ConversationList({
           <SymbolView
             name="gearshape"
             size={20}
-            tintColor="#626267"
+            tintColor={XiaoCColors.icon}
             weight="regular"
             style={styles.spaceIcon}
           />
@@ -687,7 +688,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 27,
     fontWeight: "600",
-    color: "#1C1C1E",
+    color: XiaoCColors.textPrimary,
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -703,7 +704,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: "600",
-    color: "#56565B",
+    color: XiaoCColors.textSecondary,
   },
 
   item: {
@@ -715,13 +716,13 @@ const styles = StyleSheet.create({
   },
 
   currentItem: {
-    backgroundColor: "rgba(120,120,128,0.08)",
+    backgroundColor: XiaoCColors.selected,
   },
 
   itemTitle: {
     fontSize: 17,
     lineHeight: 22,
-    color: "#343438",
+    color: XiaoCColors.textPrimary,
   },
 
   sectionTitleSecondary: {
@@ -730,7 +731,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 13,
     fontWeight: "600",
-    color: "#85858A",
+    color: XiaoCColors.textSecondary,
   },
 
   empty: {
@@ -738,7 +739,7 @@ const styles = StyleSheet.create({
 
     textAlign: "center",
 
-    color: "#999",
+    color: XiaoCColors.textSecondary,
   },
 
   spacesSection: {
@@ -760,7 +761,7 @@ const styles = StyleSheet.create({
   },
 
   spaceItemPressed: {
-    backgroundColor: "rgba(120,120,128,0.08)",
+    backgroundColor: XiaoCColors.selected,
   },
 
   spaceIcon: {
@@ -770,7 +771,7 @@ const styles = StyleSheet.create({
 
   spaceTitle: {
     fontSize: 17,
-    color: "#343438",
+    color: XiaoCColors.textPrimary,
   },
 
   momentUnreadDot: {
@@ -780,7 +781,7 @@ const styles = StyleSheet.create({
 
     borderRadius: 3.5,
 
-    backgroundColor: "#FF3B30",
+    backgroundColor: XiaoCColors.destructive,
 
     marginLeft: 8,
 
@@ -804,7 +805,7 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 12,
     marginVertical: 5,
-    backgroundColor: "rgba(60,60,67,0.16)",
+    backgroundColor: XiaoCColors.separator,
   },
 
   menuLayer: {
@@ -819,7 +820,7 @@ const styles = StyleSheet.create({
     width: 200,
     left: 20,
 
-    backgroundColor: "rgba(255,255,255,0.96)",
+    backgroundColor: XiaoCColors.surface,
 
     borderRadius: 18,
 
@@ -841,7 +842,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 13,
 
-    color: "#8E8E93",
+    color: XiaoCColors.textSecondary,
 
     paddingHorizontal: 16,
 
@@ -855,7 +856,7 @@ const styles = StyleSheet.create({
   },
 
   menuActionPressed: {
-    backgroundColor: "rgba(120,120,128,0.10)",
+    backgroundColor: XiaoCColors.selected,
   },
 
   menuText: {
@@ -865,7 +866,7 @@ const styles = StyleSheet.create({
 
     paddingVertical: 12,
 
-    color: "#222",
+    color: XiaoCColors.textPrimary,
   },
 
   deleteText: {
@@ -875,7 +876,7 @@ const styles = StyleSheet.create({
 
     paddingVertical: 12,
 
-    color: "#FF3B30",
+    color: XiaoCColors.destructive,
   },
 
   newButton: {

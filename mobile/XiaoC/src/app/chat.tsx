@@ -49,6 +49,7 @@ import {
 import { saveFavorite } from "../lib/favoritesState";
 import { getSelectedChatModel } from "../lib/modelSettings";
 import { saveChatUsageFromResponse } from "../lib/costState";
+import { XiaoCColors } from "../constants/theme";
 import {
   isTreeholeDraftSaved,
   saveTreeholeDraft,
@@ -1693,7 +1694,7 @@ export default function ChatScreen() {
                 ref={inputRef}
                 style={styles.input}
                 placeholder="和小C说点什么..."
-                placeholderTextColor="#999"
+                placeholderTextColor={XiaoCColors.placeholder}
                 value={message}
                 onChangeText={setMessage}
                 onFocus={() => {
@@ -1933,7 +1934,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
 
-    backgroundColor: "rgba(0,0,0,0.10)",
+    backgroundColor: XiaoCColors.overlay,
 
     zIndex: 100,
   },
@@ -1943,7 +1944,7 @@ const styles = StyleSheet.create({
 
     height: "100%",
 
-    backgroundColor: "#F8F8FA",
+    backgroundColor: XiaoCColors.background,
 
     paddingTop: 0,
 
@@ -1968,7 +1969,7 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#F9F9FB",
+    backgroundColor: XiaoCColors.background,
   },
 
   header: {
@@ -1976,7 +1977,7 @@ const styles = StyleSheet.create({
 
     justifyContent: "center",
 
-    backgroundColor: "rgba(249,249,251,0.88)",
+    backgroundColor: XiaoCColors.navigationBackground,
   },
 
   chatTitle: {
@@ -1988,17 +1989,17 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 22,
     fontWeight: "600",
-    color: "#1C1C1E",
+    color: XiaoCColors.textPrimary,
   },
 
   menuText: {
     fontSize: 26,
-    color: "#555",
+    color: XiaoCColors.icon,
   },
 
   chat: {
     flex: 1,
-    backgroundColor: "#F9F9FB",
+    backgroundColor: XiaoCColors.background,
   },
 
   chatContent: {
@@ -2043,7 +2044,7 @@ const styles = StyleSheet.create({
     minHeight: 42,
     flexShrink: 1,
     justifyContent: "center",
-    backgroundColor: "#4A9EFF",
+    backgroundColor: XiaoCColors.userBubble,
     borderRadius: 20,
     paddingHorizontal: 17,
     paddingVertical: 9,
@@ -2063,7 +2064,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: "flex-start",
     justifyContent: "center",
-    backgroundColor: "rgba(235,235,240,0.85)",
+    backgroundColor: XiaoCColors.assistantBubble,
     borderRadius: 24,
     paddingHorizontal: 17,
     paddingVertical: 9,
@@ -2088,7 +2089,7 @@ const styles = StyleSheet.create({
 
   aiText: {
     fontSize: 17,
-    color: "#444",
+    color: XiaoCColors.textPrimary,
     lineHeight: 25,
     flexShrink: 1,
     includeFontPadding: false,
@@ -2096,7 +2097,7 @@ const styles = StyleSheet.create({
 
   aiTextStrong: {
     fontWeight: "600",
-    color: "#38383A",
+    color: XiaoCColors.textPrimary,
   },
 
   treeholeDraftCard: {
@@ -2451,7 +2452,7 @@ const styles = StyleSheet.create({
   inputArea: {
     paddingHorizontal: 20,
     paddingTop: 10,
-    backgroundColor: "rgba(249,249,251,0.78)",
+    backgroundColor: XiaoCColors.composerBackground,
   },
 
   attachmentPreview: {
@@ -2546,13 +2547,13 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: XiaoCColors.inputSurface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.18)",
+    borderColor: XiaoCColors.separator,
   },
 
   attachText: {
-    color: "#777777",
+    color: XiaoCColors.icon,
     fontSize: 28,
     lineHeight: 30,
     marginTop: -2,
@@ -2562,9 +2563,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 44,
     borderRadius: 22,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: XiaoCColors.inputSurface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.18)",
+    borderColor: XiaoCColors.separator,
     flexDirection: "row",
     alignItems: "center",
     paddingLeft: 14,
@@ -2575,7 +2576,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 17,
     lineHeight: 22,
-    color: "#333",
+    color: XiaoCColors.textPrimary,
     paddingTop: 6,
     paddingBottom: 6,
     maxHeight: 100,
@@ -2590,7 +2591,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#4A9EFF",
+    backgroundColor: XiaoCColors.userBubble,
     alignItems: "center",
     justifyContent: "center",
   },
