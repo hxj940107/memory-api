@@ -794,8 +794,15 @@ export default function MomentsScreen() {
       return null;
     }
 
-    const maxWidth = Math.min(Dimensions.get("window").width - 98, 320);
-    const width = Math.min(maxWidth, 420 * item.aspectRatio);
+    const availableWidth = Dimensions.get("window").width - 98;
+    const isPortrait = item.aspectRatio < 0.8;
+    const isLandscape = item.aspectRatio > 1.2;
+    const maxWidth = Math.min(
+      availableWidth,
+      isPortrait ? 220 : isLandscape ? 320 : 250,
+    );
+    const maxHeight = isPortrait ? 360 : isLandscape ? 240 : 280;
+    const width = Math.min(maxWidth, maxHeight * item.aspectRatio);
     const height = width / item.aspectRatio;
 
     return (
@@ -851,7 +858,8 @@ export default function MomentsScreen() {
           <Pressable
             style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]}
             onPress={() => setPostComposerVisible(true)}
-            hitSlop={10}
+            hitSlop={16}
+            pressRetentionOffset={16}
           >
             <SymbolView
               name="camera"
