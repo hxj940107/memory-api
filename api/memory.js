@@ -464,6 +464,30 @@ async function createXiaoCCommentForUserMoment({ user_id, moment_id, text, image
   return normalizeMomentComment(data)
 }
 
+async function enqueueMomentForXiaoC({ user_id, moment_id }) {
+  const delayMinutes = 20 + Math.floor(Math.random() * 161)
+  const nextCheckAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from("moment_xiaoc_activity")
+    .upsert(
+      {
+        user_id,
+        moment_id: String(moment_id),
+        status: "pending",
+        source_version: 1,
+        next_check_at: nextCheckAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,moment_id,source_version", ignoreDuplicates: true }
+    )
+    .select("id,status,next_check_at")
+    .maybeSingle()
+
+  if (error) throw error
+
+  return data
+}
+
 export default async function handler(req, res) {
   try {
 
@@ -816,21 +840,16 @@ export default async function handler(req, res) {
           })
         }
 
-        let xiaocReply = null
+        let xiaocActivity = null
 
         if (String(author || "").trim() && String(author).trim() !== "小C") {
           try {
-            const uploadedImage = parseMomentImage(imageKey)
-            xiaocReply = await createXiaoCCommentForUserMoment({
+            xiaocActivity = await enqueueMomentForXiaoC({
               user_id,
               moment_id: data.id,
-              text: normalizedText,
-              imageUrl: uploadedImage.image?.startsWith("http")
-                ? uploadedImage.image
-                : null,
             })
-          } catch (replyError) {
-            console.error("moment user post reply failed:", replyError)
+          } catch (activityError) {
+            console.error("moment xiaoc activity enqueue failed:", activityError)
           }
         }
 
@@ -838,7 +857,7 @@ export default async function handler(req, res) {
           success: true,
           id: data.id,
           ...parseMomentImage(data.image_key),
-          xiaocReply
+          xiaocActivity
         })
       }
 
