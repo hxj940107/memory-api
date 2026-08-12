@@ -1401,18 +1401,22 @@ export default function ChatScreen() {
       <View style={styles.container}>
         {drawerVisible && (
           <Animated.View
-            style={[styles.drawerOverlay, drawerOverlayStyle]}
+            style={[styles.drawerOverlayFrame, drawerOverlayStyle]}
           >
+            <View style={styles.drawerOverlay} />
+
             <Pressable
               style={styles.drawerCloseArea}
               onPress={closeDrawer}
             />
 
-            <Animated.View style={[styles.drawer, drawerStyle]}>
-              <ConversationList
-                currentConversationId={conversationId}
-                onNavigate={closeDrawer}
-              />
+            <Animated.View style={[styles.drawerFrame, drawerStyle]}>
+              <View style={styles.drawer}>
+                <ConversationList
+                  currentConversationId={conversationId}
+                  onNavigate={closeDrawer}
+                />
+              </View>
             </Animated.View>
           </Animated.View>
         )}
@@ -1926,7 +1930,7 @@ const styles = StyleSheet.create({
 
     width: "18%",
   },
-  drawerOverlay: {
+  drawerOverlayFrame: {
     position: "absolute",
 
     top: 0,
@@ -1934,21 +1938,18 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
 
-    backgroundColor: XiaoCColors.overlay,
-
     zIndex: 100,
   },
 
-  drawer: {
+  drawerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: XiaoCColors.overlay,
+  },
+
+  drawerFrame: {
     width: "82%",
 
     height: "100%",
-
-    backgroundColor: XiaoCColors.background,
-
-    paddingTop: 0,
-
-    paddingHorizontal: 0,
 
     borderTopRightRadius: 28,
     borderBottomRightRadius: 28,
@@ -1965,6 +1966,11 @@ const styles = StyleSheet.create({
     },
 
     elevation: 8,
+  },
+
+  drawer: {
+    flex: 1,
+    backgroundColor: XiaoCColors.background,
   },
 
   container: {
