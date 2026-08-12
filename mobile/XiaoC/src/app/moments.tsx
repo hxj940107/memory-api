@@ -807,7 +807,7 @@ export default function MomentsScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.nav}>
+      <View style={styles.nav} pointerEvents="box-none">
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <SymbolView
             name="chevron.left"
