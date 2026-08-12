@@ -25,6 +25,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -547,6 +548,7 @@ function DiaryPreviewCard({
 }
 export default function ChatScreen() {
   const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
 
   const drawerWidth = Dimensions.get("window").width * 0.82;
 
@@ -582,6 +584,9 @@ export default function ChatScreen() {
   const [loadingHistory, setLoadingHistory] = useState(true);
 
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+  const keyboardVisibleRef = useRef(false);
+  const sendButtonProgress = useRef(new RNAnimated.Value(0)).current;
 
   const [conversationId, setConversationId] = useState<string | null>(null);
 
@@ -590,6 +595,14 @@ export default function ChatScreen() {
   const canSendMessage =
     message.trim().length > 0 || selectedImages.length > 0 || !!selectedFile;
   const isSendDisabled = !canSendMessage || isTyping;
+
+  useEffect(() => {
+    RNAnimated.timing(sendButtonProgress, {
+      toValue: canSendMessage ? 1 : 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [canSendMessage, sendButtonProgress]);
 
   const scrollToLatestMessage = (animated = true) => {
     requestAnimationFrame(() => {
@@ -667,24 +680,34 @@ export default function ChatScreen() {
     ]);
   };
 
-  useEffect(() => {
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-
-    const keyboardShowSubscription = Keyboard.addListener(showEvent, () => {
-      setTimeout(() => {
-        scrollToLatestMessage(true);
-      }, 80);
-    });
-
-    return () => {
-      keyboardShowSubscription.remove();
-    };
-  }, []);
-
   const drawerProgress = useSharedValue(0);
 
-  const openDrawer = () => {
+  const dismissKeyboard = () =>
+    new Promise<void>((resolve) => {
+      if (!keyboardVisibleRef.current) {
+        inputRef.current?.blur();
+        Keyboard.dismiss();
+        resolve();
+        return;
+      }
+
+      const subscription = Keyboard.addListener("keyboardDidHide", () => {
+        clearTimeout(timeout);
+        subscription.remove();
+        resolve();
+      });
+      const timeout = setTimeout(() => {
+        subscription.remove();
+        resolve();
+      }, 400);
+
+      inputRef.current?.blur();
+      Keyboard.dismiss();
+    });
+
+  const openDrawer = async () => {
+    await dismissKeyboard();
+
     drawerProgress.value = 0;
 
     setDrawerVisible(true);
@@ -713,6 +736,34 @@ export default function ChatScreen() {
         },
       );
     });
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+
+    const keyboardShowSubscription = Keyboard.addListener(showEvent, () => {
+      keyboardVisibleRef.current = true;
+
+      if (drawerVisible) {
+        closeDrawer();
+      }
+
+      setTimeout(() => {
+        scrollToLatestMessage(true);
+      }, 80);
+    });
+    const keyboardHideSubscription = Keyboard.addListener(
+      "keyboardDidHide",
+      () => {
+        keyboardVisibleRef.current = false;
+      },
+    );
+
+    return () => {
+      keyboardShowSubscription.remove();
+      keyboardHideSubscription.remove();
+    };
+  }, [drawerVisible]);
 
   /*
   const panGesture = Gesture.Pan()
@@ -1365,7 +1416,17 @@ export default function ChatScreen() {
           </Animated.View>
         )}
 
-        <View style={styles.header}>
+        <View
+          style={[
+            styles.header,
+            {
+              height: insets.top + 44,
+              paddingTop: insets.top,
+            },
+          ]}
+        >
+          <Text style={styles.chatTitle}>小C</Text>
+
           <Pressable
             style={{
               width: 44,
@@ -1564,7 +1625,12 @@ export default function ChatScreen() {
           {isTyping && <TypingDots />}
         </ScrollView>
 
-        <View style={styles.inputArea}>
+        <View
+          style={[
+            styles.inputArea,
+            { paddingBottom: Math.max(insets.bottom, 10) },
+          ]}
+        >
           {selectedImages.length > 0 && (
             <View style={styles.attachmentPreviewList}>
               {selectedImages.map((selectedImage, index) => (
@@ -1617,36 +1683,60 @@ export default function ChatScreen() {
             </View>
           )}
 
-          <View style={styles.inputBox}>
+          <View style={styles.inputControls}>
             <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
               <Text style={styles.attachText}>＋</Text>
             </Pressable>
 
-            <TextInput
-              style={styles.input}
-              placeholder="和小C说点什么..."
-              placeholderTextColor="#999"
-              value={message}
-              onChangeText={setMessage}
-              onFocus={() => {
-                setTimeout(() => {
-                  scrollToLatestMessage(true);
-                }, 120);
-              }}
-              multiline
-            />
+            <View style={styles.inputBox}>
+              <TextInput
+                ref={inputRef}
+                style={styles.input}
+                placeholder="和小C说点什么..."
+                placeholderTextColor="#999"
+                value={message}
+                onChangeText={setMessage}
+                onFocus={() => {
+                  if (drawerVisible) {
+                    closeDrawer();
+                  }
 
-            <Pressable
-              style={[
-                styles.sendButton,
-                canSendMessage && !isTyping && styles.sendActive,
-                isTyping && styles.sendDisabled,
-              ]}
-              onPress={sendMessage}
-              disabled={isSendDisabled}
-            >
-              <Text style={styles.sendText}>↑</Text>
-            </Pressable>
+                  setTimeout(() => {
+                    scrollToLatestMessage(true);
+                  }, 120);
+                }}
+                multiline
+              />
+
+              <RNAnimated.View
+                pointerEvents={canSendMessage ? "auto" : "none"}
+                style={[
+                  styles.sendButtonSlot,
+                  {
+                    opacity: sendButtonProgress,
+                    transform: [
+                      {
+                        scale: sendButtonProgress.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.78, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Pressable
+                  style={[
+                    styles.sendButton,
+                    isTyping && styles.sendDisabled,
+                  ]}
+                  onPress={sendMessage}
+                  disabled={isSendDisabled}
+                >
+                  <Text style={styles.sendText}>↑</Text>
+                </Pressable>
+              </RNAnimated.View>
+            </View>
           </View>
         </View>
 
@@ -1878,27 +1968,37 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F9F9FB",
   },
 
   header: {
-    height: 105,
-
-    paddingTop: 35,
-
     paddingLeft: 28,
 
     justifyContent: "center",
+
+    backgroundColor: "rgba(249,249,251,0.88)",
+  },
+
+  chatTitle: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 11,
+    textAlign: "center",
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "600",
+    color: "#1C1C1E",
   },
 
   menuText: {
     fontSize: 26,
     color: "#555",
-    marginTop: 8,
   },
 
   chat: {
     flex: 1,
+    backgroundColor: "#F9F9FB",
   },
 
   chatContent: {
@@ -1963,8 +2063,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: "flex-start",
     justifyContent: "center",
-    backgroundColor: "#F2F2F7",
-    borderRadius: 20,
+    backgroundColor: "rgba(235,235,240,0.85)",
+    borderRadius: 24,
     paddingHorizontal: 17,
     paddingVertical: 9,
     overflow: "visible",
@@ -2350,7 +2450,8 @@ const styles = StyleSheet.create({
 
   inputArea: {
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 10,
+    backgroundColor: "rgba(249,249,251,0.78)",
   },
 
   attachmentPreview: {
@@ -2433,23 +2534,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  inputBox: {
-    minHeight: 55,
-    borderRadius: 28,
-    backgroundColor: "#F5F5F5",
+  inputControls: {
     flexDirection: "row",
     alignItems: "center",
-    paddingLeft: 8,
-    paddingRight: 8,
+    gap: 8,
   },
 
   attachButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 4,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(60,60,67,0.18)",
   },
 
   attachText: {
@@ -2459,24 +2558,41 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
 
+  inputBox: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(60,60,67,0.18)",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 14,
+    paddingRight: 3,
+  },
+
   input: {
     flex: 1,
     fontSize: 17,
+    lineHeight: 22,
     color: "#333",
+    paddingTop: 6,
+    paddingBottom: 6,
     maxHeight: 100,
   },
 
-  sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#D8D8D8",
-    alignItems: "center",
-    justifyContent: "center",
+  sendButtonSlot: {
+    width: 36,
+    height: 36,
   },
 
-  sendActive: {
-    backgroundColor: "#555555",
+  sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#4A9EFF",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   sendDisabled: {
