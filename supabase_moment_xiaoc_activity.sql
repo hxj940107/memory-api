@@ -19,3 +19,100 @@ create table if not exists public.moment_xiaoc_activity (
 create index if not exists moment_xiaoc_activity_pending_idx
   on public.moment_xiaoc_activity (status, next_check_at)
   where status = 'pending';
+
+create extension if not exists pg_cron with schema extensions;
+create extension if not exists pg_net with schema extensions;
+
+create or replace function public.check_pending_moments_for_xiaoc()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  local_now timestamp := now() at time zone 'Asia/Shanghai';
+  quiet_hours boolean;
+  deferred_count integer := 0;
+  seen_count integer := 0;
+begin
+  quiet_hours := local_now::time < time '08:30'
+    or local_now::time >= time '23:30';
+
+  if quiet_hours then
+    update public.moment_xiaoc_activity
+    set
+      next_check_at = (
+        (
+          case
+            when local_now::time >= time '23:30'
+              then local_now::date + 1
+            else local_now::date
+          end
+        )::timestamp
+        + time '09:00'
+        + random() * interval '1 hour'
+      ) at time zone 'Asia/Shanghai',
+      updated_at = now()
+    where status = 'pending'
+      and next_check_at <= now();
+
+    get diagnostics deferred_count = row_count;
+  else
+    update public.moment_xiaoc_activity
+    set
+      status = 'seen',
+      seen_at = now(),
+      decision = 'none',
+      updated_at = now()
+    where status = 'pending'
+      and next_check_at <= now();
+
+    get diagnostics seen_count = row_count;
+  end if;
+
+  return jsonb_build_object(
+    'seen', seen_count,
+    'deferred', deferred_count,
+    'checked_at', now()
+  );
+end;
+$$;
+
+do $$
+declare
+  existing_job_id bigint;
+begin
+  select jobid into existing_job_id
+  from cron.job
+  where jobname = 'xiaoc-moment-seen-check';
+
+  if existing_job_id is not null then
+    perform cron.unschedule(existing_job_id);
+  end if;
+
+  perform cron.schedule(
+    'xiaoc-moment-seen-check',
+    '0 * * * *',
+    $schedule$
+      select net.http_get(
+        url := (
+          select decrypted_secret
+          from vault.decrypted_secrets
+          where name = 'xiaoc_api_base_url'
+          limit 1
+        ) || '/api/memory?type=moment_xiaoc_check',
+        headers := jsonb_build_object(
+          'Authorization',
+          'Bearer ' || (
+            select decrypted_secret
+            from vault.decrypted_secrets
+            where name = 'xiaoc_cron_secret'
+            limit 1
+          )
+        ),
+        timeout_milliseconds := 30000
+      );
+    $schedule$
+  );
+end;
+$$;

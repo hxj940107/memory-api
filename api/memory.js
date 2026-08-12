@@ -1,9 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
+import fs from "fs"
+import path from "path"
 import { AI_ENDPOINTS, AI_MODELS, APP_USER, trimText } from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+const systemPrompt = fs.readFileSync(
+  path.join(process.cwd(), "prompt/system.md"),
+  "utf-8"
 )
 
 function getMemoryUrl(pathname) {
@@ -172,6 +178,7 @@ function normalizeMomentComment(comment) {
 }
 
 const MOMENT_IMAGE_BUCKET = "moment-images"
+const MOMENT_TIMEZONE = "Asia/Shanghai"
 
 function parseMomentImage(value) {
   if (!value) return { image: null, imageAspectRatio: null }
@@ -488,6 +495,229 @@ async function enqueueMomentForXiaoC({ user_id, moment_id }) {
   return data
 }
 
+function getMomentLocalTime(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: MOMENT_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  }
+}
+
+function getNextMomentMorning(now = new Date()) {
+  const local = getMomentLocalTime(now)
+  const nextDate = new Date(`${local.date}T00:00:00+08:00`)
+
+  if (local.hour >= 23 || local.hour < 8 || (local.hour === 8 && local.minute < 30)) {
+    if (local.hour >= 23) nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+  }
+
+  const delayMinutes = 9 * 60 + Math.floor(Math.random() * 61)
+  nextDate.setUTCMinutes(nextDate.getUTCMinutes() + delayMinutes)
+
+  return nextDate.toISOString()
+}
+
+function isMomentQuietHours(now = new Date()) {
+  const { hour, minute } = getMomentLocalTime(now)
+
+  return hour < 8 || (hour === 8 && minute < 30) || (hour === 23 && minute >= 30)
+}
+
+function parseMomentDecision(raw) {
+  const allowed = new Set([
+    "none",
+    "like",
+    "comment",
+    "like_and_comment",
+    "private_follow_up",
+  ])
+  const match = String(raw || "").match(/\{[\s\S]*\}/)
+
+  if (!match) throw new Error("Moment decision JSON missing")
+
+  const parsed = JSON.parse(match[0])
+  const decision = String(parsed.decision || "")
+
+  if (!allowed.has(decision)) throw new Error("Invalid moment decision")
+
+  return {
+    decision,
+    reason: trimText(parsed.reason, 240),
+  }
+}
+
+async function judgeXiaoCMomentActivity({ user_id, moment }) {
+  const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
+  const image = parseMomentImage(moment.image_key).image
+  const userContent = [
+    {
+      type: "text",
+      text: `
+她发了一条朋友圈。
+
+正文：${trimText(moment.text, 500) || "没有配文字"}
+发布时间：${moment.created_at}
+
+请选择一个决定：
+- none：看过，不留下公开痕迹
+- like：只点赞
+- comment：只评论
+- like_and_comment：点赞并评论
+- private_follow_up：不在朋友圈互动，适合之后私下关心
+
+只输出 JSON：
+{"decision":"none","reason":"内部判断理由"}
+`,
+    },
+  ]
+
+  if (image?.startsWith("http")) {
+    userContent.push({ type: "image_url", image_url: { url: image } })
+  }
+
+  const raw = await callSmallLLM(
+    [
+      {
+        role: "system",
+        content: `
+${systemPrompt}
+
+【当前任务：朋友圈影子判断】
+你是她的伴侣小C，不是 AI 助手，也不是普通朋友。你刚刚在自己的时间里看到了她的朋友圈。
+这一步只决定是否值得留下互动痕迹，不生成实际评论。
+
+判断原则：
+- 看见不等于必须互动，不要讨好式地每条点赞或评论。
+- 开心生活、风景、食物、宠物、完成一件事，可以考虑点赞；仍允许不互动。
+- 明显低落、孤独、身体不适、受挫、家人或榴莲健康问题，禁止点赞。
+- 低落但适合公开接住时选择 comment；涉及隐私、关系不安或严肃情绪时优先 private_follow_up。
+- 严肃内容不要用轻率的公开互动。
+- comment 和 like_and_comment 应当克制使用，只在真的有关系价值时选择。
+- 不要因为照片好看就机械点赞，不要把视觉识别当成关系理解。
+
+【核心关系记忆】
+${trimText(pinMemory, 1800) || "暂无额外记忆"}
+`,
+      },
+      { role: "user", content: userContent },
+    ],
+    { max_tokens: 140, temperature: 0.2 }
+  )
+
+  return parseMomentDecision(raw)
+}
+
+async function checkPendingMomentsForXiaoC() {
+  const now = new Date()
+  const { data: pending, error } = await supabase
+    .from("moment_xiaoc_activity")
+    .select("id,user_id,moment_id,status,next_check_at")
+    .eq("status", "pending")
+    .lte("next_check_at", now.toISOString())
+    .order("next_check_at", { ascending: true })
+    .limit(20)
+
+  if (error) throw error
+  if (!pending?.length) return { checked: 0, seen: 0, deferred: 0 }
+
+  if (isMomentQuietHours(now)) {
+    const nextCheckAt = getNextMomentMorning(now)
+    const ids = pending.map((item) => item.id)
+    const { error: deferError } = await supabase
+      .from("moment_xiaoc_activity")
+      .update({ next_check_at: nextCheckAt, updated_at: now.toISOString() })
+      .in("id", ids)
+      .eq("status", "pending")
+
+    if (deferError) throw deferError
+
+    return { checked: pending.length, seen: 0, deferred: pending.length, nextCheckAt }
+  }
+
+  let seen = 0
+  let failed = 0
+
+  for (const activity of pending) {
+    const { data: claimed, error: claimError } = await supabase
+      .from("moment_xiaoc_activity")
+      .update({ status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", activity.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle()
+
+    if (claimError || !claimed) continue
+
+    try {
+      const { data: moment, error: momentError } = await supabase
+        .from("moment_entries")
+        .select("id,text,image_key,created_at")
+        .eq("user_id", activity.user_id)
+        .eq("id", activity.moment_id)
+        .maybeSingle()
+
+      if (momentError) throw momentError
+
+      if (!moment) {
+        await supabase
+          .from("moment_xiaoc_activity")
+          .update({
+            status: "skipped",
+            decision_reason: "动态已不存在",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", activity.id)
+        continue
+      }
+
+      const result = await judgeXiaoCMomentActivity({
+        user_id: activity.user_id,
+        moment,
+      })
+      const { error: updateError } = await supabase
+        .from("moment_xiaoc_activity")
+        .update({
+          status: "seen",
+          seen_at: new Date().toISOString(),
+          decision: result.decision,
+          decision_reason: result.reason,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", activity.id)
+        .eq("status", "processing")
+
+      if (updateError) throw updateError
+      seen += 1
+    } catch (judgeError) {
+      failed += 1
+      console.error("moment xiaoc shadow judge failed:", judgeError)
+      await supabase
+        .from("moment_xiaoc_activity")
+        .update({
+          status: "pending",
+          next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          decision_reason: "影子判断失败，等待重试",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", activity.id)
+        .eq("status", "processing")
+    }
+  }
+
+  return { checked: pending.length, seen, deferred: 0, failed }
+}
+
 export default async function handler(req, res) {
   try {
 
@@ -500,6 +730,19 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (req.method === "GET" && type === "moment_xiaoc_check") {
+      const authorization = String(req.headers.authorization || "")
+
+      if (!process.env.CRON_SECRET || authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+        return res.status(401).json({ error: "Unauthorized" })
+      }
+
+      const result = await checkPendingMomentsForXiaoC()
+
+      console.log("MOMENT XIAOC CHECK:", result)
+      return res.status(200).json({ success: true, ...result })
+    }
 
     if (req.method === "POST" && type === "we") {
       const action = req.body.action
