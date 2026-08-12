@@ -824,7 +824,7 @@ export default function MomentsScreen() {
           />
         </Pressable>
 
-        <Text style={styles.title}>朋友圈</Text>
+        <Text style={styles.title} pointerEvents="none">朋友圈</Text>
 
         <View style={styles.navSpacer} />
       </View>
@@ -857,17 +857,23 @@ export default function MomentsScreen() {
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]}
-            onPress={() => setPostComposerVisible(true)}
+            onPressIn={() => console.log("MOMENTS CAMERA PRESS IN")}
+            onPress={() => {
+              console.log("MOMENTS CAMERA ON PRESS");
+              setPostComposerVisible(true);
+            }}
             hitSlop={16}
             pressRetentionOffset={16}
           >
-            <SymbolView
-              name="camera"
-              size={28}
-              tintColor="#FFFFFF"
-              weight="regular"
-              style={styles.cameraIcon}
-            />
+            <View pointerEvents="none">
+              <SymbolView
+                name="camera"
+                size={28}
+                tintColor="#FFFFFF"
+                weight="regular"
+                style={styles.cameraIcon}
+              />
+            </View>
           </Pressable>
           <View style={styles.profileInfoRow}>
             <Text style={styles.profileName}>{accountName}</Text>
@@ -1220,8 +1226,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 54,
     right: 20,
-    zIndex: 2,
-    elevation: 2,
+    zIndex: 100,
+    elevation: 20,
     width: 44,
     height: 44,
     borderRadius: 22,
@@ -1255,6 +1261,7 @@ const styles = StyleSheet.create({
   },
 
   profileCoverButton: {
+    zIndex: 0,
     width: "100%",
     height: 360,
   },
