@@ -14,21 +14,29 @@ const systemColor = (name: string, light: string) =>
   Platform.OS === 'ios' ? PlatformColor(name) : light;
 
 export const XiaoCColors = {
-  background: dynamicColor('#F9F9FB', '#000000'),
-  navigationBackground: dynamicColor('rgba(249,249,251,0.88)', 'rgba(28,28,30,0.88)'),
-  composerBackground: dynamicColor('rgba(249,249,251,0.78)', 'rgba(28,28,30,0.78)'),
+  background: dynamicColor('#F9F9FB', '#171719'),
+  navigationBackground: dynamicColor('rgba(249,249,251,0.88)', 'rgba(36,36,38,0.90)'),
+  composerBackground: dynamicColor('rgba(249,249,251,0.78)', 'transparent'),
   surface: systemColor('secondarySystemBackgroundColor', '#F2F2F7'),
   textPrimary: systemColor('labelColor', '#1C1C1E'),
   textSecondary: systemColor('secondaryLabelColor', '#8E8E93'),
   placeholder: systemColor('placeholderTextColor', '#8E8E93'),
   separator: systemColor('separatorColor', 'rgba(60,60,67,0.29)'),
-  userBubble: dynamicColor('#4A9EFF', '#3B8FEA'),
-  assistantBubble: systemColor('systemGray6Color', '#F2F2F7'),
-  inputSurface: systemColor('secondarySystemBackgroundColor', '#FFFFFF'),
+  userBubble: dynamicColor('#4A9EFF', '#347FCE'),
+  assistantBubble: dynamicColor('#F0F0F5', '#303033'),
+  inputSurface: dynamicColor('#FFFFFF', 'rgba(44,44,46,0.72)'),
+  inputBorder: dynamicColor('rgba(60,60,67,0.18)', 'rgba(255,255,255,0.12)'),
   overlay: dynamicColor('rgba(0,0,0,0.10)', 'rgba(0,0,0,0.48)'),
   selected: systemColor('tertiarySystemFillColor', 'rgba(118,118,128,0.12)'),
   icon: systemColor('secondaryLabelColor', '#626267'),
   destructive: systemColor('systemRedColor', '#FF3B30'),
+  sidebarMaterial: dynamicColor('rgba(248,248,250,0.96)', 'rgba(28,28,30,0.92)'),
+  sidebarTitle: dynamicColor('#1C1C1E', '#F5F5F7'),
+  sidebarSection: dynamicColor('#85858A', '#98989D'),
+  sidebarText: dynamicColor('#343438', '#E5E5EA'),
+  sidebarIcon: dynamicColor('#626267', '#98989D'),
+  sidebarSelected: dynamicColor('rgba(118,118,128,0.10)', 'rgba(255,255,255,0.12)'),
+  sidebarSeparator: dynamicColor('rgba(60,60,67,0.16)', 'rgba(255,255,255,0.12)'),
 } as const;
 
 export const Colors = {

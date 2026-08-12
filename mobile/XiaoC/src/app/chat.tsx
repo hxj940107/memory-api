@@ -1951,14 +1951,9 @@ const styles = StyleSheet.create({
 
     height: "100%",
 
-    borderTopRightRadius: 28,
-    borderBottomRightRadius: 28,
-
-    overflow: "hidden",
-
     shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
+    shadowOpacity: 0.24,
+    shadowRadius: 28,
 
     shadowOffset: {
       width: 8,
@@ -1970,7 +1965,12 @@ const styles = StyleSheet.create({
 
   drawer: {
     flex: 1,
-    backgroundColor: XiaoCColors.background,
+    backgroundColor: XiaoCColors.sidebarMaterial,
+    borderTopRightRadius: 28,
+    borderBottomRightRadius: 28,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: XiaoCColors.sidebarSeparator,
+    overflow: "hidden",
   },
 
   container: {
@@ -1984,6 +1984,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
 
     backgroundColor: XiaoCColors.navigationBackground,
+
+    borderBottomWidth: StyleSheet.hairlineWidth,
+
+    borderBottomColor: XiaoCColors.separator,
   },
 
   chatTitle: {
@@ -2456,7 +2460,7 @@ const styles = StyleSheet.create({
   },
 
   inputArea: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 28,
     paddingTop: 10,
     backgroundColor: XiaoCColors.composerBackground,
   },
@@ -2544,7 +2548,7 @@ const styles = StyleSheet.create({
   inputControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 12,
   },
 
   attachButton: {
@@ -2555,7 +2559,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: XiaoCColors.inputSurface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: XiaoCColors.separator,
+    borderColor: XiaoCColors.inputBorder,
   },
 
   attachText: {
@@ -2571,7 +2575,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: XiaoCColors.inputSurface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: XiaoCColors.separator,
+    borderColor: XiaoCColors.inputBorder,
     flexDirection: "row",
     alignItems: "center",
     paddingLeft: 14,

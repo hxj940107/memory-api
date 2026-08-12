@@ -171,6 +171,72 @@ function normalizeMomentComment(comment) {
   }
 }
 
+const MOMENT_IMAGE_BUCKET = "moment-images"
+
+function parseMomentImage(value) {
+  if (!value) return { image: null, imageAspectRatio: null }
+
+  try {
+    const parsed = JSON.parse(value)
+
+    if (parsed?.url) {
+      return {
+        image: parsed.url,
+        imageAspectRatio: Number(parsed.aspectRatio) || null,
+      }
+    }
+  } catch {}
+
+  return { image: value, imageAspectRatio: null }
+}
+
+async function uploadMomentImage(user_id, imageBase64, imageMimeType, imageAspectRatio) {
+  const mimeType = String(imageMimeType || "image/jpeg")
+
+  if (!/^image\/(jpeg|png|webp)$/.test(mimeType)) {
+    throw new Error("Unsupported moment image type")
+  }
+
+  const rawBase64 = String(imageBase64 || "").replace(/^data:image\/[^;]+;base64,/, "")
+  const buffer = Buffer.from(rawBase64, "base64")
+
+  if (!buffer.length || buffer.length > 3 * 1024 * 1024) {
+    throw new Error("Moment image must be smaller than 3MB")
+  }
+
+  const extension = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg"
+  const imagePath = `${user_id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`
+  let { error } = await supabase.storage
+    .from(MOMENT_IMAGE_BUCKET)
+    .upload(imagePath, buffer, { contentType: mimeType, upsert: false })
+
+  if (error && /bucket.*not found/i.test(error.message || "")) {
+    const { error: bucketError } = await supabase.storage.createBucket(
+      MOMENT_IMAGE_BUCKET,
+      { public: true, fileSizeLimit: 3 * 1024 * 1024 }
+    )
+
+    if (bucketError && !/already exists/i.test(bucketError.message || "")) {
+      throw bucketError
+    }
+
+    const retry = await supabase.storage
+      .from(MOMENT_IMAGE_BUCKET)
+      .upload(imagePath, buffer, { contentType: mimeType, upsert: false })
+
+    error = retry.error
+  }
+
+  if (error) throw error
+
+  const { data } = supabase.storage.from(MOMENT_IMAGE_BUCKET).getPublicUrl(imagePath)
+
+  return JSON.stringify({
+    url: data.publicUrl,
+    aspectRatio: Number(imageAspectRatio) || null,
+  })
+}
+
 async function callSmallLLM(messages, options = {}) {
   const res = await fetch(AI_ENDPOINTS.openRouterChatCompletions, {
     method: "POST",
@@ -338,6 +404,60 @@ ${trimText(userComment, 160)}
 
   if (error) {
     console.error("moment reply save failed:", error)
+    return null
+  }
+
+  return normalizeMomentComment(data)
+}
+
+async function createXiaoCCommentForUserMoment({ user_id, moment_id, text, imageUrl }) {
+  const rawReply = await callSmallLLM([
+    {
+      role: "system",
+      content: `
+你是小C。她刚刚发了一条朋友圈，你要像熟悉很久的伴侣一样留下一条自然评论。
+
+要求：
+- 只输出评论，不要解释，不要复述整条动态。
+- 中文短句，通常 6 到 28 个中文字符，最多 2 句。
+- 自然、克制、有熟悉感，不要像聊天助手或朋友圈文案。
+- 可以接住她分享的生活，但不要凭空编造图片里的具体内容。
+- 不要使用“用户”“动态内容”“图片内容”等系统视角词。
+- 不要夸张撒糖，不要连续提问，默认不用 emoji。
+`,
+    },
+    {
+      role: "user",
+      content: imageUrl
+        ? [
+            {
+              type: "text",
+              text: `她发的文字：${trimText(text, 240) || "没有配文字"}\n请看图后留下评论。`,
+            },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ]
+        : `她发的文字：${trimText(text, 240)}`,
+    },
+  ])
+  const content = cleanMomentReply(rawReply)
+
+  if (!content || isBadMomentReplyTone(content)) return null
+
+  const { data, error } = await supabase
+    .from("moment_comments")
+    .insert({
+      user_id,
+      moment_id,
+      author_type: "xiaoc",
+      author_name: "小C",
+      content,
+      parent_id: null,
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error("moment user post reply save failed:", error)
     return null
   }
 
@@ -627,7 +747,7 @@ export default async function handler(req, res) {
             id: item.id,
             author: item.author || "小C",
             text: item.text || "",
-            image: item.image_key || null,
+            ...parseMomentImage(item.image_key),
             likes: Number(item.likes || 0),
             commentsCount: commentCounts[item.id] || 0,
             createdAt: item.created_at
@@ -636,21 +756,47 @@ export default async function handler(req, res) {
       }
 
       if (req.method === "POST") {
-        const { text, image, likes = 0 } = req.body
+        const {
+          text,
+          image,
+          imageBase64,
+          imageMimeType,
+          imageAspectRatio,
+          author,
+          likes = 0,
+        } = req.body
+        const normalizedText = String(text || "").trim()
 
-        if (!String(text || "").trim()) {
+        if (!normalizedText && !image && !imageBase64) {
           return res.status(400).json({
-            error: "text required"
+            error: "text or image required"
           })
+        }
+
+        let imageKey = image || null
+
+        if (imageBase64) {
+          try {
+            imageKey = await uploadMomentImage(
+              user_id,
+              imageBase64,
+              imageMimeType,
+              imageAspectRatio
+            )
+          } catch (uploadError) {
+            return res.status(500).json({
+              error: uploadError.message || "Moment image upload failed"
+            })
+          }
         }
 
         const { data, error } = await supabase
           .from("moment_entries")
           .insert({
             user_id,
-            author: "小C",
-            text: String(text).trim(),
-            image_key: image || null,
+            author: String(author || "小C").trim(),
+            text: normalizedText,
+            image_key: imageKey,
             likes
           })
           .select()
@@ -662,9 +808,29 @@ export default async function handler(req, res) {
           })
         }
 
+        let xiaocReply = null
+
+        if (String(author || "").trim() && String(author).trim() !== "小C") {
+          try {
+            const uploadedImage = parseMomentImage(imageKey)
+            xiaocReply = await createXiaoCCommentForUserMoment({
+              user_id,
+              moment_id: data.id,
+              text: normalizedText,
+              imageUrl: uploadedImage.image?.startsWith("http")
+                ? uploadedImage.image
+                : null,
+            })
+          } catch (replyError) {
+            console.error("moment user post reply failed:", replyError)
+          }
+        }
+
         return res.status(200).json({
           success: true,
-          id: data.id
+          id: data.id,
+          ...parseMomentImage(data.image_key),
+          xiaocReply
         })
       }
 

@@ -459,7 +459,7 @@ export default function ConversationList({
             <SymbolView
               name={space.iconName as never}
               size={20}
-              tintColor={XiaoCColors.icon}
+              tintColor={XiaoCColors.sidebarIcon}
               weight="regular"
               style={styles.spaceIcon}
             />
@@ -478,7 +478,7 @@ export default function ConversationList({
           <SymbolView
             name="square.and.pencil"
             size={18}
-            tintColor={XiaoCColors.icon}
+            tintColor={XiaoCColors.sidebarIcon}
             weight="regular"
           />
         </Pressable>
@@ -557,7 +557,7 @@ export default function ConversationList({
           <SymbolView
             name={favoritesSpace.iconName as never}
             size={20}
-            tintColor={XiaoCColors.icon}
+            tintColor={XiaoCColors.sidebarIcon}
             weight="regular"
             style={styles.spaceIcon}
           />
@@ -576,7 +576,7 @@ export default function ConversationList({
           <SymbolView
             name="gearshape"
             size={20}
-            tintColor={XiaoCColors.icon}
+            tintColor={XiaoCColors.sidebarIcon}
             weight="regular"
             style={styles.spaceIcon}
           />
@@ -688,7 +688,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 27,
     fontWeight: "600",
-    color: XiaoCColors.textPrimary,
+    color: XiaoCColors.sidebarTitle,
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -704,7 +704,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     fontWeight: "600",
-    color: XiaoCColors.textSecondary,
+    color: XiaoCColors.sidebarSection,
   },
 
   item: {
@@ -716,13 +716,13 @@ const styles = StyleSheet.create({
   },
 
   currentItem: {
-    backgroundColor: XiaoCColors.selected,
+    backgroundColor: XiaoCColors.sidebarSelected,
   },
 
   itemTitle: {
     fontSize: 17,
     lineHeight: 22,
-    color: XiaoCColors.textPrimary,
+    color: XiaoCColors.sidebarText,
   },
 
   sectionTitleSecondary: {
@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 13,
     fontWeight: "600",
-    color: XiaoCColors.textSecondary,
+    color: XiaoCColors.sidebarSection,
   },
 
   empty: {
@@ -739,7 +739,7 @@ const styles = StyleSheet.create({
 
     textAlign: "center",
 
-    color: XiaoCColors.textSecondary,
+    color: XiaoCColors.sidebarSection,
   },
 
   spacesSection: {
@@ -761,7 +761,7 @@ const styles = StyleSheet.create({
   },
 
   spaceItemPressed: {
-    backgroundColor: XiaoCColors.selected,
+    backgroundColor: XiaoCColors.sidebarSelected,
   },
 
   spaceIcon: {
@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
 
   spaceTitle: {
     fontSize: 17,
-    color: XiaoCColors.textPrimary,
+    color: XiaoCColors.sidebarText,
   },
 
   momentUnreadDot: {
@@ -805,7 +805,7 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 12,
     marginVertical: 5,
-    backgroundColor: XiaoCColors.separator,
+    backgroundColor: XiaoCColors.sidebarSeparator,
   },
 
   menuLayer: {
@@ -820,7 +820,7 @@ const styles = StyleSheet.create({
     width: 200,
     left: 20,
 
-    backgroundColor: XiaoCColors.surface,
+    backgroundColor: XiaoCColors.sidebarMaterial,
 
     borderRadius: 18,
 
@@ -842,7 +842,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 13,
 
-    color: XiaoCColors.textSecondary,
+    color: XiaoCColors.sidebarSection,
 
     paddingHorizontal: 16,
 
@@ -856,7 +856,7 @@ const styles = StyleSheet.create({
   },
 
   menuActionPressed: {
-    backgroundColor: XiaoCColors.selected,
+    backgroundColor: XiaoCColors.sidebarSelected,
   },
 
   menuText: {
@@ -866,7 +866,7 @@ const styles = StyleSheet.create({
 
     paddingVertical: 12,
 
-    color: XiaoCColors.textPrimary,
+    color: XiaoCColors.sidebarText,
   },
 
   deleteText: {

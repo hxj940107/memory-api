@@ -1,9 +1,10 @@
 import { Image } from "expo-image";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Keyboard, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Keyboard, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -25,7 +26,8 @@ type Moment = {
   avatarUri: string | null;
   likes: number;
   commentsCount: number;
-  image?: "sunset" | "notebook" | "night" | null;
+  image?: string | null;
+  imageAspectRatio?: number | null;
   text: string;
 };
 
@@ -45,6 +47,7 @@ type MomentsResponse = Array<{
   author?: string;
   text?: string;
   image?: Moment["image"];
+  imageAspectRatio?: number | null;
   likes?: number;
   commentsCount?: number;
   createdAt?: string;
@@ -60,13 +63,20 @@ type MomentCommentsResponse = Array<{
   createdAt?: string;
 }>;
 
-const momentImages = {
+type CreateMomentResponse = {
+  success: boolean;
+  id: string;
+  image?: string | null;
+  imageAspectRatio?: number | null;
+};
+
+const momentImages: Record<string, number> = {
   sunset: require("../../assets/moments-sunset.svg"),
   notebook: require("../../assets/moments-notebook.svg"),
   night: require("../../assets/moments-night.svg"),
 };
 
-const momentImageRatios: Record<NonNullable<Moment["image"]>, number> = {
+const momentImageRatios: Record<string, number> = {
   sunset: 16 / 9,
   notebook: 16 / 9,
   night: 16 / 9,
@@ -94,6 +104,14 @@ export default function MomentsScreen() {
   const [postingCommentId, setPostingCommentId] = useState<string | null>(null);
   const [likedMomentIds, setLikedMomentIds] = useState<Record<string, boolean>>({});
   const [actionMenuMomentId, setActionMenuMomentId] = useState<string | null>(null);
+  const [postComposerVisible, setPostComposerVisible] = useState(false);
+  const [postDraft, setPostDraft] = useState("");
+  const [postImage, setPostImage] = useState<{
+    uri: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [postingMoment, setPostingMoment] = useState(false);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -154,7 +172,7 @@ export default function MomentsScreen() {
     });
 
     const mappedMoments = data
-      .filter((item) => item.id && item.text)
+      .filter((item) => item.id && (item.text || item.image))
       .map((item) => {
         const isXiaoC = !item.author || item.author === "小C";
 
@@ -163,6 +181,7 @@ export default function MomentsScreen() {
           author: isXiaoC ? "小C" : item.author || account.displayName,
           text: item.text || "",
           image: item.image || null,
+          imageAspectRatio: item.imageAspectRatio || null,
           likes: Number(item.likes || 0),
           commentsCount: Number(item.commentsCount || 0),
           createdAt: item.createdAt || new Date().toISOString(),
@@ -265,6 +284,105 @@ export default function MomentsScreen() {
       await AsyncStorage.setItem(MOMENTS_COVER_URI_KEY, uri);
     } catch (error) {
       Alert.alert("更换失败", error instanceof Error ? error.message : "请稍后再试。");
+    }
+  };
+
+  const pickPostImage = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert("需要相册权限", "允许访问相册后，才能在朋友圈发布照片。");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      allowsMultipleSelection: false,
+      quality: 1,
+    });
+
+    const asset = result.canceled ? null : result.assets[0];
+
+    if (asset?.uri) {
+      setPostImage({
+        uri: asset.uri,
+        width: asset.width || 1,
+        height: asset.height || 1,
+      });
+    }
+  };
+
+  const closePostComposer = () => {
+    if (postingMoment) return;
+
+    setPostComposerVisible(false);
+    setPostDraft("");
+    setPostImage(null);
+  };
+
+  const publishMoment = async () => {
+    const text = postDraft.trim();
+
+    if (!text && !postImage) return;
+
+    setPostingMoment(true);
+
+    try {
+      let imageBase64: string | null = null;
+      let imageAspectRatio: number | null = null;
+
+      if (postImage) {
+        const longestSide = Math.max(postImage.width, postImage.height);
+        const resizeAction = longestSide > 1440
+          ? [{ resize: postImage.width >= postImage.height ? { width: 1440 } : { height: 1440 } }]
+          : [];
+        const compressed = await ImageManipulator.manipulateAsync(
+          postImage.uri,
+          resizeAction,
+          {
+            compress: 0.72,
+            format: ImageManipulator.SaveFormat.JPEG,
+            base64: true,
+          },
+        );
+
+        if (!compressed.base64) {
+          throw new Error("图片处理失败，请重新选择后再试。");
+        }
+
+        imageBase64 = compressed.base64;
+        imageAspectRatio = compressed.width / compressed.height;
+      }
+
+      const createdMoment = await apiJson<CreateMomentResponse>("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "moments",
+          user_id: APP_USER_ID,
+          author: accountName,
+          text,
+          imageBase64,
+          imageMimeType: "image/jpeg",
+          imageAspectRatio,
+        }),
+        timeoutMs: 40000,
+      });
+
+      if (postImage && !createdMoment.image) {
+        throw new Error("图片没有保存成功，请重新发布。");
+      }
+
+      setPostComposerVisible(false);
+      setPostDraft("");
+      setPostImage(null);
+      await loadMoments();
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    } catch (error) {
+      Alert.alert("发布失败", error instanceof Error ? error.message : "请稍后再试。");
+    } finally {
+      setPostingMoment(false);
     }
   };
 
@@ -617,7 +735,10 @@ export default function MomentsScreen() {
     );
   };
 
-  const getMomentImages = (image?: Moment["image"]) => {
+  const getMomentImages = (
+    image?: Moment["image"],
+    imageAspectRatio?: number | null,
+  ) => {
     if (!image) {
       return [];
     }
@@ -625,14 +746,17 @@ export default function MomentsScreen() {
     return [
       {
         id: image,
-        source: momentImages[image],
-        aspectRatio: momentImageRatios[image],
+        source: momentImages[image] || { uri: image },
+        aspectRatio: imageAspectRatio || momentImageRatios[image] || 4 / 3,
       },
     ];
   };
 
-  const renderImages = (image?: Moment["image"]) => {
-    const images = getMomentImages(image);
+  const renderImages = (
+    image?: Moment["image"],
+    imageAspectRatio?: number | null,
+  ) => {
+    const images = getMomentImages(image, imageAspectRatio);
 
     if (images.length === 0) {
       return null;
@@ -681,14 +805,16 @@ export default function MomentsScreen() {
         <Text style={styles.title}>朋友圈</Text>
 
         <Pressable
-          onPress={pickProfileCover}
-          style={({ pressed }) => [styles.camera, pressed && styles.pressed]}
+          style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]}
+          onPress={() => setPostComposerVisible(true)}
+          hitSlop={10}
         >
           <SymbolView
             name="camera"
-            size={24}
+            size={28}
             tintColor="#FFFFFF"
-            weight="light"
+            weight="regular"
+            style={styles.cameraIcon}
           />
         </Pressable>
       </View>
@@ -699,7 +825,13 @@ export default function MomentsScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-        onScrollBeginDrag={Keyboard.dismiss}
+        onTouchStart={() => {
+          if (actionMenuMomentId) setActionMenuMomentId(null);
+        }}
+        onScrollBeginDrag={() => {
+          Keyboard.dismiss();
+          setActionMenuMomentId(null);
+        }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#A6A6AA" />
@@ -754,9 +886,9 @@ export default function MomentsScreen() {
                   <Text style={styles.date}>{formatMomentTime(moment.createdAt)}</Text>
                 </View>
 
-                <Text style={styles.text}>{moment.text}</Text>
+                {Boolean(moment.text) && <Text style={styles.text}>{moment.text}</Text>}
 
-                {renderImages(moment.image)}
+                {renderImages(moment.image, moment.imageAspectRatio)}
 
                 <View style={styles.footer}>
                   <View style={styles.reactions}>
@@ -793,6 +925,7 @@ export default function MomentsScreen() {
                       styles.moreButton,
                       pressed && styles.pressed,
                     ]}
+                    onTouchStart={(event) => event.stopPropagation()}
                     onPress={() =>
                       setActionMenuMomentId((id) => (id === moment.id ? null : moment.id))
                     }
@@ -807,7 +940,10 @@ export default function MomentsScreen() {
                 </View>
 
                 {actionMenuVisible && (
-                  <View style={styles.actionMenu}>
+                  <View
+                    style={styles.actionMenu}
+                    onTouchStart={(event) => event.stopPropagation()}
+                  >
                     <Pressable
                       style={({ pressed }) => [
                         styles.actionMenuItem,
@@ -939,6 +1075,73 @@ export default function MomentsScreen() {
 
         <Pressable style={styles.keyboardDismissArea} onPress={Keyboard.dismiss} />
       </ScrollView>
+
+      <Modal
+        visible={postComposerVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closePostComposer}
+      >
+        <View style={styles.postComposerScreen}>
+          <View style={styles.postComposerHeader}>
+            <Pressable onPress={closePostComposer} disabled={postingMoment}>
+              <Text style={styles.postComposerCancel}>取消</Text>
+            </Pressable>
+            <Text style={styles.postComposerTitle}>发布朋友圈</Text>
+            <Pressable
+              onPress={publishMoment}
+              disabled={postingMoment || (!postDraft.trim() && !postImage)}
+            >
+              <Text
+                style={[
+                  styles.postComposerPublish,
+                  (postingMoment || (!postDraft.trim() && !postImage)) &&
+                    styles.postComposerPublishDisabled,
+                ]}
+              >
+                {postingMoment ? "发布中" : "发布"}
+              </Text>
+            </Pressable>
+          </View>
+
+          <TextInput
+            value={postDraft}
+            onChangeText={setPostDraft}
+            style={styles.postComposerInput}
+            placeholder="这一刻的想法…"
+            placeholderTextColor="#A5A5AA"
+            multiline
+            autoFocus
+            textAlignVertical="top"
+          />
+
+          {postImage && (
+            <View style={styles.postImagePreviewWrap}>
+              <Image
+                source={{ uri: postImage.uri }}
+                style={styles.postImagePreview}
+                contentFit="cover"
+              />
+              <Pressable
+                style={styles.removePostImageButton}
+                onPress={() => setPostImage(null)}
+              >
+                <SymbolView name="xmark" size={13} tintColor="#FFFFFF" weight="bold" />
+              </Pressable>
+            </View>
+          )}
+
+          {!postImage && (
+            <Pressable
+              style={({ pressed }) => [styles.addPostImageButton, pressed && styles.pressed]}
+              onPress={pickPostImage}
+            >
+              <SymbolView name="photo" size={22} tintColor="#47658F" weight="regular" />
+              <Text style={styles.addPostImageText}>添加照片</Text>
+            </Pressable>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -984,11 +1187,24 @@ const styles = StyleSheet.create({
     color: "transparent",
   },
 
-  camera: {
+  navSpacer: {
     width: 36,
     height: 36,
+  },
+
+  cameraButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  cameraIcon: {
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
   },
 
   pressed: {
@@ -1347,5 +1563,99 @@ const styles = StyleSheet.create({
 
   keyboardDismissArea: {
     minHeight: 160,
+  },
+
+  postComposerScreen: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+
+  postComposerHeader: {
+    height: 58,
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(120,120,128,0.18)",
+  },
+
+  postComposerCancel: {
+    minWidth: 52,
+    fontSize: 16,
+    color: "#3A3A3C",
+  },
+
+  postComposerTitle: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#161616",
+  },
+
+  postComposerPublish: {
+    minWidth: 52,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#3478F6",
+    textAlign: "right",
+  },
+
+  postComposerPublishDisabled: {
+    color: "#B8B8BD",
+  },
+
+  postComposerInput: {
+    minHeight: 150,
+    maxHeight: 260,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 16,
+    fontSize: 18,
+    lineHeight: 28,
+    color: "#161616",
+  },
+
+  postImagePreviewWrap: {
+    width: 132,
+    height: 132,
+    marginLeft: 22,
+    marginTop: 4,
+  },
+
+  postImagePreview: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 8,
+    backgroundColor: "#F2F2F7",
+  },
+
+  removePostImageButton: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(45,45,48,0.86)",
+  },
+
+  addPostImageButton: {
+    marginLeft: 22,
+    marginTop: 8,
+    alignSelf: "flex-start",
+    minHeight: 42,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    backgroundColor: "#F5F5F7",
+  },
+
+  addPostImageText: {
+    fontSize: 16,
+    color: "#47658F",
   },
 });
