@@ -618,18 +618,78 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   return parseMomentDecision(raw)
 }
 
+async function applyXiaoCMomentDecision({ activity, moment, decision }) {
+  const shouldLike = decision === "like" || decision === "like_and_comment"
+  const shouldComment = decision === "comment" || decision === "like_and_comment"
+  let likedAt = activity.liked_at || null
+  let commentId = activity.comment_id || null
+  let executionNote = ""
+
+  if (shouldLike && !likedAt) {
+    const { data: currentMoment, error: currentMomentError } = await supabase
+      .from("moment_entries")
+      .select("likes")
+      .eq("user_id", activity.user_id)
+      .eq("id", moment.id)
+      .maybeSingle()
+
+    if (currentMomentError) throw currentMomentError
+
+    const currentLikes = Math.max(0, Number(currentMoment?.likes || 0))
+    const nextLikes = currentLikes + 1
+    const { error: likeError } = await supabase
+      .from("moment_entries")
+      .update({ likes: nextLikes })
+      .eq("user_id", activity.user_id)
+      .eq("id", moment.id)
+
+    if (likeError) throw likeError
+
+    likedAt = new Date().toISOString()
+    const { error: likedAtError } = await supabase
+      .from("moment_xiaoc_activity")
+      .update({ liked_at: likedAt, updated_at: new Date().toISOString() })
+      .eq("id", activity.id)
+
+    if (likedAtError) throw likedAtError
+  }
+
+  if (shouldComment && !commentId) {
+    const comment = await createXiaoCCommentForUserMoment({
+      user_id: activity.user_id,
+      moment_id: moment.id,
+      text: moment.text || "",
+      imageUrl: parseMomentImage(moment.image_key).image,
+    })
+
+    if (comment?.id) {
+      commentId = comment.id
+      const { error: commentIdError } = await supabase
+        .from("moment_xiaoc_activity")
+        .update({ comment_id: commentId, updated_at: new Date().toISOString() })
+        .eq("id", activity.id)
+
+      if (commentIdError) throw commentIdError
+    } else {
+      executionNote = "评论生成未通过语气过滤，未公开评论"
+    }
+  }
+
+  return { likedAt, commentId, executionNote }
+}
+
 async function checkPendingMomentsForXiaoC() {
   const now = new Date()
   const { data: pending, error } = await supabase
     .from("moment_xiaoc_activity")
-    .select("id,user_id,moment_id,status,next_check_at")
+    .select("id,user_id,moment_id,status,next_check_at,liked_at,comment_id")
     .eq("status", "pending")
     .lte("next_check_at", now.toISOString())
     .order("next_check_at", { ascending: true })
     .limit(20)
 
   if (error) throw error
-  if (!pending?.length) return { checked: 0, seen: 0, deferred: 0 }
+  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0 }
 
   if (isMomentQuietHours(now)) {
     const nextCheckAt = getNextMomentMorning(now)
@@ -642,10 +702,10 @@ async function checkPendingMomentsForXiaoC() {
 
     if (deferError) throw deferError
 
-    return { checked: pending.length, seen: 0, deferred: pending.length, nextCheckAt }
+    return { checked: pending.length, completed: 0, deferred: pending.length, nextCheckAt }
   }
 
-  let seen = 0
+  let completed = 0
   let failed = 0
 
   for (const activity of pending) {
@@ -685,20 +745,28 @@ async function checkPendingMomentsForXiaoC() {
         user_id: activity.user_id,
         moment,
       })
+      const action = await applyXiaoCMomentDecision({
+        activity,
+        moment,
+        decision: result.decision,
+      })
+      const decisionReason = [result.reason, action.executionNote].filter(Boolean).join("；")
       const { error: updateError } = await supabase
         .from("moment_xiaoc_activity")
         .update({
-          status: "seen",
+          status: "completed",
           seen_at: new Date().toISOString(),
           decision: result.decision,
-          decision_reason: result.reason,
+          liked_at: action.likedAt,
+          comment_id: action.commentId,
+          decision_reason: decisionReason,
           updated_at: new Date().toISOString(),
         })
         .eq("id", activity.id)
         .eq("status", "processing")
 
       if (updateError) throw updateError
-      seen += 1
+      completed += 1
     } catch (judgeError) {
       failed += 1
       console.error("moment xiaoc shadow judge failed:", judgeError)
@@ -715,7 +783,7 @@ async function checkPendingMomentsForXiaoC() {
     }
   }
 
-  return { checked: pending.length, seen, deferred: 0, failed }
+  return { checked: pending.length, completed, deferred: 0, failed }
 }
 
 export default async function handler(req, res) {
