@@ -1,4 +1,19 @@
+# Environment
 .env
-node_modules/
-.vercel
 .env*
+
+# Dependencies
+node_modules/
+
+# Deployment
+.vercel/
+
+# Logs
+*.log
+
+# Archives
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
