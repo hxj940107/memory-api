@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Alert, Dimensions, Keyboard, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Dimensions, Keyboard, LayoutChangeEvent, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useEffect, useRef, useState } from "react";
 
@@ -17,6 +17,10 @@ import {
   MomentAvatarId,
   getAccountSettings,
 } from "../lib/accountSettings";
+import {
+  MomentInteraction,
+  saveMomentInteractionSnapshot,
+} from "../lib/momentInteractions";
 
 type Moment = {
   id: string;
@@ -25,6 +29,7 @@ type Moment = {
   avatar: MomentAvatarId;
   avatarUri: string | null;
   likes: number;
+  xiaocLiked: boolean;
   commentsCount: number;
   image?: string | null;
   imageAspectRatio?: number | null;
@@ -49,6 +54,7 @@ type MomentsResponse = Array<{
   image?: Moment["image"];
   imageAspectRatio?: number | null;
   likes?: number;
+  xiaocLiked?: boolean;
   commentsCount?: number;
   createdAt?: string;
 }>;
@@ -62,14 +68,6 @@ type MomentCommentsResponse = Array<{
   parentId?: string | null;
   createdAt?: string;
 }>;
-
-type MomentInteraction = {
-  id: string;
-  type: "xiaoc_like" | "xiaoc_comment" | "xiaoc_reply";
-  momentId: string;
-  text: string;
-  createdAt: string;
-};
 
 type MomentInteractionsResponse = {
   unreadCount: number;
@@ -110,6 +108,10 @@ export default function MomentsScreen() {
     avatar: MomentAvatarId;
     uri: string | null;
   }>({ avatar: DEFAULT_USER_MOMENT_AVATAR, uri: null });
+  const [xiaocAvatar, setXiaocAvatar] = useState<{
+    avatar: MomentAvatarId;
+    uri: string | null;
+  }>({ avatar: DEFAULT_XIAOC_MOMENT_AVATAR, uri: null });
   const [profileCoverUri, setProfileCoverUri] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [commentsByMomentId, setCommentsByMomentId] = useState<Record<string, MomentComment[]>>({});
@@ -127,7 +129,6 @@ export default function MomentsScreen() {
   } | null>(null);
   const [postingMoment, setPostingMoment] = useState(false);
   const [momentInteractions, setMomentInteractions] = useState<MomentInteraction[]>([]);
-  const [interactionPanelOpen, setInteractionPanelOpen] = useState(false);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -192,6 +193,19 @@ export default function MomentsScreen() {
     }
   };
 
+  const openMomentInteractions = async () => {
+    const interactions = [...momentInteractions];
+
+    try {
+      await saveMomentInteractionSnapshot(interactions);
+      await markMomentInteractionsAsRead();
+      setMomentInteractions([]);
+      router.push("/moments/interactions");
+    } catch (error) {
+      console.log("Moment interactions open failed:", error);
+    }
+  };
+
   const loadMoments = async () => {
     const [data, account] = await Promise.all([
       apiJson<MomentsResponse>("/api/memory", {
@@ -208,6 +222,10 @@ export default function MomentsScreen() {
       avatar: account.userMomentAvatar,
       uri: account.userMomentAvatarUri,
     });
+    setXiaocAvatar({
+      avatar: account.xiaocMomentAvatar,
+      uri: account.xiaocMomentAvatarUri,
+    });
 
     const mappedMoments = data
       .filter((item) => item.id && (item.text || item.image))
@@ -216,11 +234,12 @@ export default function MomentsScreen() {
 
         return {
           id: item.id,
-          author: isXiaoC ? "小C" : item.author || account.displayName,
+          author: isXiaoC ? "小C" : account.displayName,
           text: item.text || "",
           image: item.image || null,
           imageAspectRatio: item.imageAspectRatio || null,
           likes: Number(item.likes || 0),
+          xiaocLiked: Boolean(item.xiaocLiked),
           commentsCount: Number(item.commentsCount || 0),
           createdAt: item.createdAt || new Date().toISOString(),
           avatar: isXiaoC
@@ -788,6 +807,42 @@ export default function MomentsScreen() {
     );
   };
 
+  const renderInteractionAvatar = (inList = false) => {
+    if (xiaocAvatar.uri) {
+      return (
+        <Image
+          source={{ uri: xiaocAvatar.uri }}
+          style={
+            inList
+              ? styles.interactionNoticeRowAvatarImage
+              : styles.interactionNoticeAvatarImage
+          }
+          contentFit="cover"
+        />
+      );
+    }
+
+    const preset =
+      MOMENT_AVATAR_PRESETS.find((item) => item.id === xiaocAvatar.avatar) ||
+      MOMENT_AVATAR_PRESETS.find((item) => item.id === DEFAULT_XIAOC_MOMENT_AVATAR) ||
+      MOMENT_AVATAR_PRESETS[0];
+
+    return (
+      <View
+        style={[
+          inList
+            ? styles.interactionNoticeRowAvatar
+            : styles.interactionNoticeAvatar,
+          { backgroundColor: preset.backgroundColor },
+        ]}
+      >
+        <Text style={[styles.interactionNoticeAvatarText, { color: preset.color }]}>
+          {preset.useInitial ? "C" : preset.symbol}
+        </Text>
+      </View>
+    );
+  };
+
   const getMomentImages = (
     image?: Moment["image"],
     imageAspectRatio?: number | null,
@@ -930,52 +985,13 @@ export default function MomentsScreen() {
                 styles.interactionNotice,
                 pressed && styles.pressed,
               ]}
-              onPress={async () => {
-                const nextOpen = !interactionPanelOpen;
-                setInteractionPanelOpen(nextOpen);
-
-                if (nextOpen) {
-                  await markMomentInteractionsAsRead();
-                }
-              }}
+              onPress={openMomentInteractions}
             >
-              <View style={styles.interactionNoticeAvatar}>
-                <Text style={styles.interactionNoticeAvatarText}>C</Text>
-              </View>
+              {renderInteractionAvatar()}
               <Text style={styles.interactionNoticeText}>
-                {momentInteractions.length === 1
-                  ? "小C有新的互动"
-                  : `小C等 ${momentInteractions.length} 条新互动`}
+                {momentInteractions.length}条新消息
               </Text>
-              <SymbolView
-                name={interactionPanelOpen ? "chevron.up" : "chevron.down"}
-                size={15}
-                tintColor="#8C8C91"
-                weight="regular"
-              />
             </Pressable>
-
-            {interactionPanelOpen && (
-              <View style={styles.interactionNoticeList}>
-                {momentInteractions.slice(0, 5).map((item) => (
-                  <Pressable
-                    key={item.id}
-                    style={({ pressed }) => [
-                      styles.interactionNoticeRow,
-                      pressed && styles.momentPressed,
-                    ]}
-                    onPress={() => {
-                      setInteractionPanelOpen(false);
-                    }}
-                  >
-                    <Text style={styles.interactionNoticeRowText}>{item.text}</Text>
-                    <Text style={styles.interactionNoticeTime}>
-                      {formatMomentTime(item.createdAt)}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
           </View>
         )}
 
@@ -994,7 +1010,12 @@ export default function MomentsScreen() {
           const commentsCount = commentsByMomentId[moment.id]?.length ?? moment.commentsCount;
           const composerVisible = Boolean(expandedComments[moment.id]);
           const likedByMe = Boolean(likedMomentIds[moment.id]);
-          const shouldShowInteractionPanel = likedByMe || comments.length > 0;
+          const likedByXiaoC = moment.xiaocLiked;
+          const likedNames = [
+            ...(likedByMe ? [accountName] : []),
+            ...(likedByXiaoC ? ["小C"] : []),
+          ];
+          const shouldShowInteractionPanel = likedNames.length > 0 || comments.length > 0;
           const actionMenuVisible = actionMenuMomentId === moment.id;
 
           return (
@@ -1023,8 +1044,8 @@ export default function MomentsScreen() {
                     <SymbolView
                       name="heart"
                       size={18}
-                      tintColor={likedByMe ? "#E85D5D" : "#8C8C91"}
-                      weight={likedByMe ? "regular" : "thin"}
+                      tintColor={likedNames.length > 0 ? "#E85D5D" : "#8C8C91"}
+                      weight={likedNames.length > 0 ? "regular" : "thin"}
                       style={styles.actionIcon}
                     />
                     <Text style={styles.likeCount}>{moment.likes}</Text>
@@ -1110,7 +1131,7 @@ export default function MomentsScreen() {
 
                 {shouldShowInteractionPanel && (
                   <View style={styles.interactionPanel}>
-                    {likedByMe && (
+                    {likedNames.length > 0 && (
                       <View style={styles.likedSection}>
                         <SymbolView
                           name="heart.fill"
@@ -1119,7 +1140,7 @@ export default function MomentsScreen() {
                           weight="regular"
                           style={styles.likedByIcon}
                         />
-                        <Text style={styles.likedByText}>{accountName}</Text>
+                        <Text style={styles.likedByText}>{likedNames.join("，")}</Text>
                       </View>
                     )}
 
@@ -1127,7 +1148,7 @@ export default function MomentsScreen() {
                       <View
                         style={[
                           styles.commentSection,
-                          likedByMe && styles.commentSectionWithLikes,
+                          likedNames.length > 0 && styles.commentSectionWithLikes,
                         ]}
                       >
                         {comments.map((comment) => {
@@ -1433,27 +1454,36 @@ const styles = StyleSheet.create({
 
   interactionNoticeWrap: {
     marginTop: -6,
-    marginHorizontal: 20,
+    alignItems: "center",
     marginBottom: 8,
   },
 
   interactionNotice: {
-    minHeight: 44,
-    borderRadius: 6,
-    paddingHorizontal: 12,
+    width: 200,
+    minHeight: 40,
+    borderRadius: 7,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F5F5F7",
+    backgroundColor: "rgba(42,42,44,0.94)",
   },
 
   interactionNoticeAvatar: {
-    width: 26,
-    height: 26,
+    width: 34,
+    height: 34,
     borderRadius: 5,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 9,
+    marginRight: 8,
     backgroundColor: "#7A8FA8",
+  },
+
+  interactionNoticeAvatarImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 5,
+    marginRight: 8,
   },
 
   interactionNoticeAvatarText: {
@@ -1464,25 +1494,55 @@ const styles = StyleSheet.create({
 
   interactionNoticeText: {
     flex: 1,
-    fontSize: 15,
-    color: "#2C2C2E",
+    fontFamily: Platform.OS === "ios" ? "PingFangSC-Medium" : undefined,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#F5F5F7",
+    textAlign: "center",
+    letterSpacing: 0.15,
+    paddingRight: 6,
   },
 
   interactionNoticeList: {
-    marginTop: 7,
-    borderRadius: 6,
+    width: "90%",
+    borderRadius: 10,
     overflow: "hidden",
-    backgroundColor: "#F5F5F7",
+    backgroundColor: "#F7F7F8",
   },
 
   interactionNoticeRow: {
-    minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    minHeight: 50,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     flexDirection: "row",
     alignItems: "center",
+  },
+
+  interactionNoticeRowBorder: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(120,120,128,0.14)",
+  },
+
+  interactionNoticeRowAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+
+  interactionNoticeRowAvatarImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 5,
+    marginRight: 10,
+  },
+
+  interactionNoticeRowContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
   },
 
   interactionNoticeRowText: {
@@ -1496,6 +1556,17 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     fontSize: 12,
     color: "#A6A6AA",
+  },
+
+  interactionNoticeMore: {
+    minHeight: 34,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  interactionNoticeMoreText: {
+    fontSize: 13,
+    color: "#7A7A80",
   },
 
   moment: {

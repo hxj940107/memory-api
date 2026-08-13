@@ -1176,13 +1176,25 @@ export default async function handler(req, res) {
 
         const momentIds = (data || []).map((item) => item.id)
         const commentCounts = {}
+        const xiaocLikedMomentIds = new Set()
 
         if (momentIds.length > 0) {
-          const { data: comments, error: commentsError } = await supabase
-            .from("moment_comments")
-            .select("moment_id")
-            .eq("user_id", user_id)
-            .in("moment_id", momentIds)
+          const [commentsResult, activitiesResult] = await Promise.all([
+            supabase
+              .from("moment_comments")
+              .select("moment_id")
+              .eq("user_id", user_id)
+              .in("moment_id", momentIds),
+            supabase
+              .from("moment_xiaoc_activity")
+              .select("moment_id")
+              .eq("user_id", user_id)
+              .in("moment_id", momentIds)
+              .not("liked_at", "is", null),
+          ])
+
+          const { data: comments, error: commentsError } = commentsResult
+          const { data: xiaocLikes, error: xiaocLikesError } = activitiesResult
 
           if (commentsError && commentsError.code !== "42P01") {
             return res.status(500).json({
@@ -1190,8 +1202,18 @@ export default async function handler(req, res) {
             })
           }
 
+          if (xiaocLikesError && xiaocLikesError.code !== "42P01") {
+            return res.status(500).json({
+              error: xiaocLikesError.message
+            })
+          }
+
           for (const comment of comments || []) {
             commentCounts[comment.moment_id] = (commentCounts[comment.moment_id] || 0) + 1
+          }
+
+          for (const activity of xiaocLikes || []) {
+            xiaocLikedMomentIds.add(activity.moment_id)
           }
         }
 
@@ -1202,6 +1224,7 @@ export default async function handler(req, res) {
             text: item.text || "",
             ...parseMomentImage(item.image_key),
             likes: Number(item.likes || 0),
+            xiaocLiked: xiaocLikedMomentIds.has(item.id),
             commentsCount: commentCounts[item.id] || 0,
             createdAt: item.created_at
           }))
@@ -1323,7 +1346,7 @@ export default async function handler(req, res) {
         const readAt = await getMomentInteractionReadAt(user_id)
         const interactions = await listMomentInteractions({
           user_id,
-          after: readAt,
+          after: req.query.scope === "all" ? null : readAt,
         })
 
         return res.status(200).json({
