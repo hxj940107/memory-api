@@ -44,6 +44,22 @@ The highest principle is Experience First. Every change should be judged by whet
 
 ## Latest Progress
 
+### 2026-08-13 Moments Interaction Milestone
+
+- Completed the user-posted Moments flow for text, single image, and text with a single image.
+- XiaoC checks new user Moments asynchronously instead of reacting immediately, then independently decides whether to like, comment, both, do nothing, or reserve a private follow-up.
+- Completed the Moments interaction notification loop:
+  - Sidebar red dot for unread XiaoC interactions.
+  - Lightweight “X条新消息” capsule at the top of Moments.
+  - One continuous interaction page that initially shows all newly unread interactions.
+  - “查看全部互动消息” expands historical interactions in the same page without a second list route.
+  - Every interaction shows XiaoC's avatar, action, time, and the related Moment image or text preview.
+  - Tapping an interaction opens the matching single-Moment detail page; back returns to the interaction list.
+  - Entering the interaction page marks the current batch as read so the capsule and sidebar red dot disappear on return.
+- User-authored Moment names now use the current account display name instead of stale names stored with older posts.
+- XiaoC likes now return an explicit `xiaocLiked` state and reuse the existing red-heart / liker-name presentation rather than showing only a numeric count.
+- This implementation has been pushed. Final end-to-end verification is pending the next newly published Moment and XiaoC's scheduled delayed interaction.
+
 ### 2026-08-11 Milestone
 
 - Added server-generated time awareness to every main chat request.
