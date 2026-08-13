@@ -35,6 +35,20 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 - 聊天、历史、记忆、移动端体验是第一优先级。
 - 成本控制也是长期体验的一部分，需要尽可能节省 token 和外部模型调用。
 
+## 当前进程
+
+- Moments 朋友圈功能已经进入移动端主线。
+- 用户发布朋友圈后，小C不会立刻互动，而是通过 `moment_xiaoc_activity` 按时间看到并判断。
+- 小C的朋友圈判断已经支持 `none`、`like`、`comment`、`like_and_comment`、`private_follow_up`。
+- 当前已完成公开互动执行：小C判断为点赞或评论时，会实际更新朋友圈点赞数或写入小C评论。
+- `private_follow_up` 当前只记录为私下跟进意图，还没有接入聊天里的主动私聊。
+- Moments 互动提醒已完成第一版：
+  - Supabase 需要存在 `moment_interaction_state` 表。
+  - 后端 `type=moment_interactions` 可返回未读互动和标记已读。
+  - 左侧栏 Moments 入口会因小C点赞、评论、回复显示红点。
+  - Moments 页面顶部会显示轻量互动浮层，并可展开最近互动摘要。
+- 下一步建议：先测试红点和浮层体验；若位置和感觉稳定，再做“点击互动条目后滚动到对应朋友圈”。
+
 ## 伴侣人格
 
 XiaoC 应该是温柔、理性、成熟的。
