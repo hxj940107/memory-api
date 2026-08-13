@@ -22,6 +22,10 @@ type MomentPreview = {
   image?: string | null;
 };
 
+type MomentInteractionsResponse = {
+  interactions: MomentInteraction[];
+};
+
 function formatInteractionTime(value: string) {
   const date = new Date(value);
 
@@ -47,6 +51,8 @@ function formatInteractionTime(value: string) {
 export default function MomentInteractionsScreen() {
   const [interactions, setInteractions] = useState<MomentInteraction[]>([]);
   const [moments, setMoments] = useState<MomentPreview[]>([]);
+  const [showingAll, setShowingAll] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
   const [avatar, setAvatar] = useState<{
     avatar: MomentAvatarId;
     uri: string | null;
@@ -72,6 +78,32 @@ export default function MomentInteractionsScreen() {
         console.log("Moment interaction snapshot load failed:", error);
       });
   }, []);
+
+  const loadAllInteractions = async () => {
+    if (loadingAll || showingAll) return;
+
+    setLoadingAll(true);
+    try {
+      const data = await apiJson<MomentInteractionsResponse>("/api/memory", {
+        query: {
+          type: "moment_interactions",
+          user_id: APP_USER_ID,
+          scope: "all",
+        },
+      });
+      const merged = [...interactions, ...(data.interactions || [])];
+      setInteractions(
+        Array.from(new Map(merged.map((item) => [item.id, item])).values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        ),
+      );
+      setShowingAll(true);
+    } catch (error) {
+      console.log("All moment interactions load failed:", error);
+    } finally {
+      setLoadingAll(false);
+    }
+  };
 
   const renderAvatar = () => {
     if (avatar.uri) {
@@ -103,14 +135,15 @@ export default function MomentInteractionsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {interactions.slice(0, 1).map((item) => {
+        {interactions.map((item, index) => {
           const moment = moments.find((candidate) => candidate.id === item.momentId);
 
           return (
           <Pressable
             key={item.id}
             style={({ pressed }) => [
-              styles.latestRow,
+              styles.interactionRow,
+              index > 0 && styles.interactionRowBorder,
               pressed && styles.rowPressed,
             ]}
             onPress={() =>
@@ -124,6 +157,9 @@ export default function MomentInteractionsScreen() {
             <View style={styles.rowBody}>
               <Text style={styles.name}>小C</Text>
               <Text style={styles.interactionText}>{item.text.replace(/^小C/, "")}</Text>
+              <Text style={styles.summary} numberOfLines={2}>
+                {moment?.text || (moment?.image ? "图片朋友圈" : "这条朋友圈")}
+              </Text>
               <Text style={styles.time}>{formatInteractionTime(item.createdAt)}</Text>
             </View>
             <View style={styles.preview}>
@@ -139,12 +175,15 @@ export default function MomentInteractionsScreen() {
           );
         })}
 
-        {interactions.length > 0 && (
+        {interactions.length > 0 && !showingAll && (
           <Pressable
             style={({ pressed }) => [styles.allInteractionsButton, pressed && styles.rowPressed]}
-            onPress={() => router.push("/moments/interactions-all")}
+            onPress={loadAllInteractions}
+            disabled={loadingAll}
           >
-            <Text style={styles.allInteractionsText}>全部互动消息</Text>
+            <Text style={styles.allInteractionsText}>
+              {loadingAll ? "正在加载…" : "查看全部互动消息"}
+            </Text>
           </Pressable>
         )}
 
@@ -175,13 +214,17 @@ const styles = StyleSheet.create({
   title: { fontSize: 17, fontWeight: "600", color: "#1C1C1E" },
   navSpacer: { width: 40, height: 40 },
   content: { paddingBottom: 34 },
-  latestRow: {
-    minHeight: 102,
+  interactionRow: {
+    minHeight: 116,
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     backgroundColor: "#FFFFFF",
+  },
+  interactionRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(120,120,128,0.16)",
   },
   rowPressed: { backgroundColor: "rgba(120,120,128,0.06)" },
   avatar: {
@@ -193,7 +236,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   avatarText: { fontSize: 16, fontWeight: "600" },
-  rowBody: { flex: 1, alignSelf: "stretch", justifyContent: "center" },
+  rowBody: { flex: 1 },
   name: { fontSize: 16, lineHeight: 21, fontWeight: "500", color: "#47658F" },
   interactionText: {
     marginTop: 2,
@@ -202,6 +245,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: "#2C2C2E",
   },
+  summary: { marginTop: 6, fontSize: 13, lineHeight: 18, color: "#77777C" },
   time: { marginTop: 7, fontSize: 13, color: "#A6A6AA" },
   preview: {
     width: 68,
