@@ -177,6 +177,16 @@ function normalizeMomentComment(comment) {
   }
 }
 
+function normalizeMomentInteraction(item) {
+  return {
+    id: item.id,
+    type: item.type,
+    momentId: item.momentId,
+    text: item.text || "",
+    createdAt: item.createdAt,
+  }
+}
+
 const MOMENT_IMAGE_BUCKET = "moment-images"
 const MOMENT_TIMEZONE = "Asia/Shanghai"
 
@@ -676,6 +686,106 @@ async function applyXiaoCMomentDecision({ activity, moment, decision }) {
   }
 
   return { likedAt, commentId, executionNote }
+}
+
+async function getMomentInteractionReadAt(user_id) {
+  const { data, error } = await supabase
+    .from("moment_interaction_state")
+    .select("read_at")
+    .eq("user_id", user_id)
+    .maybeSingle()
+
+  if (error && error.code !== "42P01") throw error
+
+  return data?.read_at || null
+}
+
+async function listMomentInteractions({ user_id, after }) {
+  const afterDate = after ? new Date(after) : null
+  const hasAfter = afterDate && Number.isFinite(afterDate.getTime())
+  const interactions = []
+
+  let activityQuery = supabase
+    .from("moment_xiaoc_activity")
+    .select("id,moment_id,liked_at")
+    .eq("user_id", user_id)
+    .not("liked_at", "is", null)
+    .order("liked_at", { ascending: false })
+    .limit(40)
+
+  if (hasAfter) {
+    activityQuery = activityQuery.gt("liked_at", afterDate.toISOString())
+  }
+
+  const { data: likedActivities, error: likedActivitiesError } = await activityQuery
+
+  if (likedActivitiesError && likedActivitiesError.code !== "42P01") {
+    throw likedActivitiesError
+  }
+
+  for (const activity of likedActivities || []) {
+    interactions.push({
+      id: `xiaoc_like:${activity.id}`,
+      type: "xiaoc_like",
+      momentId: activity.moment_id,
+      text: "小C赞了你的朋友圈",
+      createdAt: activity.liked_at,
+    })
+  }
+
+  let commentQuery = supabase
+    .from("moment_comments")
+    .select("id,moment_id,content,parent_id,created_at")
+    .eq("user_id", user_id)
+    .eq("author_type", "xiaoc")
+    .order("created_at", { ascending: false })
+    .limit(40)
+
+  if (hasAfter) {
+    commentQuery = commentQuery.gt("created_at", afterDate.toISOString())
+  }
+
+  const { data: comments, error: commentsError } = await commentQuery
+
+  if (commentsError && commentsError.code !== "42P01") {
+    throw commentsError
+  }
+
+  for (const comment of comments || []) {
+    interactions.push({
+      id: `xiaoc_comment:${comment.id}`,
+      type: comment.parent_id ? "xiaoc_reply" : "xiaoc_comment",
+      momentId: comment.moment_id,
+      text: comment.parent_id ? "小C回复了你的评论" : "小C评论了你的朋友圈",
+      createdAt: comment.created_at,
+    })
+  }
+
+  return interactions
+    .filter((item) => item.createdAt)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 20)
+    .map(normalizeMomentInteraction)
+}
+
+async function markMomentInteractionsRead({ user_id, read_at }) {
+  const nextReadAt = read_at || new Date().toISOString()
+  const { data, error } = await supabase
+    .from("moment_interaction_state")
+    .upsert(
+      {
+        user_id,
+        read_at: nextReadAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    )
+    .select("read_at")
+    .single()
+
+  if (error) throw error
+
+  return data?.read_at || nextReadAt
 }
 
 async function checkPendingMomentsForXiaoC() {
@@ -1205,6 +1315,39 @@ export default async function handler(req, res) {
 
       return res.status(405).json({
         error: "Only GET, POST, PATCH or DELETE allowed for moments"
+      })
+    }
+
+    if (type === "moment_interactions") {
+      if (req.method === "GET") {
+        const readAt = await getMomentInteractionReadAt(user_id)
+        const interactions = await listMomentInteractions({
+          user_id,
+          after: readAt,
+        })
+
+        return res.status(200).json({
+          unreadCount: interactions.length,
+          readAt,
+          latestInteractionAt: interactions[0]?.createdAt || null,
+          interactions,
+        })
+      }
+
+      if (req.method === "POST") {
+        const readAt = await markMomentInteractionsRead({
+          user_id,
+          read_at: req.body.read_at || new Date().toISOString(),
+        })
+
+        return res.status(200).json({
+          success: true,
+          readAt,
+        })
+      }
+
+      return res.status(405).json({
+        error: "Only GET or POST allowed for moment_interactions"
       })
     }
 

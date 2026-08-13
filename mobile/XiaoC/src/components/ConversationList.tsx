@@ -12,7 +12,6 @@ import {
 
 import { useEffect, useState, useRef } from "react";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -77,7 +76,9 @@ const favoritesSpace: XiaoCSpace = {
   title: "收藏",
 };
 
-const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
+type MomentInteractionsResponse = {
+  unreadCount?: number;
+};
 
 function ConversationItem({
   item,
@@ -170,27 +171,14 @@ export default function ConversationList({
 
   const loadMomentUnread = async () => {
     try {
-      const data = await apiJson<Array<{ createdAt?: string }>>("/api/memory", {
+      const data = await apiJson<MomentInteractionsResponse>("/api/memory", {
         query: {
-          type: "moments",
+          type: "moment_interactions",
           user_id: APP_USER_ID,
         },
       });
 
-      const latestCreatedAt = data.find((item) => item.createdAt)?.createdAt;
-
-      if (!latestCreatedAt) {
-        setHasUnreadMoments(false);
-        return;
-      }
-
-      const lastReadAt = await AsyncStorage.getItem(MOMENTS_LAST_READ_AT_KEY);
-      const latestTime = new Date(latestCreatedAt).getTime();
-      const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
-
-      setHasUnreadMoments(
-        Number.isFinite(latestTime) && latestTime > lastReadTime,
-      );
+      setHasUnreadMoments(Number(data.unreadCount || 0) > 0);
     } catch (error) {
       console.log("Moments unread check failed:", error);
     }

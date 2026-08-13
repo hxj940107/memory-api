@@ -8,7 +8,7 @@ import { Alert, Dimensions, Keyboard, Modal, Platform, Pressable, RefreshControl
 
 import { useEffect, useRef, useState } from "react";
 
-import { apiJson, APP_USER_ID } from "../config/api";
+import { apiJson, APP_USER_ID, postJson } from "../config/api";
 import {
   DEFAULT_ACCOUNT_NAME,
   DEFAULT_USER_MOMENT_AVATAR,
@@ -63,6 +63,20 @@ type MomentCommentsResponse = Array<{
   createdAt?: string;
 }>;
 
+type MomentInteraction = {
+  id: string;
+  type: "xiaoc_like" | "xiaoc_comment" | "xiaoc_reply";
+  momentId: string;
+  text: string;
+  createdAt: string;
+};
+
+type MomentInteractionsResponse = {
+  unreadCount: number;
+  latestInteractionAt?: string | null;
+  interactions: MomentInteraction[];
+};
+
 type CreateMomentResponse = {
   success: boolean;
   id: string;
@@ -112,6 +126,8 @@ export default function MomentsScreen() {
     height: number;
   } | null>(null);
   const [postingMoment, setPostingMoment] = useState(false);
+  const [momentInteractions, setMomentInteractions] = useState<MomentInteraction[]>([]);
+  const [interactionPanelOpen, setInteractionPanelOpen] = useState(false);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -151,6 +167,28 @@ export default function MomentsScreen() {
       await AsyncStorage.setItem(MOMENTS_LAST_READ_AT_KEY, latestCreatedAt);
     } catch (error) {
       console.log("Moment read marker save failed:", error);
+    }
+  };
+
+  const loadMomentInteractions = async () => {
+    const data = await apiJson<MomentInteractionsResponse>("/api/memory", {
+      query: {
+        type: "moment_interactions",
+        user_id: APP_USER_ID,
+      },
+    });
+
+    setMomentInteractions(data.interactions || []);
+  };
+
+  const markMomentInteractionsAsRead = async () => {
+    try {
+      await postJson("/api/memory", {
+        type: "moment_interactions",
+        user_id: APP_USER_ID,
+      });
+    } catch (error) {
+      console.log("Moment interaction read marker save failed:", error);
     }
   };
 
@@ -221,6 +259,10 @@ export default function MomentsScreen() {
       console.log("Moments load failed:", error);
     });
 
+    loadMomentInteractions().catch((error) => {
+      console.log("Moment interactions load failed:", error);
+    });
+
     AsyncStorage.getItem(LIKED_MOMENTS_KEY)
       .then((raw) => {
         const ids = raw ? JSON.parse(raw) : [];
@@ -249,7 +291,7 @@ export default function MomentsScreen() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await loadMoments();
+      await Promise.all([loadMoments(), loadMomentInteractions()]);
     } catch (error) {
       console.log("Moments refresh failed:", error);
     } finally {
@@ -881,6 +923,62 @@ export default function MomentsScreen() {
           </View>
         </View>
 
+        {momentInteractions.length > 0 && (
+          <View style={styles.interactionNoticeWrap}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.interactionNotice,
+                pressed && styles.pressed,
+              ]}
+              onPress={async () => {
+                const nextOpen = !interactionPanelOpen;
+                setInteractionPanelOpen(nextOpen);
+
+                if (nextOpen) {
+                  await markMomentInteractionsAsRead();
+                }
+              }}
+            >
+              <View style={styles.interactionNoticeAvatar}>
+                <Text style={styles.interactionNoticeAvatarText}>C</Text>
+              </View>
+              <Text style={styles.interactionNoticeText}>
+                {momentInteractions.length === 1
+                  ? "小C有新的互动"
+                  : `小C等 ${momentInteractions.length} 条新互动`}
+              </Text>
+              <SymbolView
+                name={interactionPanelOpen ? "chevron.up" : "chevron.down"}
+                size={15}
+                tintColor="#8C8C91"
+                weight="regular"
+              />
+            </Pressable>
+
+            {interactionPanelOpen && (
+              <View style={styles.interactionNoticeList}>
+                {momentInteractions.slice(0, 5).map((item) => (
+                  <Pressable
+                    key={item.id}
+                    style={({ pressed }) => [
+                      styles.interactionNoticeRow,
+                      pressed && styles.momentPressed,
+                    ]}
+                    onPress={() => {
+                      setInteractionPanelOpen(false);
+                    }}
+                  >
+                    <Text style={styles.interactionNoticeRowText}>{item.text}</Text>
+                    <Text style={styles.interactionNoticeTime}>
+                      {formatMomentTime(item.createdAt)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         {moments.length === 0 && (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>小C还没有偷偷发动态。</Text>
@@ -1331,6 +1429,73 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: "#B1ACA7",
+  },
+
+  interactionNoticeWrap: {
+    marginTop: -6,
+    marginHorizontal: 20,
+    marginBottom: 8,
+  },
+
+  interactionNotice: {
+    minHeight: 44,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F5F5F7",
+  },
+
+  interactionNoticeAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 5,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 9,
+    backgroundColor: "#7A8FA8",
+  },
+
+  interactionNoticeAvatarText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
+
+  interactionNoticeText: {
+    flex: 1,
+    fontSize: 15,
+    color: "#2C2C2E",
+  },
+
+  interactionNoticeList: {
+    marginTop: 7,
+    borderRadius: 6,
+    overflow: "hidden",
+    backgroundColor: "#F5F5F7",
+  },
+
+  interactionNoticeRow: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(120,120,128,0.14)",
+  },
+
+  interactionNoticeRowText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 21,
+    color: "#2C2C2E",
+  },
+
+  interactionNoticeTime: {
+    marginLeft: 10,
+    fontSize: 12,
+    color: "#A6A6AA",
   },
 
   moment: {
