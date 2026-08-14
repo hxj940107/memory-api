@@ -24,6 +24,11 @@ type TreeholeCreateResponse = {
   entry?: TreeholePost;
 };
 
+type TreeholeNudgeResponse = {
+  success?: boolean;
+  written?: number;
+};
+
 export function getTreeholeDraftKey(draft: TreeholeDraft) {
   return [
     draft.date || "",
@@ -105,6 +110,16 @@ export async function markTreeholePostsRead() {
     action: "mark_read",
     user_id: APP_USER_ID,
   });
+}
+
+export async function nudgeTreeholeUpdate() {
+  const response = await postJson<TreeholeNudgeResponse>("/api/memory", {
+    type: "treehole",
+    action: "nudge",
+    user_id: APP_USER_ID,
+  });
+
+  return Number(response.written || 0);
 }
 
 export async function migrateLocalTreeholePosts(posts: TreeholePost[]) {

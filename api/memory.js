@@ -1070,31 +1070,8 @@ async function getAutonomousTreeholeContext(user_id) {
   }
 }
 
-async function executeAutonomousTreeholeUpdate(task) {
-  const { data: latestEntry, error: latestError } = await supabase
-    .from("treehole_entries")
-    .select("created_at")
-    .eq("user_id", task.user_id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (latestError) throw latestError
-
-  if (latestEntry?.created_at) {
-    const latestAt = new Date(latestEntry.created_at)
-    const minimumDueAt = latestAt.getTime() + TREEHOLE_AUTONOMOUS_POLICY.minDelayHours * 60 * 60 * 1000
-
-    if (minimumDueAt > Date.now()) {
-      return {
-        deferred: true,
-        dueAt: getNextAutonomousTreeholeDueAt(latestAt),
-        reason: "最近刚更新过树洞",
-      }
-    }
-  }
-
-  const { chatContext, treeholeContext } = await getAutonomousTreeholeContext(task.user_id)
+async function generateAndSaveTreeholeUpdates(user_id, source) {
+  const { chatContext, treeholeContext } = await getAutonomousTreeholeContext(user_id)
   const currentDate = getMomentLocalTime().date.replace(/-/g, ".")
   const raw = await callSmallLLM(
     [
@@ -1148,19 +1125,46 @@ ${treeholeContext}
   const { data, error } = await supabase
     .from("treehole_entries")
     .insert(drafts.map((draft) => ({
-      user_id: task.user_id,
+      user_id,
       tag: draft.tag,
       entry_date: draft.date,
       content: draft.content,
       highlights: draft.highlights,
       reaction: draft.reaction,
-      source: "autonomous",
+      source,
     })))
     .select("id")
 
   if (error) throw error
 
-  return { entries: data || [] }
+  return { written: data?.length || 0 }
+}
+
+async function executeAutonomousTreeholeUpdate(task) {
+  const { data: latestEntry, error: latestError } = await supabase
+    .from("treehole_entries")
+    .select("created_at")
+    .eq("user_id", task.user_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (latestError) throw latestError
+
+  if (latestEntry?.created_at) {
+    const latestAt = new Date(latestEntry.created_at)
+    const minimumDueAt = latestAt.getTime() + TREEHOLE_AUTONOMOUS_POLICY.minDelayHours * 60 * 60 * 1000
+
+    if (minimumDueAt > Date.now()) {
+      return {
+        deferred: true,
+        dueAt: getNextAutonomousTreeholeDueAt(latestAt),
+        reason: "最近刚更新过树洞",
+      }
+    }
+  }
+
+  return generateAndSaveTreeholeUpdates(task.user_id, "autonomous")
 }
 
 async function validateInactivityReachOutTask(task) {
@@ -1947,6 +1951,22 @@ export default async function handler(req, res) {
       }
 
       if (req.method === "POST") {
+        if (req.body.action === "nudge") {
+          try {
+            const result = await generateAndSaveTreeholeUpdates(user_id, "manual")
+
+            return res.status(200).json({
+              success: true,
+              written: result.skipped ? 0 : result.written,
+            })
+          } catch (error) {
+            console.error("treehole nudge failed:", error)
+            return res.status(500).json({
+              error: "treehole nudge failed",
+            })
+          }
+        }
+
         if (req.body.action === "mark_read") {
           const readAt = new Date().toISOString()
           const { data, error } = await supabase

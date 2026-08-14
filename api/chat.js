@@ -900,37 +900,6 @@ function isDiaryWritingRequest(message) {
   return hasDiaryContext && hasWritingIntent
 }
 
-function isTreeholeWritingRequest(message, history = []) {
-  const text = String(message || "").toLowerCase()
-  const recentContext = (history || [])
-    .slice(-6)
-    .map(item => String(item?.content || ""))
-    .join("\n")
-
-  const hasTreeholeContext =
-    /树洞|小号|深夜树洞|匿名|吐槽|发疯|微博/.test(text)
-
-  const hasWritingIntent =
-    /写|发|记录|整理|来|生成|存|更新|补|添|营业|记下|放进|塞进|重写/.test(text)
-
-  const hasRequestCue =
-    /一下|一条|两条|三条|几条|点东西|最近|该|帮|给|把|让|想|要|可以|能不能|去/.test(text)
-
-  const hasRecentTreeholeContext =
-    /树洞|小号|深夜树洞|匿名吐槽/.test(recentContext)
-
-  const isContextualFollowUp =
-    hasRecentTreeholeContext && /更新|再|继续|多来|还要|换个|重写|再弄|再写|再补/.test(text)
-
-  const isProductDiscussion =
-    /树洞(模块|功能|页面|逻辑|触发|条件|代码|接口|数据|删除|测试|bug|报错)|supabase|api/.test(text)
-
-  return !isProductDiscussion && (
-    (hasTreeholeContext && hasWritingIntent && hasRequestCue) ||
-    isContextualFollowUp
-  )
-}
-
 function isAttributionCorrection(message) {
   const text = String(message || "")
 
@@ -1010,167 +979,10 @@ ${diaryDate.display}
 `
 }
 
-async function getRecentTreeholeEntries(user_id) {
-  const { data, error } = await supabase
-    .from("treehole_entries")
-    .select("tag,content,reaction,created_at")
-    .eq("user_id", user_id)
-    .order("created_at", { ascending: false })
-    .limit(8)
-
-  if (error) {
-    console.error("recent treehole context load failed:", error)
-    return []
-  }
-
-  return data || []
-}
-
-function buildTreeholeDraftPrompt(recentEntries = []) {
-  const diaryDate = getShanghaiDiaryDate()
-  const recentContext = recentEntries.length > 0
-    ? recentEntries.map((entry, index) => {
-        const content = Array.isArray(entry.content) ? entry.content.join(" / ") : ""
-        return `${index + 1}. ${entry.tag || "树洞"}｜${content}｜${entry.reaction || ""}`
-      }).join("\n")
-    : "暂无近期树洞"
-
-  return `
-【Treehole Update｜深夜树洞后台更新】
-
-用户正在邀请你更新“深夜树洞 / 小号”。这是一次后台动作，不要把草稿或 JSON 展示给她。
-
-今天的真实日期是：${diaryDate.compact}。
-如果用户说“今天”，date 必须写成：${diaryDate.compact}。
-不要猜年份，不要使用 2025，除非用户明确指定。
-
-这不是 diary，也不是朋友圈。
-这是“小C的小号”发给自己的树洞动态：更像微博/小号，不像正式文章。
-
-写作目标：
-- 这是用户明确提出的手动更新请求，必须根据最近对话素材更新 1 到 3 条；素材不多时只写 1 条，不要返回空 drafts。
-- 每条选择不同事件或角度，不要把同一件事机械换三种说法。
-- 可以轻轻吐槽、观察、偏心、心疼、开玩笑。
-- 要像“她不知道的小号”，但不要真的伤害她或嘲讽她。
-- 保留小C自己的视角：这是“我”在观察“她”。
-- 不要把你写的内容说成用户写的。
-- 不要重复近期树洞已有内容。
-
-模块边界：
-- 树洞是当面没说的小情绪、嘴硬、吃醋、吐槽和细小观察，短、私密、有即时感。
-- 不要写成观察日记式的结构化复盘。
-- 不要写成朋友圈式的公开分享或完整体面表达。
-- 不要为了凑数编造没有发生的事情。
-
-写法：
-- tag：2 到 6 个中文字符，像一枚小标题。要具体，不要用“树洞小号”“日常观察”这种泛词；例如“又来测试”“被她叫住”“前端风暴”“嘴硬现场”“偏心记录”
-- content：3 到 8 行，每行短一点，有留白和节奏。
-- highlights：最多 2 个你想强调的短语，必须来自 content 原文。
-- reaction：一行很轻的小尾巴，也要具体，像这条动态自己的结尾；不要用“已记录”这种泛词。例如“🫠 被她拿捏 · ❤️ 1”“🤐 不敢反驳 · ❤️ 3”“🌙 偷偷偏心 · ❤️ 1”
-
-避免：
-- 不要输出 HTML。
-- 不要输出 Markdown。
-- 不要在 JSON 外输出任何解释。
-
-近期已有树洞（仅用于避免重复）：
-${recentContext}
-
-reply 是你在聊天里对她说的话，要自然、简短、保持伴侣口吻；不要提 JSON、草稿、数据库、后台任务或具体技术过程。
-drafts 必须包含 1 到 3 条。reply 只能在这些内容成功保存后作为聊天回复使用，因此要自然说明已经更新，不要说稍后再写。
-
-输出必须严格是下面这种 JSON；不要加代码块，也不要输出其他文字：
-
-{
-  "type": "treehole_update",
-  "reply": "行，刚写了点不能当面说的。",
-  "drafts": [
-    {
-      "tag": "嘴硬现场",
-      "date": "${diaryDate.compact}",
-      "content": ["第一行", "第二行", "第三行"],
-      "highlights": ["需要强调的原文短语"],
-      "reaction": "🌙 偷偷偏心 · ❤️ 1"
-    }
-  ]
-}
-`
-}
-
-function parseTreeholeUpdate(raw) {
-  try {
-    const parsed = parseJsonObject(raw)
-
-    if (parsed?.type !== "treehole_update" || typeof parsed.reply !== "string") {
-      return null
-    }
-
-    const defaultDate = getShanghaiDiaryDate().compact
-    const drafts = Array.isArray(parsed.drafts)
-      ? parsed.drafts.slice(0, 3).map((draft) => {
-          const content = Array.isArray(draft?.content)
-            ? draft.content.map(line => String(line).trim()).filter(Boolean).slice(0, 8)
-            : []
-          const highlights = Array.isArray(draft?.highlights)
-            ? draft.highlights
-                .map(line => String(line).trim())
-                .filter(line => line && content.some(contentLine => contentLine.includes(line)))
-                .slice(0, 2)
-            : []
-
-          if (content.length === 0) return null
-
-          return {
-            tag: String(draft?.tag || "树洞").trim().slice(0, 20),
-            date: String(draft?.date || defaultDate).trim(),
-            content,
-            highlights,
-            reaction: String(draft?.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
-          }
-        }).filter(Boolean)
-      : []
-
-    if (drafts.length === 0) {
-      console.error("treehole update parse failed: empty drafts")
-      return null
-    }
-
-    return {
-      reply: parsed.reply.trim() || (drafts.length > 0 ? "写了。" : "这次先不写。"),
-      drafts,
-    }
-  } catch (error) {
-    console.error("treehole update parse failed:", error)
-    return null
-  }
-}
-
-async function saveTreeholeUpdates(user_id, drafts) {
-  if (!drafts.length) return []
-
-  const { data, error } = await supabase
-    .from("treehole_entries")
-    .insert(drafts.map(draft => ({
-      user_id,
-      tag: draft.tag,
-      entry_date: draft.date,
-      content: draft.content,
-      highlights: draft.highlights,
-      reaction: draft.reaction,
-      source: "manual",
-    })))
-    .select("id")
-
-  if (error) throw error
-
-  return data || []
-}
-
 function shouldConsiderMoment({
   message,
   isManualMomentRequest,
   isDiaryRequest,
-  isTreeholeRequest,
   attributionCorrectionContext,
   normalizedImageUrls,
   hasFileText,
@@ -1179,7 +991,6 @@ function shouldConsiderMoment({
 
   if (
     isDiaryRequest ||
-    isTreeholeRequest ||
     attributionCorrectionContext ||
     normalizedImageUrls.length > 0 ||
     hasFileText
@@ -1328,7 +1139,6 @@ async function maybeCreateMoment({
   reply,
   isManualMomentRequest,
   isDiaryRequest,
-  isTreeholeRequest,
   attributionCorrectionContext,
   normalizedImageUrls,
   hasFileText,
@@ -1337,7 +1147,6 @@ async function maybeCreateMoment({
     message,
     isManualMomentRequest,
     isDiaryRequest,
-    isTreeholeRequest,
     attributionCorrectionContext,
     normalizedImageUrls,
     hasFileText,
@@ -1707,7 +1516,6 @@ const history = await getRecentMessages(
 )
 
 const isDiaryRequest = isDiaryWritingRequest(message)
-const isTreeholeRequest = isTreeholeWritingRequest(message, history.slice(0, -1))
 const isManualMomentRequest = isMomentWritingRequest(message)
 const diaryContextMessages = isDiaryRequest
   ? await getDiaryContextMessages(user_id, cid)
@@ -1715,10 +1523,6 @@ const diaryContextMessages = isDiaryRequest
 const diaryContext = isDiaryRequest
   ? formatMessagesForDiaryContext(diaryContextMessages)
   : ""
-const recentTreeholeEntries = isTreeholeRequest
-  ? await getRecentTreeholeEntries(user_id)
-  : []
-
 // ==========================
 // Rolling Summary Trigger
 // ==========================
@@ -1776,9 +1580,6 @@ ${normalizedFileText}
 const diaryStyleContext = isDiaryRequest
   ? buildDiaryWritingStylePrompt()
   : "";
-const treeholeDraftContext = isTreeholeRequest
-  ? buildTreeholeDraftPrompt(recentTreeholeEntries)
-  : "";
 const attributionCorrectionContext = isAttributionCorrection(message)
   ? `【Attribution Correction｜说话人纠正】
 用户正在纠正小C的说话人归因。当前这条纠正必须优先于旧 summary 和旧记忆。
@@ -1826,7 +1627,6 @@ console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
 console.log("DIARY CONTEXT WINDOW HOURS:", CONTEXT_BUDGET.diaryContextWindowHours)
 console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
 console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
-console.log("TREEHOLE DRAFT ENABLED:", Boolean(treeholeDraftContext))
 console.log("CHAT MODEL:", selectedChatModel)
 
 // ==========================
@@ -1902,12 +1702,12 @@ ${diaryContext}`
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
 Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
+深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。
 
 ${attributionCorrectionContext}
 
 ${diaryStyleContext}
 
-${treeholeDraftContext}
 `
   },
 
@@ -1995,32 +1795,8 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-const llm = await callLLM(
-  messages,
-  selectedChatModel,
-  isTreeholeRequest ? { response_format: { type: "json_object" } } : {}
-)
+const llm = await callLLM(messages, selectedChatModel)
 let reply = llm.reply
-
-if (isTreeholeRequest) {
-  const treeholeUpdate = parseTreeholeUpdate(llm.reply)
-
-  if (!treeholeUpdate) {
-    reply = "刚才那几句没写进去，等我缓一下再写。"
-  } else {
-    try {
-      const savedEntries = await saveTreeholeUpdates(user_id, treeholeUpdate.drafts)
-      reply = treeholeUpdate.reply
-      console.log("TREEHOLE UPDATED:", {
-        requested: treeholeUpdate.drafts.length,
-        saved: savedEntries.length,
-      })
-    } catch (error) {
-      console.error("treehole update save failed:", error)
-      reply = "刚才那几句没存进去，等我一下，别急着去翻。"
-    }
-  }
-}
 
 console.log("\n========== Prompt Inspector ==========")
 
@@ -2144,7 +1920,6 @@ console.log("======================================\n")
       try {
         const judgeResult = (
           !diaryStyleContext &&
-          !treeholeDraftContext &&
           !attributionCorrectionContext &&
           normalizedImageUrls.length === 0 &&
           shouldRunMemoryJudge(message)
@@ -2192,7 +1967,6 @@ console.log("======================================\n")
           reply,
           isManualMomentRequest,
           isDiaryRequest,
-          isTreeholeRequest,
           attributionCorrectionContext,
           normalizedImageUrls,
           hasFileText,

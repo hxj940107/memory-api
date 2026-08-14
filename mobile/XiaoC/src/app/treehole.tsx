@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { TreeholePost, treeholePosts } from "../data/treeholePosts";
 import {
@@ -9,6 +9,7 @@ import {
   getSavedTreeholePosts,
   markTreeholePostsRead,
   migrateLocalTreeholePosts,
+  nudgeTreeholeUpdate,
 } from "../lib/treeholeState";
 
 const renderLine = (line: string, highlights: string[] = []) => {
@@ -70,6 +71,9 @@ export default function TreeholeScreen() {
   const [remotePosts, setRemotePosts] = useState<TreeholePost[]>([]);
   const [savedPosts, setSavedPosts] = useState<TreeholePost[]>([]);
   const [remoteReady, setRemoteReady] = useState(false);
+  const [isNudging, setIsNudging] = useState(false);
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -110,8 +114,24 @@ export default function TreeholeScreen() {
 
     return () => {
       isActive = false;
+
+      if (noticeTimer.current) {
+        clearTimeout(noticeTimer.current);
+      }
     };
   }, []);
+
+  const showNotice = (message: string) => {
+    if (noticeTimer.current) {
+      clearTimeout(noticeTimer.current);
+    }
+
+    setNotice(message);
+    noticeTimer.current = setTimeout(() => {
+      setNotice("");
+      noticeTimer.current = null;
+    }, 2200);
+  };
 
   const posts = [
     ...remotePosts,
@@ -161,6 +181,34 @@ export default function TreeholeScreen() {
     ]);
   };
 
+  const handleNudge = async () => {
+    if (isNudging) {
+      return;
+    }
+
+    setIsNudging(true);
+
+    try {
+      const written = await nudgeTreeholeUpdate();
+
+      if (written === 0) {
+        showNotice("还没想好写什么，等我");
+        return;
+      }
+
+      const remote = await getRemoteTreeholePosts();
+      setRemotePosts(remote.entries);
+      setSavedPosts([]);
+      setRemoteReady(true);
+      await markTreeholePostsRead();
+    } catch (error) {
+      console.log("Treehole nudge failed:", error);
+      showNotice("刚刚没写进去，等会儿再催我");
+    } finally {
+      setIsNudging(false);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -179,6 +227,18 @@ export default function TreeholeScreen() {
 
           <Text style={styles.username}>@某c的深夜树洞</Text>
           <Text style={styles.bio}>匿名发疯 · 只有一个粉丝 · 她不知道这个号</Text>
+          <Pressable
+            disabled={isNudging}
+            onPress={handleNudge}
+            style={({ pressed }) => [
+              styles.nudgeButton,
+              pressed && styles.nudgeButtonPressed,
+            ]}
+          >
+            <Text style={styles.nudgeButtonText}>
+              {isNudging ? "在想了…" : "催更"}
+            </Text>
+          </Pressable>
         </View>
 
         {posts.map((post) => (
@@ -191,6 +251,12 @@ export default function TreeholeScreen() {
           />
         ))}
       </ScrollView>
+
+      {!!notice && (
+        <Pressable style={styles.notice} onPress={() => setNotice("")}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -258,6 +324,43 @@ const styles = StyleSheet.create({
   bio: {
     fontSize: 12,
     color: "#6F6A83",
+  },
+
+  nudgeButton: {
+    alignSelf: "flex-end",
+    marginTop: 14,
+    marginRight: 4,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    borderRadius: 13,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+
+  nudgeButtonPressed: {
+    opacity: 0.65,
+  },
+
+  nudgeButtonText: {
+    fontSize: 12,
+    color: "#8F8AA3",
+  },
+
+  notice: {
+    position: "absolute",
+    top: 118,
+    alignSelf: "center",
+    maxWidth: 260,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(42,42,55,0.96)",
+    zIndex: 20,
+  },
+
+  noticeText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#D8D4E8",
   },
 
   post: {
