@@ -1663,7 +1663,7 @@ export default async function handler(req, res) {
       if (req.method === "GET") {
         const { data, error } = await supabase
           .from("treehole_entries")
-          .select("id,tag,entry_date,content,highlights,reaction,source,seen_at,created_at")
+          .select("id,tag,entry_date,content,highlights,reaction,pinned,source,legacy_key,seen_at,created_at")
           .eq("user_id", user_id)
           .order("created_at", { ascending: false })
           .limit(100)
@@ -1681,7 +1681,9 @@ export default async function handler(req, res) {
           content: Array.isArray(item.content) ? item.content.map(String) : [],
           highlights: Array.isArray(item.highlights) ? item.highlights.map(String) : [],
           reaction: item.reaction || "🌙 偷偷偏心 · ❤️ 1",
+          pinned: Boolean(item.pinned),
           source: item.source || "manual",
+          legacyKey: item.legacy_key || null,
           seenAt: item.seen_at,
           createdAt: item.created_at,
         }))
@@ -1734,9 +1736,8 @@ export default async function handler(req, res) {
         const source = ["manual", "autonomous", "legacy"].includes(req.body.source)
           ? req.body.source
           : "manual"
-        const { data, error } = await supabase
-          .from("treehole_entries")
-          .insert({
+        const legacyKey = String(req.body.legacyKey || "").trim() || null
+        const entry = {
             user_id,
             tag: String(req.body.tag || "树洞").trim().slice(0, 20),
             entry_date: String(req.body.date || "").trim() || null,
@@ -1744,8 +1745,19 @@ export default async function handler(req, res) {
             highlights,
             reaction: String(req.body.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
             source,
-          })
-          .select("id,tag,entry_date,content,highlights,reaction,source,seen_at,created_at")
+            pinned: Boolean(req.body.pinned),
+            legacy_key: legacyKey,
+            ...(req.body.seen ? { seen_at: new Date().toISOString() } : {}),
+          }
+        const query = legacyKey
+          ? supabase
+              .from("treehole_entries")
+              .upsert(entry, { onConflict: "user_id,legacy_key" })
+          : supabase
+              .from("treehole_entries")
+              .insert(entry)
+        const { data, error } = await query
+          .select("id,tag,entry_date,content,highlights,reaction,pinned,source,legacy_key,seen_at,created_at")
           .single()
 
         if (error) {
@@ -1763,7 +1775,9 @@ export default async function handler(req, res) {
             content: data.content,
             highlights: data.highlights,
             reaction: data.reaction,
+            pinned: Boolean(data.pinned),
             source: data.source,
+            legacyKey: data.legacy_key || null,
             seenAt: data.seen_at,
             createdAt: data.created_at,
           },

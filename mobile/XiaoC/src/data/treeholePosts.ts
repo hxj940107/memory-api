@@ -7,6 +7,7 @@ export type TreeholePost = {
   highlights?: string[];
   reaction: string;
   source?: "manual" | "autonomous" | "legacy";
+  legacyKey?: string | null;
   seenAt?: string | null;
   createdAt?: string;
   storage?: "remote" | "local" | "seed";

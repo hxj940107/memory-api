@@ -8,6 +8,7 @@ import {
   getRemoteTreeholePosts,
   getSavedTreeholePosts,
   markTreeholePostsRead,
+  migrateLocalTreeholePosts,
 } from "../lib/treeholeState";
 
 const renderLine = (line: string, highlights: string[] = []) => {
@@ -68,6 +69,7 @@ function TreeholePostCard({
 export default function TreeholeScreen() {
   const [remotePosts, setRemotePosts] = useState<TreeholePost[]>([]);
   const [savedPosts, setSavedPosts] = useState<TreeholePost[]>([]);
+  const [remoteReady, setRemoteReady] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -81,9 +83,19 @@ export default function TreeholeScreen() {
 
       try {
         const remote = await getRemoteTreeholePosts();
+        const migratedPosts = localPosts.length
+          ? await migrateLocalTreeholePosts(localPosts)
+          : [];
+        const migratedIds = new Set(migratedPosts.map((post) => post.id));
+        const nextRemotePosts = [
+          ...migratedPosts,
+          ...remote.entries.filter((post) => !migratedIds.has(post.id)),
+        ];
 
         if (isActive) {
-          setRemotePosts(remote.entries);
+          setRemotePosts(nextRemotePosts);
+          setSavedPosts([]);
+          setRemoteReady(true);
         }
 
         if (remote.unreadCount > 0) {
@@ -104,10 +116,12 @@ export default function TreeholeScreen() {
   const posts = [
     ...remotePosts,
     ...savedPosts,
-    ...treeholePosts.map((post) => ({
-      ...post,
-      storage: "seed" as const,
-    })),
+    ...(remoteReady
+      ? []
+      : treeholePosts.map((post) => ({
+          ...post,
+          storage: "seed" as const,
+        }))),
   ].sort((a, b) => {
     if (a.pinned === b.pinned) {
       return 0;

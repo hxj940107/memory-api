@@ -107,6 +107,37 @@ export async function markTreeholePostsRead() {
   });
 }
 
+export async function migrateLocalTreeholePosts(posts: TreeholePost[]) {
+  const migrated: Array<TreeholePost | null> = await Promise.all(
+    posts.map(async (post) => {
+      const response = await postJson<TreeholeCreateResponse>("/api/memory", {
+        type: "treehole",
+        user_id: APP_USER_ID,
+        tag: post.tag,
+        date: post.date,
+        content: post.content,
+        highlights: post.highlights || [],
+        reaction: post.reaction,
+        pinned: Boolean(post.pinned),
+        source: "legacy",
+        legacyKey: `local:${post.id}`,
+        seen: true,
+      });
+
+      return response.entry
+        ? {
+            ...response.entry,
+            storage: "remote" as const,
+          } satisfies TreeholePost
+        : null;
+    }),
+  );
+
+  await AsyncStorage.removeItem(SAVED_TREEHOLE_POSTS_KEY);
+
+  return migrated.filter((post): post is TreeholePost => post !== null);
+}
+
 export async function deleteTreeholePost(post: TreeholePost) {
   if (post.storage === "remote") {
     return apiJson("/api/memory", {
