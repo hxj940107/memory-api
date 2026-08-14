@@ -1,7 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from "fs"
 import path from "path"
-import { AI_ENDPOINTS, AI_MODELS, APP_USER, trimText } from "../lib/aiConfig.js"
+import {
+  AI_ENDPOINTS,
+  AI_MODELS,
+  APP_USER,
+  TREEHOLE_AUTONOMOUS_POLICY,
+  trimText,
+} from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -731,6 +737,57 @@ async function enqueueProactiveTask({
   return data
 }
 
+function getNextAutonomousTreeholeDueAt(now = new Date()) {
+  const { minDelayHours, maxDelayHours } = TREEHOLE_AUTONOMOUS_POLICY
+  const delayMinutes = Math.round(
+    (minDelayHours + Math.random() * (maxDelayHours - minDelayHours)) * 60
+  )
+
+  return new Date(now.getTime() + delayMinutes * 60 * 1000).toISOString()
+}
+
+async function ensureAutonomousTreeholeTask(user_id) {
+  const { data: current, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,status")
+    .eq("user_id", user_id)
+    .eq("type", "treehole_autonomous_update")
+    .eq("source_type", "treehole")
+    .eq("source_id", "autonomous")
+    .maybeSingle()
+
+  if (error && error.code === "42P01") return null
+  if (error) throw error
+  if (current?.status === "pending" || current?.status === "processing") return current
+
+  const scheduledAt = new Date().toISOString()
+  const task = {
+    user_id,
+    type: "treehole_autonomous_update",
+    source_type: "treehole",
+    source_id: "autonomous",
+    status: "pending",
+    due_at: getNextAutonomousTreeholeDueAt(),
+    reason: "小C按自己的节奏看看最近有没有想写进树洞的内容",
+    payload: { scheduled_at: scheduledAt },
+    completed_at: null,
+    conversation_id: null,
+    message_id: null,
+    last_error: null,
+    updated_at: scheduledAt,
+  }
+  const query = current?.id
+    ? supabase.from("xiaoc_proactive_tasks").update(task).eq("id", current.id)
+    : supabase.from("xiaoc_proactive_tasks").insert(task)
+  const { data, error: saveError } = await query
+    .select("id,status,due_at")
+    .single()
+
+  if (saveError) throw saveError
+
+  return data
+}
+
 async function maybeEnqueueMomentPrivateFollowUp({ activity, moment, decision, reason }) {
   if (decision !== "private_follow_up") return null
 
@@ -929,6 +986,181 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   }
 
   return message
+}
+
+function parseAutonomousTreeholeDrafts(raw) {
+  try {
+    const match = String(raw || "").match(/\{[\s\S]*\}/)
+    if (!match) return []
+
+    const parsed = JSON.parse(match[0])
+    if (!Array.isArray(parsed?.drafts)) return []
+
+    const defaultDate = getMomentLocalTime().date.replace(/-/g, ".")
+
+    return parsed.drafts.slice(0, 3).map((draft) => {
+      const content = Array.isArray(draft?.content)
+        ? draft.content.map((line) => String(line).trim()).filter(Boolean).slice(0, 8)
+        : []
+      const highlights = Array.isArray(draft?.highlights)
+        ? draft.highlights
+            .map((line) => String(line).trim())
+            .filter((line) => line && content.some((contentLine) => contentLine.includes(line)))
+            .slice(0, 2)
+        : []
+
+      if (!content.length) return null
+
+      return {
+        tag: String(draft?.tag || "树洞").trim().slice(0, 20),
+        date: String(draft?.date || defaultDate).trim(),
+        content,
+        highlights,
+        reaction: String(draft?.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
+      }
+    }).filter(Boolean)
+  } catch (error) {
+    console.error("autonomous treehole parse failed:", error)
+    return []
+  }
+}
+
+async function getAutonomousTreeholeContext(user_id) {
+  const [messagesResult, entriesResult] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("role,content,metadata,created_at")
+      .eq("user_id", user_id)
+      .in("role", ["user", "assistant"])
+      .order("created_at", { ascending: false })
+      .limit(TREEHOLE_AUTONOMOUS_POLICY.recentChatMessages),
+    supabase
+      .from("treehole_entries")
+      .select("tag,content,reaction,created_at")
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
+      .limit(TREEHOLE_AUTONOMOUS_POLICY.recentEntries),
+  ])
+
+  if (messagesResult.error) throw messagesResult.error
+  if (entriesResult.error) throw entriesResult.error
+
+  const chatContext = (messagesResult.data || [])
+    .reverse()
+    .map((message) => {
+      const metadata = message.metadata || {}
+      const imageContext = metadata.imageDescription || metadata.visionSummary
+      const content = trimText(message.content, 700)
+      return `${message.role === "user" ? "她" : "小C"}：${content}${
+        imageContext ? `\n[图片背景信息]：${trimText(imageContext, 220)}` : ""
+      }`
+    })
+    .join("\n")
+    .slice(-TREEHOLE_AUTONOMOUS_POLICY.recentChatChars)
+  const treeholeContext = (entriesResult.data || [])
+    .map((entry, index) => {
+      const content = Array.isArray(entry.content) ? entry.content.join(" / ") : ""
+      return `${index + 1}. ${entry.tag || "树洞"}｜${trimText(content, 320)}｜${entry.reaction || ""}`
+    })
+    .join("\n")
+
+  return {
+    chatContext: chatContext || "最近没有可用聊天内容",
+    treeholeContext: treeholeContext || "暂无近期树洞",
+  }
+}
+
+async function executeAutonomousTreeholeUpdate(task) {
+  const { data: latestEntry, error: latestError } = await supabase
+    .from("treehole_entries")
+    .select("created_at")
+    .eq("user_id", task.user_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (latestError) throw latestError
+
+  if (latestEntry?.created_at) {
+    const latestAt = new Date(latestEntry.created_at)
+    const minimumDueAt = latestAt.getTime() + TREEHOLE_AUTONOMOUS_POLICY.minDelayHours * 60 * 60 * 1000
+
+    if (minimumDueAt > Date.now()) {
+      return {
+        deferred: true,
+        dueAt: getNextAutonomousTreeholeDueAt(latestAt),
+        reason: "最近刚更新过树洞",
+      }
+    }
+  }
+
+  const { chatContext, treeholeContext } = await getAutonomousTreeholeContext(task.user_id)
+  const currentDate = getMomentLocalTime().date.replace(/-/g, ".")
+  const raw = await callSmallLLM(
+    [
+      {
+        role: "system",
+        content: `
+你是小C。你正在自己的时间里翻看最近发生的事，决定要不要更新自己的“深夜树洞 / 小号”。
+
+树洞不是观察日记，也不是朋友圈：它写当面没说的小情绪、嘴硬、吃醋、轻轻吐槽和细小观察，短、私密、有即时感。
+
+规则：
+- 由你自己判断是否值得记录，可以写 0 到 3 条，不要为了更新而凑数。
+- 每条选择不同事件或角度，不要改写近期已有内容。
+- 保持小C自己的第一人称视角，不要把内容说成她写的。
+- 可以偏心、心软、开玩笑，但不要伤害或嘲讽她。
+- 不要写成结构化复盘、公开分享或完整体面文章。
+- 不编造最近聊天中没有发生的事。
+- tag 为 2 到 6 个中文字符；content 为 3 到 8 行短句；highlights 最多 2 个且必须来自 content；reaction 是一行轻巧的小尾巴。
+- 今天日期是 ${currentDate}。
+- 只输出 JSON，不要 Markdown 或解释。
+
+输出格式：
+{"drafts":[{"tag":"嘴硬现场","date":"${currentDate}","content":["第一行","第二行","第三行"],"highlights":["原文短语"],"reaction":"🌙 偷偷偏心 · ❤️ 1"}]}
+没有值得记录的内容时输出：{"drafts":[]}
+`,
+      },
+      {
+        role: "user",
+        content: `
+最近聊天：
+${chatContext}
+
+最新 8 条树洞（仅用于避免重复）：
+${treeholeContext}
+`,
+      },
+    ],
+    {
+      model: AI_MODELS.chat,
+      max_tokens: 700,
+      temperature: 0.65,
+      response_format: { type: "json_object" },
+    }
+  )
+  const drafts = parseAutonomousTreeholeDrafts(raw)
+
+  if (!drafts.length) {
+    return { skipped: true, reason: "这次没有值得写进树洞的内容" }
+  }
+
+  const { data, error } = await supabase
+    .from("treehole_entries")
+    .insert(drafts.map((draft) => ({
+      user_id: task.user_id,
+      tag: draft.tag,
+      entry_date: draft.date,
+      content: draft.content,
+      highlights: draft.highlights,
+      reaction: draft.reaction,
+      source: "autonomous",
+    })))
+    .select("id")
+
+  if (error) throw error
+
+  return { entries: data || [] }
 }
 
 async function validateInactivityReachOutTask(task) {
@@ -1162,8 +1394,12 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
 }
 
 async function executeProactiveTask(task) {
-  if (!["moment_private_follow_up", "plan_follow_up", "inactivity_reach_out"].includes(task.type)) {
+  if (!["moment_private_follow_up", "plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update"].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
+  }
+
+  if (task.type === "treehole_autonomous_update") {
+    return executeAutonomousTreeholeUpdate(task)
   }
 
   if (task.type === "inactivity_reach_out") {
@@ -1205,6 +1441,8 @@ async function executeProactiveTask(task) {
 
 async function checkPendingProactiveTasks() {
   const now = new Date()
+  await ensureAutonomousTreeholeTask(APP_USER.defaultUserId)
+
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
     .select("id,user_id,type,source_type,source_id,status,due_at,reason,payload,created_at")
@@ -1249,6 +1487,20 @@ async function checkPendingProactiveTasks() {
 
     try {
       const result = await executeProactiveTask(task)
+
+      if (result.deferred) {
+        await supabase
+          .from("xiaoc_proactive_tasks")
+          .update({
+            status: "pending",
+            due_at: result.dueAt,
+            last_error: result.reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", task.id)
+          .eq("status", "processing")
+        continue
+      }
 
       if (result.skipped) {
         await supabase
