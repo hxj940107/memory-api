@@ -14,6 +14,7 @@ import {
   Keyboard,
   ActionSheetIOS,
   Alert,
+  type GestureResponderEvent,
 } from "react-native";
 
 import Animated, {
@@ -168,6 +169,265 @@ const renderInlineMarkdown = (text: string) =>
       part
     ),
   );
+
+type MarkdownBlock =
+  | { type: "paragraph"; text: string }
+  | { type: "heading"; text: string; level: number }
+  | { type: "unorderedList"; items: string[] }
+  | { type: "orderedList"; items: string[] }
+  | { type: "divider" }
+  | { type: "code"; code: string; language?: string };
+
+type MarkdownRenderUnit =
+  | { type: "content"; blocks: MarkdownBlock[] }
+  | Extract<MarkdownBlock, { type: "code" }>;
+
+const hasBlockMarkdown = (text: string) =>
+  /(^|\n)\s*(?:```|#{1,3}\s+|(?:---+|\*\*\*+|___+)\s*$|[-*+]\s+|\d+[.)]\s+)/m.test(
+    text,
+  );
+
+const parseMarkdownBlocks = (text: string): MarkdownBlock[] => {
+  const lines = text.replace(/\r\n?/g, "\n").trim().split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^\s*```([^`]*)$/);
+    if (fence) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push({
+        type: "code",
+        code: codeLines.join("\n"),
+        language: fence[1].trim() || undefined,
+      });
+      continue;
+    }
+
+    const heading = line.match(/^\s*(#{1,3})\s+(.+)$/);
+    if (heading) {
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        text: heading[2].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*(?:---+|\*\*\*+|___+)\s*$/.test(line)) {
+      blocks.push({ type: "divider" });
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].match(/^\s*[-*+]\s+(.+)$/);
+        if (!item) break;
+        items.push(item[1].trim());
+        index += 1;
+      }
+      blocks.push({ type: "unorderedList", items });
+      continue;
+    }
+
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = lines[index].match(/^\s*\d+[.)]\s+(.+)$/);
+        if (!item) break;
+        items.push(item[1].trim());
+        index += 1;
+      }
+      blocks.push({ type: "orderedList", items });
+      continue;
+    }
+
+    const paragraphLines = [line.trim()];
+    index += 1;
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^\s*(?:```|#{1,3}\s+|(?:---+|\*\*\*+|___+)\s*$|[-*+]\s+|\d+[.)]\s+)/.test(
+        lines[index],
+      )
+    ) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push({ type: "paragraph", text: paragraphLines.join("\n") });
+  }
+
+  return blocks;
+};
+
+const groupMarkdownBlocks = (blocks: MarkdownBlock[]): MarkdownRenderUnit[] => {
+  const units: MarkdownRenderUnit[] = [];
+
+  blocks.forEach((block) => {
+    if (block.type === "code") {
+      const previousUnit = units[units.length - 1];
+      if (
+        previousUnit?.type === "content" &&
+        previousUnit.blocks[previousUnit.blocks.length - 1]?.type === "divider"
+      ) {
+        previousUnit.blocks.pop();
+        if (previousUnit.blocks.length === 0) {
+          units.pop();
+        }
+      }
+      units.push(block);
+      return;
+    }
+
+    const lastUnit = units[units.length - 1];
+    if (block.type === "divider" && lastUnit?.type === "code") {
+      return;
+    }
+    if (lastUnit?.type === "content") {
+      lastUnit.blocks.push(block);
+    } else {
+      units.push({ type: "content", blocks: [block] });
+    }
+  });
+
+  return units;
+};
+
+const MarkdownContent = ({ blocks }: { blocks: MarkdownBlock[] }) => (
+  <>
+    {blocks.map((block, blockIndex) => {
+      if (block.type === "heading") {
+        return (
+          <Text
+            key={`heading_${blockIndex}`}
+            style={[
+              styles.aiText,
+              styles.markdownHeading,
+              block.level === 1 && styles.markdownHeadingLarge,
+            ]}
+          >
+            {renderInlineMarkdown(block.text)}
+          </Text>
+        );
+      }
+
+      if (block.type === "paragraph") {
+        return (
+          <Text
+            key={`paragraph_${blockIndex}`}
+            style={[styles.aiText, styles.markdownParagraph]}
+          >
+            {renderInlineMarkdown(block.text)}
+          </Text>
+        );
+      }
+
+      if (block.type === "divider") {
+        return <View key={`divider_${blockIndex}`} style={styles.markdownDivider} />;
+      }
+
+      if (block.type === "unorderedList" || block.type === "orderedList") {
+        return (
+          <View key={`list_${blockIndex}`} style={styles.markdownList}>
+            {block.items.map((item, itemIndex) => (
+              <View key={`${item}_${itemIndex}`} style={styles.markdownListItem}>
+                <Text style={[styles.aiText, styles.markdownListMarker]}>
+                  {block.type === "orderedList" ? `${itemIndex + 1}.` : "•"}
+                </Text>
+                <Text style={[styles.aiText, styles.markdownListText]}>
+                  {renderInlineMarkdown(item)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        );
+      }
+
+      return null;
+    })}
+  </>
+);
+
+const CodeBlockCard = ({ code, language }: { code: string; language?: string }) => {
+  const [copied, setCopied] = useState(false);
+  const shouldWrap =
+    !language ||
+    ["text", "txt", "plaintext", "prompt", "md", "markdown"].includes(
+      language.toLowerCase(),
+    );
+
+  const copyCode = async () => {
+    await Clipboard.setStringAsync(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  return (
+    <View style={styles.codeCard}>
+      <View style={styles.codeCardHeader}>
+        <Text style={styles.codeLanguage}>{language || "文本"}</Text>
+        <Pressable hitSlop={8} onPress={copyCode}>
+          <Text style={styles.codeCopy}>{copied ? "已复制" : "复制"}</Text>
+        </Pressable>
+      </View>
+      {!shouldWrap ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <Text selectable style={styles.codeText}>
+            {code}
+          </Text>
+        </ScrollView>
+      ) : (
+        <Text selectable style={[styles.codeText, styles.codeTextWrapped]}>
+          {code}
+        </Text>
+      )}
+    </View>
+  );
+};
+
+const MarkdownMessage = ({
+  text,
+  onLongPress,
+}: {
+  text: string;
+  onLongPress: (event: GestureResponderEvent) => void;
+}) => {
+  const units = groupMarkdownBlocks(parseMarkdownBlocks(text));
+
+  return (
+    <Pressable style={styles.markdownMessage} onLongPress={onLongPress}>
+      {units.map((unit, index) =>
+        unit.type === "code" ? (
+          <CodeBlockCard
+            key={`code_${index}`}
+            code={unit.code}
+            language={unit.language}
+          />
+        ) : (
+          <View key={`content_${index}`} style={styles.markdownContentSection}>
+            <MarkdownContent blocks={unit.blocks} />
+          </View>
+        ),
+      )}
+    </Pressable>
+  );
+};
 
 const normalizeTreeholeDraftJson = (rawJson: string) =>
   rawJson
@@ -1586,6 +1846,7 @@ export default function ChatScreen() {
 	                <View
 	                  style={[
 	                    styles.aiWrap,
+	                    hasBlockMarkdown(item.text) && styles.aiWrapStructured,
 	                    index > 0 && messages[index - 1].role === item.role
 	                      ? styles.messageFromSameSender
 	                      : styles.messageFromNewSender,
@@ -1604,6 +1865,18 @@ export default function ChatScreen() {
 	                      saveStatus={item.diarySaveStatus}
 	                      onSave={() => saveDiaryFromMessage(item)}
 	                      onDismiss={() => dismissMessage(item.id)}
+	                    />
+	                  ) : hasBlockMarkdown(item.text) ? (
+	                    <MarkdownMessage
+	                      text={item.text}
+	                      onLongPress={(event) =>
+	                        openMessageMenu(
+	                          item.text,
+	                          item,
+	                          event.nativeEvent.pageX,
+	                          event.nativeEvent.pageY,
+	                        )
+	                      }
 	                    />
 	                  ) : (
 	                    <Pressable
@@ -2089,6 +2362,11 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
 
+  aiWrapStructured: {
+    width: "94%",
+    maxWidth: "94%",
+  },
+
   messageFromSameSender: {
     marginTop: 4,
   },
@@ -2108,6 +2386,104 @@ const styles = StyleSheet.create({
   aiTextStrong: {
     fontWeight: "600",
     color: XiaoCColors.textPrimary,
+  },
+
+  markdownMessage: {
+    width: "100%",
+    gap: 7,
+    padding: 8,
+    borderRadius: 24,
+    backgroundColor: XiaoCColors.assistantBubble,
+    overflow: "hidden",
+  },
+
+  markdownContentSection: {
+    paddingHorizontal: 9,
+    paddingTop: 1,
+  },
+
+  markdownHeading: {
+    fontSize: 18,
+    lineHeight: 25,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
+
+  markdownHeadingLarge: {
+    fontSize: 20,
+    lineHeight: 28,
+  },
+
+  markdownParagraph: {
+    marginBottom: 6,
+  },
+
+  markdownDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: XiaoCColors.separator,
+    marginVertical: 4,
+  },
+
+  markdownList: {
+    gap: 4,
+    marginBottom: 6,
+  },
+
+  markdownListItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+
+  markdownListMarker: {
+    width: 24,
+    flexShrink: 0,
+  },
+
+  markdownListText: {
+    flex: 1,
+  },
+
+  codeCard: {
+    width: "100%",
+    overflow: "hidden",
+    borderRadius: 16,
+    backgroundColor: XiaoCColors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: XiaoCColors.separator,
+  },
+
+  codeCardHeader: {
+    minHeight: 36,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: XiaoCColors.separator,
+  },
+
+  codeLanguage: {
+    fontSize: 13,
+    color: XiaoCColors.textSecondary,
+  },
+
+  codeCopy: {
+    fontSize: 13,
+    color: XiaoCColors.textPrimary,
+  },
+
+  codeText: {
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 14,
+    lineHeight: 21,
+    color: XiaoCColors.textPrimary,
+  },
+
+  codeTextWrapped: {
+    width: "100%",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
 
   treeholeDraftCard: {

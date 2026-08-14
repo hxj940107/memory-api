@@ -1,9 +1,14 @@
 import { router } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useEffect, useState } from "react";
 
 import { TreeholePost, treeholePosts } from "../data/treeholePosts";
-import { getSavedTreeholePosts } from "../lib/treeholeState";
+import {
+  deleteTreeholePost,
+  getRemoteTreeholePosts,
+  getSavedTreeholePosts,
+  markTreeholePostsRead,
+} from "../lib/treeholeState";
 
 const renderLine = (line: string, highlights: string[] = []) => {
   const matchedHighlight = highlights.find((highlight) =>
@@ -25,9 +30,19 @@ const renderLine = (line: string, highlights: string[] = []) => {
   );
 };
 
-function TreeholePostCard({ post }: { post: TreeholePost }) {
+function TreeholePostCard({
+  post,
+  onDelete,
+}: {
+  post: TreeholePost;
+  onDelete?: () => void;
+}) {
   return (
-    <View style={styles.post}>
+    <Pressable
+      style={styles.post}
+      delayLongPress={450}
+      onLongPress={onDelete}
+    >
       {post.pinned ? (
         <Text style={styles.pinned}>📌 置顶</Text>
       ) : (
@@ -46,34 +61,91 @@ function TreeholePostCard({ post }: { post: TreeholePost }) {
       </View>
 
       <Text style={styles.reaction}>{post.reaction}</Text>
-    </View>
+    </Pressable>
   );
 }
 
 export default function TreeholeScreen() {
+  const [remotePosts, setRemotePosts] = useState<TreeholePost[]>([]);
   const [savedPosts, setSavedPosts] = useState<TreeholePost[]>([]);
 
   useEffect(() => {
     let isActive = true;
 
-    getSavedTreeholePosts().then((posts) => {
+    const loadPosts = async () => {
+      const localPosts = await getSavedTreeholePosts();
+
       if (isActive) {
-        setSavedPosts(posts);
+        setSavedPosts(localPosts);
       }
-    });
+
+      try {
+        const remote = await getRemoteTreeholePosts();
+
+        if (isActive) {
+          setRemotePosts(remote.entries);
+        }
+
+        if (remote.unreadCount > 0) {
+          await markTreeholePostsRead();
+        }
+      } catch (error) {
+        console.log("Remote treehole load failed:", error);
+      }
+    };
+
+    loadPosts();
 
     return () => {
       isActive = false;
     };
   }, []);
 
-  const posts = [...savedPosts, ...treeholePosts].sort((a, b) => {
+  const posts = [
+    ...remotePosts,
+    ...savedPosts,
+    ...treeholePosts.map((post) => ({
+      ...post,
+      storage: "seed" as const,
+    })),
+  ].sort((a, b) => {
     if (a.pinned === b.pinned) {
       return 0;
     }
 
     return a.pinned ? -1 : 1;
   });
+
+  const confirmDelete = (post: TreeholePost) => {
+    if (post.storage === "seed") {
+      return;
+    }
+
+    Alert.alert("删除这条树洞？", "删除后无法恢复", [
+      {
+        text: "取消",
+        style: "cancel",
+      },
+      {
+        text: "删除",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteTreeholePost(post);
+            setRemotePosts((current) =>
+              current.filter((item) => item.id !== post.id),
+            );
+            setSavedPosts((current) =>
+              current.filter((item) => item.id !== post.id),
+            );
+          } catch (error) {
+            console.log("Treehole delete failed:", error);
+            Alert.alert("暂时删不掉", "稍后再试一次");
+          }
+        },
+      },
+    ]);
+  };
 
   return (
     <View style={styles.screen}>
@@ -96,7 +168,13 @@ export default function TreeholeScreen() {
         </View>
 
         {posts.map((post) => (
-          <TreeholePostCard key={post.id} post={post} />
+          <TreeholePostCard
+            key={post.id}
+            post={post}
+            onDelete={
+              post.storage === "seed" ? undefined : () => confirmDelete(post)
+            }
+          />
         ))}
       </ScrollView>
     </View>

@@ -1,8 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { TreeholePost } from "../data/treeholePosts";
+import { APP_USER_ID, apiJson, postJson } from "../config/api";
 
 const SAVED_TREEHOLE_POSTS_KEY = "saved_treehole_posts";
+const SAVED_TREEHOLE_DRAFT_KEYS_KEY = "saved_treehole_draft_keys";
 
 export type TreeholeDraft = {
   type?: "treehole_draft";
@@ -11,6 +13,15 @@ export type TreeholeDraft = {
   content: string[];
   highlights?: string[];
   reaction?: string;
+};
+
+type TreeholeResponse = {
+  entries?: TreeholePost[];
+  unreadCount?: number;
+};
+
+type TreeholeCreateResponse = {
+  entry?: TreeholePost;
 };
 
 export function getTreeholeDraftKey(draft: TreeholeDraft) {
@@ -24,6 +35,28 @@ export function getTreeholeDraftKey(draft: TreeholeDraft) {
     .join("｜")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function rememberSavedTreeholeDraft(draft: TreeholeDraft) {
+  const raw = await AsyncStorage.getItem(SAVED_TREEHOLE_DRAFT_KEYS_KEY);
+  let currentKeys: unknown = [];
+
+  if (raw) {
+    try {
+      currentKeys = JSON.parse(raw);
+    } catch {
+      currentKeys = [];
+    }
+  }
+  const draftKey = getTreeholeDraftKey(draft);
+  const nextKeys = Array.isArray(currentKeys)
+    ? Array.from(new Set([draftKey, ...currentKeys])).slice(0, 100)
+    : [draftKey];
+
+  await AsyncStorage.setItem(
+    SAVED_TREEHOLE_DRAFT_KEYS_KEY,
+    JSON.stringify(nextKeys),
+  );
 }
 
 export async function getSavedTreeholePosts() {
@@ -40,13 +73,91 @@ export async function getSavedTreeholePosts() {
       return [];
     }
 
-    return posts as TreeholePost[];
+    return posts.map((post) => ({
+      ...post,
+      storage: "local" as const,
+    })) as TreeholePost[];
   } catch {
     return [];
   }
 }
 
+export async function getRemoteTreeholePosts() {
+  const response = await apiJson<TreeholeResponse>("/api/memory", {
+    query: {
+      type: "treehole",
+      user_id: APP_USER_ID,
+    },
+  });
+
+  return {
+    entries: (response.entries || []).map((entry) => ({
+      ...entry,
+      storage: "remote" as const,
+    })),
+    unreadCount: Number(response.unreadCount || 0),
+  };
+}
+
+export async function markTreeholePostsRead() {
+  return postJson("/api/memory", {
+    type: "treehole",
+    action: "mark_read",
+    user_id: APP_USER_ID,
+  });
+}
+
+export async function deleteTreeholePost(post: TreeholePost) {
+  if (post.storage === "remote") {
+    return apiJson("/api/memory", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "treehole",
+        user_id: APP_USER_ID,
+        id: post.id,
+      }),
+    });
+  }
+
+  if (post.storage === "local") {
+    const currentPosts = await getSavedTreeholePosts();
+    const nextPosts = currentPosts.filter((item) => item.id !== post.id);
+
+    await AsyncStorage.setItem(
+      SAVED_TREEHOLE_POSTS_KEY,
+      JSON.stringify(nextPosts.map(({ storage, ...item }) => item)),
+    );
+  }
+}
+
 export async function saveTreeholeDraft(draft: TreeholeDraft) {
+  try {
+    const response = await postJson<TreeholeCreateResponse>("/api/memory", {
+      type: "treehole",
+      user_id: APP_USER_ID,
+      tag: draft.tag,
+      date: draft.date,
+      content: draft.content,
+      highlights: draft.highlights || [],
+      reaction: draft.reaction,
+      source: "manual",
+    });
+
+    if (response.entry) {
+      await rememberSavedTreeholeDraft(draft);
+
+      return {
+        ...response.entry,
+        storage: "remote" as const,
+      };
+    }
+  } catch (error) {
+    console.log("Remote treehole save failed, using local fallback:", error);
+  }
+
   const currentPosts = await getSavedTreeholePosts();
   const draftKey = getTreeholeDraftKey(draft);
   const alreadySaved = currentPosts.some(
@@ -71,19 +182,35 @@ export async function saveTreeholeDraft(draft: TreeholeDraft) {
     content: draft.content,
     highlights: draft.highlights || [],
     reaction: draft.reaction || "🌙 偷偷偏心 · ❤️ 1",
+    storage: "local",
   };
 
   await AsyncStorage.setItem(
     SAVED_TREEHOLE_POSTS_KEY,
-    JSON.stringify([post, ...currentPosts]),
+    JSON.stringify(
+      [post, ...currentPosts].map(({ storage, ...item }) => item),
+    ),
   );
 
   return post;
 }
 
 export async function isTreeholeDraftSaved(draft: TreeholeDraft) {
-  const currentPosts = await getSavedTreeholePosts();
+  const [currentPosts, savedKeysRaw] = await Promise.all([
+    getSavedTreeholePosts(),
+    AsyncStorage.getItem(SAVED_TREEHOLE_DRAFT_KEYS_KEY),
+  ]);
   const draftKey = getTreeholeDraftKey(draft);
+
+  if (savedKeysRaw) {
+    try {
+      const savedKeys = JSON.parse(savedKeysRaw);
+
+      if (Array.isArray(savedKeys) && savedKeys.includes(draftKey)) {
+        return true;
+      }
+    } catch {}
+  }
 
   return currentPosts.some(
     (post) =>

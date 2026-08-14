@@ -6,6 +6,10 @@ export type TreeholePost = {
   content: string[];
   highlights?: string[];
   reaction: string;
+  source?: "manual" | "autonomous" | "legacy";
+  seenAt?: string | null;
+  createdAt?: string;
+  storage?: "remote" | "local" | "seed";
 };
 
 export const treeholePosts: TreeholePost[] = [

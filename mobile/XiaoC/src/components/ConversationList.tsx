@@ -80,6 +80,10 @@ type MomentInteractionsResponse = {
   unreadCount?: number;
 };
 
+type TreeholeResponse = {
+  unreadCount?: number;
+};
+
 function ConversationItem({
   item,
   isCurrent,
@@ -120,6 +124,7 @@ export default function ConversationList({
   const [list, setList] = useState<Conversation[]>([]);
 
   const [hasUnreadMoments, setHasUnreadMoments] = useState(false);
+  const [hasUnreadTreehole, setHasUnreadTreehole] = useState(false);
 
   const [selected, setSelected] = useState<Conversation | null>(null);
 
@@ -135,6 +140,7 @@ export default function ConversationList({
   useEffect(() => {
     loadConversations();
     loadMomentUnread();
+    loadTreeholeUnread();
   }, []);
 
   const normalizeConversations = (data: Conversation[]) =>
@@ -181,6 +187,21 @@ export default function ConversationList({
       setHasUnreadMoments(Number(data.unreadCount || 0) > 0);
     } catch (error) {
       console.log("Moments unread check failed:", error);
+    }
+  };
+
+  const loadTreeholeUnread = async () => {
+    try {
+      const data = await apiJson<TreeholeResponse>("/api/memory", {
+        query: {
+          type: "treehole",
+          user_id: APP_USER_ID,
+        },
+      });
+
+      setHasUnreadTreehole(Number(data.unreadCount || 0) > 0);
+    } catch (error) {
+      console.log("Treehole unread check failed:", error);
     }
   };
 
@@ -373,6 +394,8 @@ export default function ConversationList({
 
   const openSpace = async (space: XiaoCSpace) => {
     if (space.id === "treehole") {
+      setHasUnreadTreehole(false);
+
       await onNavigate?.();
 
       router.push("/treehole");
@@ -453,6 +476,9 @@ export default function ConversationList({
             />
             <Text style={styles.spaceTitle}>{space.title}</Text>
             {space.id === "moments" && hasUnreadMoments && (
+              <View style={styles.momentUnreadDot} />
+            )}
+            {space.id === "treehole" && hasUnreadTreehole && (
               <View style={styles.momentUnreadDot} />
             )}
           </Pressable>

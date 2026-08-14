@@ -1659,6 +1659,156 @@ export default async function handler(req, res) {
       })
     }
 
+    if (type === "treehole") {
+      if (req.method === "GET") {
+        const { data, error } = await supabase
+          .from("treehole_entries")
+          .select("id,tag,entry_date,content,highlights,reaction,source,seen_at,created_at")
+          .eq("user_id", user_id)
+          .order("created_at", { ascending: false })
+          .limit(100)
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message,
+          })
+        }
+
+        const entries = (data || []).map((item) => ({
+          id: item.id,
+          tag: item.tag || "树洞",
+          date: item.entry_date || "",
+          content: Array.isArray(item.content) ? item.content.map(String) : [],
+          highlights: Array.isArray(item.highlights) ? item.highlights.map(String) : [],
+          reaction: item.reaction || "🌙 偷偷偏心 · ❤️ 1",
+          source: item.source || "manual",
+          seenAt: item.seen_at,
+          createdAt: item.created_at,
+        }))
+
+        return res.status(200).json({
+          entries,
+          unreadCount: entries.filter((item) => !item.seenAt).length,
+        })
+      }
+
+      if (req.method === "POST") {
+        if (req.body.action === "mark_read") {
+          const readAt = new Date().toISOString()
+          const { data, error } = await supabase
+            .from("treehole_entries")
+            .update({
+              seen_at: readAt,
+              updated_at: readAt,
+            })
+            .eq("user_id", user_id)
+            .is("seen_at", null)
+            .select("id")
+
+          if (error) {
+            return res.status(500).json({
+              error: error.message,
+            })
+          }
+
+          return res.status(200).json({
+            success: true,
+            readAt,
+            marked: data?.length || 0,
+          })
+        }
+
+        const content = Array.isArray(req.body.content)
+          ? req.body.content.map((line) => String(line).trim()).filter(Boolean)
+          : []
+        const highlights = Array.isArray(req.body.highlights)
+          ? req.body.highlights.map((line) => String(line).trim()).filter(Boolean).slice(0, 2)
+          : []
+
+        if (content.length === 0) {
+          return res.status(400).json({
+            error: "treehole content required",
+          })
+        }
+
+        const source = ["manual", "autonomous", "legacy"].includes(req.body.source)
+          ? req.body.source
+          : "manual"
+        const { data, error } = await supabase
+          .from("treehole_entries")
+          .insert({
+            user_id,
+            tag: String(req.body.tag || "树洞").trim().slice(0, 20),
+            entry_date: String(req.body.date || "").trim() || null,
+            content,
+            highlights,
+            reaction: String(req.body.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
+            source,
+          })
+          .select("id,tag,entry_date,content,highlights,reaction,source,seen_at,created_at")
+          .single()
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message,
+          })
+        }
+
+        return res.status(200).json({
+          success: true,
+          entry: {
+            id: data.id,
+            tag: data.tag,
+            date: data.entry_date || "",
+            content: data.content,
+            highlights: data.highlights,
+            reaction: data.reaction,
+            source: data.source,
+            seenAt: data.seen_at,
+            createdAt: data.created_at,
+          },
+        })
+      }
+
+      if (req.method === "DELETE") {
+        const id = req.body.id
+
+        if (!id) {
+          return res.status(400).json({
+            error: "id required",
+          })
+        }
+
+        const { data, error } = await supabase
+          .from("treehole_entries")
+          .delete()
+          .eq("user_id", user_id)
+          .eq("id", id)
+          .select("id")
+
+        if (error) {
+          return res.status(500).json({
+            error: error.message,
+          })
+        }
+
+        if (!data?.length) {
+          return res.status(404).json({
+            error: "treehole entry not found or not deleted",
+          })
+        }
+
+        return res.status(200).json({
+          success: true,
+          id: data[0].id,
+        })
+      }
+
+      return res.status(405).json({
+        error: "Only GET, POST or DELETE allowed for treehole",
+      })
+    }
+
     if (type === "moments") {
       if (req.method === "DELETE") {
         const id = req.body.id
