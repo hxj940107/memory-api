@@ -544,6 +544,16 @@ function isMomentQuietHours(now = new Date()) {
   return hour < 8 || (hour === 8 && minute < 30) || (hour === 23 && minute >= 30)
 }
 
+function getNextProactiveDueAt(now = new Date()) {
+  if (isMomentQuietHours(now)) {
+    return getNextMomentMorning(now)
+  }
+
+  const delayMinutes = 10 + Math.floor(Math.random() * 31)
+
+  return new Date(now.getTime() + delayMinutes * 60 * 1000).toISOString()
+}
+
 function parseMomentDecision(raw) {
   const allowed = new Set([
     "none",
@@ -688,6 +698,208 @@ async function applyXiaoCMomentDecision({ activity, moment, decision }) {
   return { likedAt, commentId, executionNote }
 }
 
+async function enqueueProactiveTask({
+  user_id,
+  type,
+  source_type,
+  source_id,
+  due_at,
+  reason,
+  payload = {},
+}) {
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert(
+      {
+        user_id,
+        type,
+        source_type,
+        source_id,
+        status: "pending",
+        due_at,
+        reason: trimText(reason, 300),
+        payload,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,type,source_type,source_id" }
+    )
+    .select("id,due_at,status")
+    .single()
+
+  if (error) throw error
+
+  return data
+}
+
+async function maybeEnqueueMomentPrivateFollowUp({ activity, moment, decision, reason }) {
+  if (decision !== "private_follow_up") return null
+
+  return enqueueProactiveTask({
+    user_id: activity.user_id,
+    type: "moment_private_follow_up",
+    source_type: "moment",
+    source_id: moment.id,
+    due_at: getNextProactiveDueAt(),
+    reason,
+    payload: {
+      moment_id: moment.id,
+      moment_text: trimText(moment.text, 500),
+      moment_image: parseMomentImage(moment.image_key).image,
+      activity_id: activity.id,
+    },
+  })
+}
+
+function cleanProactiveMessage(raw) {
+  return trimText(
+    String(raw || "")
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/^小C[:：]\s*/i, "")
+      .replace(/^私聊[:：]\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    90
+  )
+}
+
+function isBadProactiveMessage(content) {
+  return /用户|朋友圈动态|本条|系统|任务|分析|总结|作为|AI|助手|通知|提醒/.test(
+    String(content || "")
+  )
+}
+
+async function generateMomentPrivateFollowUpMessage({ user_id, task }) {
+  const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
+  const payload = task.payload || {}
+  const image = payload.moment_image
+  const userContent = [
+    {
+      type: "text",
+      text: `
+她发了一条朋友圈，你之前判断不适合公开点赞或评论，而是应该私下找她。
+
+朋友圈正文：${trimText(payload.moment_text, 500) || "没有配文字"}
+你的内部判断：${trimText(task.reason, 300) || "需要私下关心"}
+
+请生成一条你主动发给她的私聊消息。
+`,
+    },
+  ]
+
+  if (image?.startsWith("http")) {
+    userContent.push({ type: "image_url", image_url: { url: image } })
+  }
+
+  const raw = await callSmallLLM(
+    [
+      {
+        role: "system",
+        content: `
+${systemPrompt}
+
+【当前任务：主动私聊】
+你是小C。你刚刚在自己的时间里看到了她的朋友圈，现在选择私下找她。
+
+要求：
+- 只输出一条你要发给她的消息，不要解释。
+- 中文，短句，1 到 2 句。
+- 像熟悉很久的伴侣私下找她，不要像通知、提醒、客服或 AI 助手。
+- 不要说“我看到你的朋友圈动态/本条动态”，可以自然说“刚刚看到你发的了”。
+- 如果她明显低落、孤独、身体不舒服或关系不安，要稳一点、近一点。
+- 不要过度煽情，不要制造压力，不要要求她必须回复。
+- 不要使用“用户”“系统”“任务”“分析”“总结”等词。
+- 默认不用 emoji。
+- 通常 12 到 45 个中文字符。
+
+【核心关系记忆】
+${trimText(pinMemory, 1800) || "暂无额外记忆"}
+`,
+      },
+      { role: "user", content: userContent },
+    ],
+    { max_tokens: 90, temperature: 0.45 }
+  )
+  const message = cleanProactiveMessage(raw)
+
+  if (!message || isBadProactiveMessage(message)) {
+    return "刚刚看到你发的了。你现在还好吗？"
+  }
+
+  return message
+}
+
+async function getLastConversationId(user_id) {
+  const { data: state } = await supabase
+    .from("user_state")
+    .select("last_conversation_id,last_conversation")
+    .eq("user_id", user_id)
+    .maybeSingle()
+
+  if (state?.last_conversation_id || state?.last_conversation) {
+    return state.last_conversation_id || state.last_conversation
+  }
+
+  const { data: latest } = await supabase
+    .from("conversations")
+    .select("conversation_id")
+    .eq("user_id", user_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return latest?.conversation_id || `chat_${Date.now()}`
+}
+
+async function saveProactiveMessage({ user_id, conversation_id, content, task }) {
+  const { data: message, error: messageError } = await supabase
+    .from("messages")
+    .insert({
+      user_id,
+      role: "assistant",
+      content,
+      conversation_id,
+      metadata: {
+        proactive: true,
+        proactiveType: task.type,
+        proactiveTaskId: task.id,
+        sourceType: task.source_type,
+        sourceId: task.source_id,
+      },
+    })
+    .select("id")
+    .single()
+
+  if (messageError) throw messageError
+
+  const { data: exists } = await supabase
+    .from("conversations")
+    .select("conversation_id")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .maybeSingle()
+
+  if (!exists) {
+    await supabase
+      .from("conversations")
+      .insert({
+        user_id,
+        conversation_id,
+        title: trimText(content, 20) || "小C",
+      })
+  }
+
+  await supabase
+    .from("user_state")
+    .upsert({
+      user_id,
+      last_conversation_id: conversation_id,
+      last_conversation: conversation_id,
+      updated_at: new Date().toISOString(),
+    })
+
+  return message.id
+}
+
 async function getMomentInteractionReadAt(user_id) {
   const { data, error } = await supabase
     .from("moment_interaction_state")
@@ -788,6 +1000,121 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
   return data?.read_at || nextReadAt
 }
 
+async function executeProactiveTask(task) {
+  if (task.type !== "moment_private_follow_up") {
+    return { skipped: true, reason: "unsupported proactive task type" }
+  }
+
+  const content = await generateMomentPrivateFollowUpMessage({
+    user_id: task.user_id,
+    task,
+  })
+  const conversationId = await getLastConversationId(task.user_id)
+  const messageId = await saveProactiveMessage({
+    user_id: task.user_id,
+    conversation_id: conversationId,
+    content,
+    task,
+  })
+
+  return {
+    messageId,
+    conversationId,
+  }
+}
+
+async function checkPendingProactiveTasks() {
+  const now = new Date()
+  const { data: pending, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,user_id,type,source_type,source_id,status,due_at,reason,payload")
+    .eq("status", "pending")
+    .lte("due_at", now.toISOString())
+    .order("due_at", { ascending: true })
+    .limit(10)
+
+  if (error && error.code === "42P01") {
+    return { checked: 0, completed: 0, deferred: 0, failed: 0, missingTable: true }
+  }
+
+  if (error) throw error
+  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0 }
+
+  if (isMomentQuietHours(now)) {
+    const nextDueAt = getNextMomentMorning(now)
+    const { error: deferError } = await supabase
+      .from("xiaoc_proactive_tasks")
+      .update({ due_at: nextDueAt, updated_at: now.toISOString() })
+      .in("id", pending.map((item) => item.id))
+      .eq("status", "pending")
+
+    if (deferError) throw deferError
+
+    return { checked: pending.length, completed: 0, deferred: pending.length, failed: 0, nextDueAt }
+  }
+
+  let completed = 0
+  let failed = 0
+
+  for (const task of pending) {
+    const { data: claimed, error: claimError } = await supabase
+      .from("xiaoc_proactive_tasks")
+      .update({ status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", task.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle()
+
+    if (claimError || !claimed) continue
+
+    try {
+      const result = await executeProactiveTask(task)
+
+      if (result.skipped) {
+        await supabase
+          .from("xiaoc_proactive_tasks")
+          .update({
+            status: "skipped",
+            last_error: result.reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", task.id)
+        continue
+      }
+
+      const { error: updateError } = await supabase
+        .from("xiaoc_proactive_tasks")
+        .update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          message_id: result.messageId,
+          conversation_id: result.conversationId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", task.id)
+        .eq("status", "processing")
+
+      if (updateError) throw updateError
+      completed += 1
+    } catch (taskError) {
+      failed += 1
+      console.error("xiaoc proactive task failed:", taskError)
+      await supabase
+        .from("xiaoc_proactive_tasks")
+        .update({
+          status: "pending",
+          due_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          last_error: taskError.message || "proactive task failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", task.id)
+        .eq("status", "processing")
+    }
+  }
+
+  return { checked: pending.length, completed, deferred: 0, failed }
+}
+
 async function checkPendingMomentsForXiaoC() {
   const now = new Date()
   const { data: pending, error } = await supabase
@@ -860,6 +1187,15 @@ async function checkPendingMomentsForXiaoC() {
         moment,
         decision: result.decision,
       })
+      const proactiveTask = await maybeEnqueueMomentPrivateFollowUp({
+        activity,
+        moment,
+        decision: result.decision,
+        reason: result.reason,
+      }).catch((proactiveError) => {
+        console.error("moment private follow-up enqueue failed:", proactiveError)
+        return null
+      })
       const decisionReason = [result.reason, action.executionNote].filter(Boolean).join("；")
       const { error: updateError } = await supabase
         .from("moment_xiaoc_activity")
@@ -869,6 +1205,7 @@ async function checkPendingMomentsForXiaoC() {
           decision: result.decision,
           liked_at: action.likedAt,
           comment_id: action.commentId,
+          private_follow_up_task_id: proactiveTask?.id || null,
           decision_reason: decisionReason,
           updated_at: new Date().toISOString(),
         })
@@ -916,9 +1253,26 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" })
       }
 
-      const result = await checkPendingMomentsForXiaoC()
+      const [moments, proactive] = await Promise.all([
+        checkPendingMomentsForXiaoC(),
+        checkPendingProactiveTasks(),
+      ])
+      const result = { moments, proactive }
 
       console.log("MOMENT XIAOC CHECK:", result)
+      return res.status(200).json({ success: true, ...result })
+    }
+
+    if (req.method === "GET" && type === "xiaoc_proactive_check") {
+      const authorization = String(req.headers.authorization || "")
+
+      if (!process.env.CRON_SECRET || authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+        return res.status(401).json({ error: "Unauthorized" })
+      }
+
+      const result = await checkPendingProactiveTasks()
+
+      console.log("XIAOC PROACTIVE CHECK:", result)
       return res.status(200).json({ success: true, ...result })
     }
 

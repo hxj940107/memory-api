@@ -54,7 +54,15 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 进入互动页后标记已读，返回 Moments 后顶部胶囊和侧栏红点消失。
 - 用户朋友圈统一显示账户当前设置昵称，不继续展示发布时保存的旧昵称。
 - 小C点赞用户朋友圈时，Feed 会返回 `xiaocLiked`，复用现有红心和点赞昵称区域展示“小C”。
-- 以上 Moments 互动链路已 push；下一步是发布一条新朋友圈，等待小C按计划时间查看并互动后做完整真机验证。
+- 以上 Moments 互动链路已 push；当前正在等待新发朋友圈由小C按计划时间查看并互动后做完整真机验证。
+- 主动私聊按以下优先级推进：
+  1. 朋友圈 `private_follow_up` 私聊。
+  2. 聊天里的计划/回访，例如“剪头发后问剪好了吗”。
+  3. 久未对话后的主动靠近。
+  4. 情绪状态延迟关心。
+- 主动私聊第一版已开始实现：新增 `xiaoc_proactive_tasks` 队列，先接入 `moment_private_follow_up`。
+- 当小C判断朋友圈为 `private_follow_up` 时，会创建主动私聊任务；到期后由定时检查生成一条克制的私聊消息，并写入最近聊天。
+- 部署前需要先在 Supabase 执行 `supabase_xiaoc_proactive_tasks.sql`，创建 `xiaoc_proactive_tasks` 表，并给 `moment_xiaoc_activity` 添加 `private_follow_up_task_id`。
 
 ## 伴侣人格
 
