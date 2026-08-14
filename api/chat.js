@@ -123,6 +123,92 @@ function normalizeFollowUpDueAt(value) {
   return deferOutOfQuietHours(new Date(clamped))
 }
 
+function getLocalDateForIso(date = new Date()) {
+  const local = getLocalDateTimeParts(date)
+
+  return `${local.year}-${local.month}-${local.day}`
+}
+
+function parseSimpleChinesePlanDueAt(message) {
+  const text = String(message || "")
+  const timeMatch = text.match(/([一二两三四五六七八九十\d]{1,3})点(?:半|([一二三四五六七八九十\d]{1,2})分?)?/)
+
+  if (!timeMatch) return null
+
+  const digitMap = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  }
+  const parseChineseNumber = value => {
+    if (/^\d+$/.test(value)) return Number(value)
+    if (value === "十") return 10
+    if (value.startsWith("十")) return 10 + (digitMap[value[1]] || 0)
+    if (value.endsWith("十")) return (digitMap[value[0]] || 0) * 10
+    if (value.includes("十")) {
+      const [tens, ones] = value.split("十")
+
+      return (digitMap[tens] || 1) * 10 + (digitMap[ones] || 0)
+    }
+
+    return digitMap[value]
+  }
+  let hour = parseChineseNumber(timeMatch[1])
+  const minute = timeMatch[0].includes("半")
+    ? 30
+    : timeMatch[2]
+      ? parseChineseNumber(timeMatch[2])
+      : 0
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  if (!/(要去|去|做|预约|复查|检查|面试|剪|雾化|吃药|医院|见)/.test(text)) return null
+
+  const localNow = getLocalDateTimeParts()
+  if (!/[上午|早上|凌晨]/.test(text) && hour < 8 && localNow.hour >= 8) {
+    hour += 12
+  }
+
+  const dueAfterEvent = new Date(`${getLocalDateForIso()}T00:00:00+08:00`)
+  dueAfterEvent.setUTCHours(dueAfterEvent.getUTCHours() + hour)
+  dueAfterEvent.setUTCMinutes(dueAfterEvent.getUTCMinutes() + minute + 90)
+
+  return normalizeFollowUpDueAt(dueAfterEvent.toISOString())
+}
+
+function buildRuleBasedPlanFollowUp(message) {
+  const text = String(message || "").trim()
+
+  if (!/(要去|等下|一会儿|下午|晚上|明天|三点|四点|五点|六点|七点|八点|九点|十点|\d+点)/.test(text)) {
+    return null
+  }
+
+  if (!/(雾化|医院|复查|检查|吃药|剪头发|理发|面试|考试|见朋友|见医生|带榴莲)/.test(text)) {
+    return null
+  }
+
+  const dueAt = parseSimpleChinesePlanDueAt(text)
+    || normalizeFollowUpDueAt(new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString())
+
+  if (!dueAt) return null
+
+  const eventMatch = text.match(/(?:要去|去|做|预约)?([^，。！？!?]{1,18}(?:雾化|医院|复查|检查|吃药|剪头发|理发|面试|考试|见朋友|见医生|带榴莲)[^，。！？!?]{0,12})/)
+  const event = trimText(eventMatch?.[1] || text, 80)
+
+  return {
+    event,
+    dueAt,
+    reason: `她提到近期要${event}，适合之后自然问一句。`,
+  }
+}
+
 async function judgePlanFollowUp({ message, reply }) {
   if (!message || message.length < 4) return null
 
@@ -139,8 +225,8 @@ async function judgePlanFollowUp({ message, reply }) {
 {"should_follow_up":true,"event":"剪头发","due_at":"2026-08-14T18:30:00+08:00","reason":"她说今天下午要去剪头发，适合过几小时问一句结果"}
 
 判断原则：
-- 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、宠物、家人、重要任务。
-- 例子：等下去剪头发、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿。
+- 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、医疗护理、宠物、家人、重要任务。
+- 例子：等下去剪头发、三点半去做雾化、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿、晚上吃药。
 - 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
 - 不要把“我们下一步做什么”“我需要你改代码”当作生活回访。
 - due_at 必须是未来时间；如果她说“等下/一会儿”，设为 2 到 4 小时后；“下午/晚上/明天”按自然时间估计。
@@ -188,7 +274,15 @@ async function enqueuePlanFollowUpTask({
   message,
   reply,
 }) {
-  const decision = await judgePlanFollowUp({ message, reply })
+  let decision = null
+
+  try {
+    decision = await judgePlanFollowUp({ message, reply })
+  } catch (err) {
+    console.error("plan follow-up judge failed:", err)
+  }
+
+  decision = decision || buildRuleBasedPlanFollowUp(message)
 
   if (!decision) return null
 
@@ -1857,24 +1951,22 @@ console.log("======================================\n")
       }
     })()
 
-    void (async () => {
-      try {
-        const task = await enqueuePlanFollowUpTask({
-          user_id,
-          conversation_id: cid,
-          user_message_id: userMessageId,
-          assistant_message_id: assistantMessageId,
-          message,
-          reply,
-        })
+    try {
+      const task = await enqueuePlanFollowUpTask({
+        user_id,
+        conversation_id: cid,
+        user_message_id: userMessageId,
+        assistant_message_id: assistantMessageId,
+        message,
+        reply,
+      })
 
-        if (task) {
-          console.log("PLAN FOLLOW-UP QUEUED:", task)
-        }
-      } catch (err) {
-        console.error("plan follow-up enqueue failed:", err)
+      if (task) {
+        console.log("PLAN FOLLOW-UP QUEUED:", task)
       }
-    })()
+    } catch (err) {
+      console.error("plan follow-up enqueue failed:", err)
+    }
 
 return res.status(200).json({
   reply,
