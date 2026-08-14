@@ -1951,6 +1951,73 @@ export default async function handler(req, res) {
       }
 
       if (req.method === "POST") {
+        if (req.body.action === "set_pinned") {
+          const id = req.body.id
+          const pinned = Boolean(req.body.pinned)
+
+          if (!id) {
+            return res.status(400).json({
+              error: "id required",
+            })
+          }
+
+          const { data: existing, error: existingError } = await supabase
+            .from("treehole_entries")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("id", id)
+            .maybeSingle()
+
+          if (existingError) {
+            return res.status(500).json({
+              error: existingError.message,
+            })
+          }
+
+          if (!existing) {
+            return res.status(404).json({
+              error: "treehole entry not found",
+            })
+          }
+
+          if (pinned) {
+            const { error: clearError } = await supabase
+              .from("treehole_entries")
+              .update({ pinned: false })
+              .eq("user_id", user_id)
+              .eq("pinned", true)
+
+            if (clearError) {
+              return res.status(500).json({
+                error: clearError.message,
+              })
+            }
+          }
+
+          const { data, error } = await supabase
+            .from("treehole_entries")
+            .update({
+              pinned,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("user_id", user_id)
+            .eq("id", id)
+            .select("id,pinned")
+            .single()
+
+          if (error) {
+            return res.status(500).json({
+              error: error.message,
+            })
+          }
+
+          return res.status(200).json({
+            success: true,
+            id: data.id,
+            pinned: Boolean(data.pinned),
+          })
+        }
+
         if (req.body.action === "nudge") {
           try {
             const result = await generateAndSaveTreeholeUpdates(user_id, "manual")

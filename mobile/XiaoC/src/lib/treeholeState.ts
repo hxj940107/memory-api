@@ -179,6 +179,34 @@ export async function deleteTreeholePost(post: TreeholePost) {
   }
 }
 
+export async function setTreeholePostPinned(
+  post: TreeholePost,
+  pinned: boolean,
+) {
+  if (post.storage === "remote") {
+    return postJson("/api/memory", {
+      type: "treehole",
+      action: "set_pinned",
+      user_id: APP_USER_ID,
+      id: post.id,
+      pinned,
+    });
+  }
+
+  if (post.storage === "local") {
+    const currentPosts = await getSavedTreeholePosts();
+    const nextPosts = currentPosts.map((item) => ({
+      ...item,
+      pinned: item.id === post.id ? pinned : pinned ? false : item.pinned,
+    }));
+
+    await AsyncStorage.setItem(
+      SAVED_TREEHOLE_POSTS_KEY,
+      JSON.stringify(nextPosts.map(({ storage, ...item }) => item)),
+    );
+  }
+}
+
 export async function saveTreeholeDraft(draft: TreeholeDraft) {
   try {
     const response = await postJson<TreeholeCreateResponse>("/api/memory", {

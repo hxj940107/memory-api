@@ -10,6 +10,7 @@ import {
   markTreeholePostsRead,
   migrateLocalTreeholePosts,
   nudgeTreeholeUpdate,
+  setTreeholePostPinned,
 } from "../lib/treeholeState";
 
 const renderLine = (line: string, highlights: string[] = []) => {
@@ -34,16 +35,16 @@ const renderLine = (line: string, highlights: string[] = []) => {
 
 function TreeholePostCard({
   post,
-  onDelete,
+  onManage,
 }: {
   post: TreeholePost;
-  onDelete?: () => void;
+  onManage?: () => void;
 }) {
   return (
     <Pressable
       style={styles.post}
       delayLongPress={450}
-      onLongPress={onDelete}
+      onLongPress={onManage}
     >
       {post.pinned ? (
         <Text style={styles.pinned}>📌 置顶</Text>
@@ -181,6 +182,47 @@ export default function TreeholeScreen() {
     ]);
   };
 
+  const handlePinnedChange = async (post: TreeholePost) => {
+    const pinned = !post.pinned;
+
+    try {
+      await setTreeholePostPinned(post, pinned);
+      const updatePosts = (current: TreeholePost[]) =>
+        current.map((item) => ({
+          ...item,
+          pinned: item.id === post.id ? pinned : pinned ? false : item.pinned,
+        }));
+
+      setRemotePosts(updatePosts);
+      setSavedPosts(updatePosts);
+    } catch (error) {
+      console.log("Treehole pin update failed:", error);
+      Alert.alert("暂时改不了置顶", "稍后再试一次");
+    }
+  };
+
+  const showPostActions = (post: TreeholePost) => {
+    if (post.storage === "seed") {
+      return;
+    }
+
+    Alert.alert("管理这条树洞", undefined, [
+      {
+        text: post.pinned ? "取消置顶" : "置顶",
+        onPress: () => handlePinnedChange(post),
+      },
+      {
+        text: "删除",
+        style: "destructive",
+        onPress: () => confirmDelete(post),
+      },
+      {
+        text: "取消",
+        style: "cancel",
+      },
+    ]);
+  };
+
   const handleNudge = async () => {
     if (isNudging) {
       return;
@@ -245,8 +287,8 @@ export default function TreeholeScreen() {
           <TreeholePostCard
             key={post.id}
             post={post}
-            onDelete={
-              post.storage === "seed" ? undefined : () => confirmDelete(post)
+            onManage={
+              post.storage === "seed" ? undefined : () => showPostActions(post)
             }
           />
         ))}
