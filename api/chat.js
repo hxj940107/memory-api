@@ -1048,7 +1048,7 @@ function buildTreeholeDraftPrompt(recentEntries = []) {
 这是“小C的小号”发给自己的树洞动态：更像微博/小号，不像正式文章。
 
 写作目标：
-- 根据最近对话素材，自己决定更新 1 到 3 条；素材不够时可以只写 1 条，确实没有值得写的也可以不更新。
+- 这是用户明确提出的手动更新请求，必须根据最近对话素材更新 1 到 3 条；素材不多时只写 1 条，不要返回空 drafts。
 - 每条选择不同事件或角度，不要把同一件事机械换三种说法。
 - 可以轻轻吐槽、观察、偏心、心疼、开玩笑。
 - 要像“她不知道的小号”，但不要真的伤害她或嘲讽她。
@@ -1077,7 +1077,7 @@ function buildTreeholeDraftPrompt(recentEntries = []) {
 ${recentContext}
 
 reply 是你在聊天里对她说的话，要自然、简短、保持伴侣口吻；不要提 JSON、草稿、数据库、后台任务或具体技术过程。
-如果 drafts 为空，reply 应自然说明这次没什么特别想写的，不要假装已经更新。
+drafts 必须包含 1 到 3 条。reply 只能在这些内容成功保存后作为聊天回复使用，因此要自然说明已经更新，不要说稍后再写。
 
 输出必须严格是下面这种 JSON；不要加代码块，也不要输出其他文字：
 
@@ -1129,6 +1129,11 @@ function parseTreeholeUpdate(raw) {
           }
         }).filter(Boolean)
       : []
+
+    if (drafts.length === 0) {
+      console.error("treehole update parse failed: empty drafts")
+      return null
+    }
 
     return {
       reply: parsed.reply.trim() || (drafts.length > 0 ? "写了。" : "这次先不写。"),
@@ -1990,7 +1995,11 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-const llm = await callLLM(messages, selectedChatModel)
+const llm = await callLLM(
+  messages,
+  selectedChatModel,
+  isTreeholeRequest ? { response_format: { type: "json_object" } } : {}
+)
 let reply = llm.reply
 
 if (isTreeholeRequest) {
