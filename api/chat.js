@@ -123,6 +123,47 @@ function normalizeFollowUpDueAt(value) {
   return deferOutOfQuietHours(new Date(clamped))
 }
 
+function normalizeDelayMinutes(value, fallback = 90) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) return fallback
+
+  return Math.min(Math.max(Math.round(parsed), 20), 24 * 60)
+}
+
+function normalizePlanFollowUpDecision(parsed) {
+  if (!parsed?.should_follow_up) return null
+
+  const event = trimText(parsed.event, 80)
+
+  if (!event || /代码|项目|需求|前端|后端|部署|push|pull|测试|Supabase|Codex/i.test(event)) {
+    return null
+  }
+
+  const eventTime = parsed.event_time || parsed.due_at
+  const eventTimestamp = eventTime ? new Date(eventTime).getTime() : null
+  const naturalDelayMinutes = normalizeDelayMinutes(
+    parsed.natural_delay_minutes ?? parsed.delay_minutes,
+    parsed.event_type === "health_care" ? 45 : 90
+  )
+  const dueAt = eventTimestamp && Number.isFinite(eventTimestamp)
+    ? normalizeFollowUpDueAt(
+        new Date(eventTimestamp + naturalDelayMinutes * 60 * 1000).toISOString()
+      )
+    : normalizeFollowUpDueAt(parsed.due_at)
+
+  if (!dueAt) return null
+
+  return {
+    event,
+    dueAt,
+    eventType: trimText(parsed.event_type, 60),
+    followUpStyle: trimText(parsed.follow_up_style, 80),
+    naturalDelayMinutes,
+    reason: trimText(parsed.reason, 240),
+  }
+}
+
 function getLocalDateForIso(date = new Date()) {
   const local = getLocalDateTimeParts(date)
 
@@ -222,14 +263,18 @@ async function judgePlanFollowUp({ message, reply }) {
 只输出 JSON：
 {"should_follow_up":false}
 或
-{"should_follow_up":true,"event":"剪头发","due_at":"2026-08-14T18:30:00+08:00","reason":"她说今天下午要去剪头发，适合过几小时问一句结果"}
+{"should_follow_up":true,"event":"做雾化","event_type":"health_care","event_time":"2026-08-14T15:30:00+08:00","natural_delay_minutes":45,"follow_up_style":"gentle_care","reason":"这是身体护理相关，做完后一会儿轻轻关心比较自然"}
 
 判断原则：
 - 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、医疗护理、宠物、家人、重要任务。
 - 例子：等下去剪头发、三点半去做雾化、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿、晚上吃药。
 - 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
 - 不要把“我们下一步做什么”“我需要你改代码”当作生活回访。
-- due_at 必须是未来时间；如果她说“等下/一会儿”，设为 2 到 4 小时后；“下午/晚上/明天”按自然时间估计。
+- 你自己判断什么时候回问最像一个真实伴侣，而不是提醒器。
+- event_time 是事情大概发生或结束的时间；如果不确定就按自然语言估计。
+- natural_delay_minutes 是 event_time 后多久回问更自然。
+- 医疗护理/身体相关通常可以短一点；剪头发、见朋友可以晚一点；面试考试不要刚结束就追问。
+- 不要为了准点而准点，宁可自然一点。
 - 当前时间按北京时间理解：${new Date().toISOString()}。
 `,
       },
@@ -246,24 +291,7 @@ async function judgePlanFollowUp({ message, reply }) {
   )
   const parsed = parseJsonObject(raw.reply)
 
-  if (!parsed.should_follow_up) return null
-
-  const dueAt = normalizeFollowUpDueAt(parsed.due_at)
-
-  if (!dueAt) return null
-
-  const event = trimText(parsed.event, 80)
-  const reason = trimText(parsed.reason, 240)
-
-  if (!event || /代码|项目|需求|前端|后端|部署|push|pull|测试|Supabase|Codex/i.test(event)) {
-    return null
-  }
-
-  return {
-    event,
-    dueAt,
-    reason,
-  }
+  return normalizePlanFollowUpDecision(parsed)
 }
 
 async function enqueuePlanFollowUpTask({
@@ -301,6 +329,9 @@ async function enqueuePlanFollowUpTask({
         reason: decision.reason,
         payload: {
           event: decision.event,
+          event_type: decision.eventType || null,
+          follow_up_style: decision.followUpStyle || null,
+          natural_delay_minutes: decision.naturalDelayMinutes || null,
           user_message: trimText(message, 800),
           assistant_reply: trimText(reply, 600),
           user_message_id,
