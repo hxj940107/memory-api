@@ -60,8 +60,9 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   2. 聊天里的计划/回访，例如“剪头发后问剪好了吗”。
   3. 久未对话后的主动靠近。
   4. 情绪状态延迟关心。
-- 主动私聊第一版已开始实现：新增 `xiaoc_proactive_tasks` 队列，先接入 `moment_private_follow_up`。
+- 主动私聊第一版已开始实现：新增 `xiaoc_proactive_tasks` 队列，已接入 `moment_private_follow_up` 和 `plan_follow_up`。
 - 当小C判断朋友圈为 `private_follow_up` 时，会创建主动私聊任务；到期后由定时检查生成一条克制的私聊消息，并写入最近聊天。
+- 当用户在聊天里明确提到近期生活计划或预约，例如剪头发、医院、面试、带榴莲复查等，会异步创建 `plan_follow_up` 任务；到期后小C会自然回问一句。
 - 部署前需要先在 Supabase 执行 `supabase_xiaoc_proactive_tasks.sql`，创建 `xiaoc_proactive_tasks` 表，并给 `moment_xiaoc_activity` 添加 `private_follow_up_task_id`。
 
 ## 伴侣人格

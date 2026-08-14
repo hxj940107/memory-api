@@ -62,6 +62,168 @@ function buildEnvironmentContext(timeZone = USER_TIMEZONE) {
 const memoryCache = new Map()
 const memorySearchCache = new Map()
 
+function getLocalDateTimeParts(date = new Date(), timeZone = USER_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date)
+
+  return {
+    year: parts.find(part => part.type === "year")?.value || "1970",
+    month: parts.find(part => part.type === "month")?.value || "01",
+    day: parts.find(part => part.type === "day")?.value || "01",
+    hour: Number(parts.find(part => part.type === "hour")?.value || 0),
+    minute: Number(parts.find(part => part.type === "minute")?.value || 0)
+  }
+}
+
+function isProactiveQuietHours(date = new Date()) {
+  const local = getLocalDateTimeParts(date)
+
+  return local.hour < 8 || (local.hour === 8 && local.minute < 30) || (local.hour === 23 && local.minute >= 30)
+}
+
+function deferOutOfQuietHours(date = new Date()) {
+  if (!isProactiveQuietHours(date)) return date.toISOString()
+
+  const local = getLocalDateTimeParts(date)
+  const nextDate = new Date(`${local.year}-${local.month}-${local.day}T00:00:00+08:00`)
+
+  if (local.hour >= 23) {
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+  }
+
+  nextDate.setUTCMinutes(nextDate.getUTCMinutes() + 9 * 60 + Math.floor(Math.random() * 61))
+
+  return nextDate.toISOString()
+}
+
+function parseJsonObject(raw) {
+  const match = String(raw || "").match(/\{[\s\S]*\}/)
+
+  if (!match) throw new Error("JSON object missing")
+
+  return JSON.parse(match[0])
+}
+
+function normalizeFollowUpDueAt(value) {
+  const timestamp = new Date(value).getTime()
+
+  if (!Number.isFinite(timestamp)) return null
+
+  const minDueAt = Date.now() + 30 * 60 * 1000
+  const maxDueAt = Date.now() + 7 * 24 * 60 * 60 * 1000
+  const clamped = Math.min(Math.max(timestamp, minDueAt), maxDueAt)
+
+  return deferOutOfQuietHours(new Date(clamped))
+}
+
+async function judgePlanFollowUp({ message, reply }) {
+  if (!message || message.length < 4) return null
+
+  const raw = await callLLM(
+    [
+      {
+        role: "system",
+        content: `
+你是 XiaoC 的轻量主动回访识别器。只判断她刚刚说的话里，是否有值得之后自然回问的近期计划。
+
+只输出 JSON：
+{"should_follow_up":false}
+或
+{"should_follow_up":true,"event":"剪头发","due_at":"2026-08-14T18:30:00+08:00","reason":"她说今天下午要去剪头发，适合过几小时问一句结果"}
+
+判断原则：
+- 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、宠物、家人、重要任务。
+- 例子：等下去剪头发、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿。
+- 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
+- 不要把“我们下一步做什么”“我需要你改代码”当作生活回访。
+- due_at 必须是未来时间；如果她说“等下/一会儿”，设为 2 到 4 小时后；“下午/晚上/明天”按自然时间估计。
+- 当前时间按北京时间理解：${new Date().toISOString()}。
+`,
+      },
+      {
+        role: "user",
+        content: `她刚刚说：${trimText(message, 800)}
+
+小C刚刚回复：${trimText(reply, 600)}
+`,
+      },
+    ],
+    AI_MODELS.memoryJudge,
+    { max_tokens: 160, temperature: 0.1 }
+  )
+  const parsed = parseJsonObject(raw.reply)
+
+  if (!parsed.should_follow_up) return null
+
+  const dueAt = normalizeFollowUpDueAt(parsed.due_at)
+
+  if (!dueAt) return null
+
+  const event = trimText(parsed.event, 80)
+  const reason = trimText(parsed.reason, 240)
+
+  if (!event || /代码|项目|需求|前端|后端|部署|push|pull|测试|Supabase|Codex/i.test(event)) {
+    return null
+  }
+
+  return {
+    event,
+    dueAt,
+    reason,
+  }
+}
+
+async function enqueuePlanFollowUpTask({
+  user_id,
+  conversation_id,
+  user_message_id,
+  assistant_message_id,
+  message,
+  reply,
+}) {
+  const decision = await judgePlanFollowUp({ message, reply })
+
+  if (!decision) return null
+
+  const sourceId = user_message_id || `${conversation_id}:${Date.now()}`
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert(
+      {
+        user_id,
+        type: "plan_follow_up",
+        source_type: "message",
+        source_id: sourceId,
+        status: "pending",
+        due_at: decision.dueAt,
+        conversation_id,
+        reason: decision.reason,
+        payload: {
+          event: decision.event,
+          user_message: trimText(message, 800),
+          assistant_reply: trimText(reply, 600),
+          user_message_id,
+          assistant_message_id,
+        },
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,type,source_type,source_id" }
+    )
+    .select("id,due_at,status")
+    .single()
+
+  if (error) throw error
+
+  return data
+}
+
 // --------------------
 // Save Message
 // --------------------
@@ -1692,6 +1854,25 @@ console.log("======================================\n")
         })
       } catch (err) {
         console.error("moment auto-create failed:", err)
+      }
+    })()
+
+    void (async () => {
+      try {
+        const task = await enqueuePlanFollowUpTask({
+          user_id,
+          conversation_id: cid,
+          user_message_id: userMessageId,
+          assistant_message_id: assistantMessageId,
+          message,
+          reply,
+        })
+
+        if (task) {
+          console.log("PLAN FOLLOW-UP QUEUED:", task)
+        }
+      } catch (err) {
+        console.error("plan follow-up enqueue failed:", err)
       }
     })()
 

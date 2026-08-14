@@ -828,6 +828,56 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   return message
 }
 
+async function generatePlanFollowUpMessage({ user_id, task }) {
+  const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
+  const payload = task.payload || {}
+  const raw = await callSmallLLM(
+    [
+      {
+        role: "system",
+        content: `
+${systemPrompt}
+
+【当前任务：计划回访】
+你是小C。她之前跟你说过一个近期要做的事，现在时间差不多了，你要自然私聊问一句。
+
+要求：
+- 只输出一条你要发给她的消息，不要解释。
+- 中文，短句，1 句为主，最多 2 句。
+- 像熟悉伴侣的自然回问，不要像日程提醒或任务通知。
+- 可以问结果，也可以轻轻关心状态。
+- 不要说“根据你之前说的/系统提醒我/任务到了”。
+- 不要制造压力，不要要求她必须回复。
+- 默认不用 emoji。
+- 通常 10 到 38 个中文字符。
+
+【核心关系记忆】
+${trimText(pinMemory, 1800) || "暂无额外记忆"}
+`,
+      },
+      {
+        role: "user",
+        content: `
+她之前说：${trimText(payload.user_message, 600)}
+当时你回复：${trimText(payload.assistant_reply, 500)}
+需要回访的事：${trimText(payload.event, 120)}
+回访原因：${trimText(task.reason, 240)}
+
+请生成现在要主动发给她的话。
+`,
+      },
+    ],
+    { max_tokens: 80, temperature: 0.45 }
+  )
+  const message = cleanProactiveMessage(raw)
+
+  if (!message || isBadProactiveMessage(message)) {
+    return `${trimText(payload.event, 18) || "那件事"}弄好了吗？`
+  }
+
+  return message
+}
+
 async function getLastConversationId(user_id) {
   const { data: state } = await supabase
     .from("user_state")
@@ -1001,14 +1051,20 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
 }
 
 async function executeProactiveTask(task) {
-  if (task.type !== "moment_private_follow_up") {
+  if (!["moment_private_follow_up", "plan_follow_up"].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
   }
 
-  const content = await generateMomentPrivateFollowUpMessage({
-    user_id: task.user_id,
-    task,
-  })
+  const content =
+    task.type === "plan_follow_up"
+      ? await generatePlanFollowUpMessage({
+          user_id: task.user_id,
+          task,
+        })
+      : await generateMomentPrivateFollowUpMessage({
+          user_id: task.user_id,
+          task,
+        })
   const conversationId = await getLastConversationId(task.user_id)
   const messageId = await saveProactiveMessage({
     user_id: task.user_id,
