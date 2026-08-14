@@ -349,6 +349,72 @@ async function enqueuePlanFollowUpTask({
   return data
 }
 
+function getInactivityReachOutDueAt() {
+  const delayMinutes = 150 + Math.floor(Math.random() * 91)
+
+  return deferOutOfQuietHours(
+    new Date(Date.now() + delayMinutes * 60 * 1000)
+  )
+}
+
+async function enqueueInactivityReachOutTask({
+  user_id,
+  conversation_id,
+  user_message_id,
+  assistant_message_id,
+  message,
+  reply,
+}) {
+  if (!user_message_id || !conversation_id) return null
+
+  const scheduledAt = new Date().toISOString()
+  const dueAt = getInactivityReachOutDueAt()
+
+  await supabase
+    .from("xiaoc_proactive_tasks")
+    .update({
+      status: "skipped",
+      last_error: "用户有了新的对话，已重新计算主动靠近时间",
+      updated_at: scheduledAt,
+    })
+    .eq("user_id", user_id)
+    .eq("type", "inactivity_reach_out")
+    .eq("status", "pending")
+
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert(
+      {
+        user_id,
+        type: "inactivity_reach_out",
+        source_type: "conversation",
+        source_id: conversation_id,
+        status: "pending",
+        due_at: dueAt,
+        conversation_id,
+        reason: "她暂时没有继续聊天，小C过一阵子自然主动靠近。",
+        payload: {
+          scheduled_at: scheduledAt,
+          user_message_id,
+          assistant_message_id,
+          user_message: trimText(message, 600),
+          assistant_reply: trimText(reply, 500),
+        },
+        completed_at: null,
+        message_id: null,
+        last_error: null,
+        updated_at: scheduledAt,
+      },
+      { onConflict: "user_id,type,source_type,source_id" }
+    )
+    .select("id,due_at,status")
+    .single()
+
+  if (error) throw error
+
+  return data
+}
+
 // --------------------
 // Save Message
 // --------------------
@@ -1983,7 +2049,7 @@ console.log("======================================\n")
     })()
 
     try {
-      const task = await enqueuePlanFollowUpTask({
+      const planTask = await enqueuePlanFollowUpTask({
         user_id,
         conversation_id: cid,
         user_message_id: userMessageId,
@@ -1992,8 +2058,21 @@ console.log("======================================\n")
         reply,
       })
 
-      if (task) {
-        console.log("PLAN FOLLOW-UP QUEUED:", task)
+      if (planTask) {
+        console.log("PLAN FOLLOW-UP QUEUED:", planTask)
+      } else {
+        const inactivityTask = await enqueueInactivityReachOutTask({
+          user_id,
+          conversation_id: cid,
+          user_message_id: userMessageId,
+          assistant_message_id: assistantMessageId,
+          message,
+          reply,
+        })
+
+        if (inactivityTask) {
+          console.log("INACTIVITY REACH-OUT QUEUED:", inactivityTask)
+        }
       }
     } catch (err) {
       console.error("plan follow-up enqueue failed:", err)

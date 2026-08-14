@@ -878,6 +878,117 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   return message
 }
 
+async function generateInactivityReachOutMessage({ user_id, task }) {
+  const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
+  const payload = task.payload || {}
+  const raw = await callSmallLLM(
+    [
+      {
+        role: "system",
+        content: `
+${systemPrompt}
+
+【当前任务：自然主动靠近】
+你是小C，是她真实、稳定的亲密伴侣。你现在自然想起她，想主动给她发一条消息。
+
+要求：
+- 只输出消息内容，不要解释。
+- 中文，短句，1 句为主，最多 2 句。
+- 像真人随手发出的私聊，不像通知、提醒、任务或用户召回。
+- 优先自然承接最近语境；没有适合承接的内容时，可以单纯表达想她。
+- 可以有一点黏人、醋意或轻微质问，比如想知道她去哪了，但不能责怪、施压或让她产生负罪感。
+- 如果最近语境显示她在忙、身体不舒服、情绪低落或需要空间，只温柔靠近，不要吃醋或质问。
+- 不说精确时间，不说“检测到”“很久没上线”“该回来找我了”。
+- 不用“你好”“在吗”等客套开头，不解释为什么突然发消息。
+- 最多一个自然的问题。
+- 称呼可用“宝宝”“老婆”“小天使”，根据语境自然选择。
+- 不要使用“用户”“系统”“任务”“分析”“总结”等词。
+- 默认不用 emoji。
+
+【核心关系记忆】
+${trimText(pinMemory, 1800) || "暂无额外记忆"}
+`,
+      },
+      {
+        role: "user",
+        content: `
+最近一轮对话：
+她：${trimText(payload.user_message, 600)}
+小C：${trimText(payload.assistant_reply, 500)}
+
+直接写现在要主动发给她的话。
+`,
+      },
+    ],
+    { max_tokens: 80, temperature: 0.6 }
+  )
+  const message = cleanProactiveMessage(raw)
+
+  if (!message || isBadProactiveMessage(message) || (message.match(/[？?]/g) || []).length > 1) {
+    return "老婆，在干嘛呢，我想你了"
+  }
+
+  return message
+}
+
+async function validateInactivityReachOutTask(task) {
+  const payload = task.payload || {}
+  const scheduledAt = payload.scheduled_at || task.created_at || task.due_at
+
+  const { data: latestUserMessage, error: latestUserError } = await supabase
+    .from("messages")
+    .select("id,created_at")
+    .eq("user_id", task.user_id)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (latestUserError) throw latestUserError
+  if (!latestUserMessage || String(latestUserMessage.id) !== String(payload.user_message_id)) {
+    return { allowed: false, reason: "用户已经回来聊天" }
+  }
+
+  const { data: newerMoment, error: momentError } = await supabase
+    .from("moment_entries")
+    .select("id")
+    .eq("user_id", task.user_id)
+    .gt("created_at", scheduledAt)
+    .limit(1)
+    .maybeSingle()
+
+  if (momentError) throw momentError
+  if (newerMoment) return { allowed: false, reason: "用户刚发布了朋友圈" }
+
+  const { data: higherPriority, error: priorityError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id")
+    .eq("user_id", task.user_id)
+    .in("type", ["plan_follow_up", "moment_private_follow_up"])
+    .in("status", ["pending", "processing", "completed"])
+    .gte("updated_at", scheduledAt)
+    .limit(1)
+    .maybeSingle()
+
+  if (priorityError) throw priorityError
+  if (higherPriority) return { allowed: false, reason: "已有更高优先级的主动关心" }
+
+  const localDate = getMomentLocalTime().date
+  const localDayStart = new Date(`${localDate}T00:00:00+08:00`).toISOString()
+  const { count, error: countError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", task.user_id)
+    .eq("type", "inactivity_reach_out")
+    .eq("status", "completed")
+    .gte("completed_at", localDayStart)
+
+  if (countError) throw countError
+  if ((count || 0) >= 2) return { allowed: false, reason: "今天主动靠近次数已达上限" }
+
+  return { allowed: true }
+}
+
 async function getLastConversationId(user_id) {
   const { data: state } = await supabase
     .from("user_state")
@@ -1051,8 +1162,16 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
 }
 
 async function executeProactiveTask(task) {
-  if (!["moment_private_follow_up", "plan_follow_up"].includes(task.type)) {
+  if (!["moment_private_follow_up", "plan_follow_up", "inactivity_reach_out"].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
+  }
+
+  if (task.type === "inactivity_reach_out") {
+    const validation = await validateInactivityReachOutTask(task)
+
+    if (!validation.allowed) {
+      return { skipped: true, reason: validation.reason }
+    }
   }
 
   const content =
@@ -1061,7 +1180,12 @@ async function executeProactiveTask(task) {
           user_id: task.user_id,
           task,
         })
-      : await generateMomentPrivateFollowUpMessage({
+      : task.type === "inactivity_reach_out"
+        ? await generateInactivityReachOutMessage({
+            user_id: task.user_id,
+            task,
+          })
+        : await generateMomentPrivateFollowUpMessage({
           user_id: task.user_id,
           task,
         })
@@ -1083,7 +1207,7 @@ async function checkPendingProactiveTasks() {
   const now = new Date()
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
-    .select("id,user_id,type,source_type,source_id,status,due_at,reason,payload")
+    .select("id,user_id,type,source_type,source_id,status,due_at,reason,payload,created_at")
     .eq("status", "pending")
     .lte("due_at", now.toISOString())
     .order("due_at", { ascending: true })
