@@ -21,7 +21,9 @@ import {
   MomentInteraction,
   saveMomentInteractionSnapshot,
 } from "../lib/momentInteractions";
-import { MomentSingleImage } from "../components/MomentSingleImage";
+import { ImagePreviewModal } from "../components/ImagePreviewModal";
+import type { PreviewImage } from "../components/ImagePreviewModal";
+import { MomentImageThumbnail } from "../components/MomentImageThumbnail";
 
 type Moment = {
   id: string;
@@ -119,6 +121,7 @@ export default function MomentsScreen() {
   } | null>(null);
   const [postingMoment, setPostingMoment] = useState(false);
   const [momentInteractions, setMomentInteractions] = useState<MomentInteraction[]>([]);
+  const [previewImages, setPreviewImages] = useState<PreviewImage[]>([]);
 
   const normalizeComments = (
     data: MomentCommentsResponse,
@@ -886,11 +889,12 @@ export default function MomentsScreen() {
     }
 
     return (
-      <MomentSingleImage
+      <MomentImageThumbnail
         uri={item.id}
         aspectRatio={item.aspectRatio}
         availableWidth={Dimensions.get("window").width - 98}
         style={styles.singlePhotoFrame}
+        onPress={(previewImage) => setPreviewImages([previewImage])}
       />
     );
   };
@@ -1210,6 +1214,12 @@ export default function MomentsScreen() {
 
         <Pressable style={styles.keyboardDismissArea} onPress={Keyboard.dismiss} />
       </ScrollView>
+
+      <ImagePreviewModal
+        visible={previewImages.length > 0}
+        images={previewImages}
+        onClose={() => setPreviewImages([])}
+      />
 
       <Modal
         visible={postComposerVisible}

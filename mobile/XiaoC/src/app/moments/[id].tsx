@@ -13,7 +13,9 @@ import {
   MomentAvatarId,
   getAccountSettings,
 } from "../../lib/accountSettings";
-import { MomentSingleImage } from "../../components/MomentSingleImage";
+import { ImagePreviewModal } from "../../components/ImagePreviewModal";
+import type { PreviewImage } from "../../components/ImagePreviewModal";
+import { MomentImageThumbnail } from "../../components/MomentImageThumbnail";
 
 type Moment = {
   id: string;
@@ -58,6 +60,7 @@ export default function MomentDetailScreen() {
     avatar: MomentAvatarId;
     uri: string | null;
   }>({ avatar: DEFAULT_XIAOC_MOMENT_AVATAR, uri: null });
+  const [previewImages, setPreviewImages] = useState<PreviewImage[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -108,11 +111,12 @@ export default function MomentDetailScreen() {
     if (!moment?.image) return null;
 
     return (
-      <MomentSingleImage
+      <MomentImageThumbnail
         uri={moment.image}
         aspectRatio={moment.imageAspectRatio}
         availableWidth={Dimensions.get("window").width - 98}
         style={styles.imageFrame}
+        onPress={(previewImage) => setPreviewImages([previewImage])}
       />
     );
   };
@@ -176,6 +180,11 @@ export default function MomentDetailScreen() {
           </View>
         )}
       </ScrollView>
+      <ImagePreviewModal
+        visible={previewImages.length > 0}
+        images={previewImages}
+        onClose={() => setPreviewImages([])}
+      />
     </View>
   );
 }

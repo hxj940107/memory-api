@@ -15,7 +15,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-export type MomentPreviewImage = {
+export type PreviewImage = {
   uri: string;
   width?: number | null;
   height?: number | null;
@@ -23,18 +23,12 @@ export type MomentPreviewImage = {
 
 type Props = {
   visible: boolean;
-  images: MomentPreviewImage[];
+  images: PreviewImage[];
   initialIndex?: number;
   onClose: () => void;
 };
 
-function PreviewPage({
-  image,
-  onClose,
-}: {
-  image: MomentPreviewImage;
-  onClose: () => void;
-}) {
+function PreviewPage({ image, onClose }: { image: PreviewImage; onClose: () => void }) {
   const screen = Dimensions.get("window");
   const ratio =
     Number(image.width) > 0 && Number(image.height) > 0
@@ -48,7 +42,6 @@ function PreviewPage({
   const savedScale = useSharedValue(1);
 
   useEffect(() => {
-    if (!image.uri) return;
     scale.value = 1;
     savedScale.value = 1;
   }, [image.uri, savedScale, scale]);
@@ -64,6 +57,12 @@ function PreviewPage({
         savedScale.value = 1;
       }
     });
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .onEnd((_event, success) => {
+      if (success) onClose();
+    });
+  const previewGesture = Gesture.Exclusive(pinch, tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -72,7 +71,7 @@ function PreviewPage({
   return (
     <View style={[styles.page, { width: screen.width, height: screen.height }]}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      <GestureDetector gesture={pinch}>
+      <GestureDetector gesture={previewGesture}>
         <Animated.View
           style={[
             styles.imageWrap,
@@ -87,7 +86,7 @@ function PreviewPage({
   );
 }
 
-export function MomentImagePreview({
+export function ImagePreviewModal({
   visible,
   images,
   initialIndex = 0,
