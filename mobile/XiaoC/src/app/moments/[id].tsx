@@ -13,6 +13,7 @@ import {
   MomentAvatarId,
   getAccountSettings,
 } from "../../lib/accountSettings";
+import { getMomentImageLayout } from "../../lib/momentImageLayout";
 
 type Moment = {
   id: string;
@@ -106,14 +107,10 @@ export default function MomentDetailScreen() {
   const renderImage = () => {
     if (!moment?.image) return null;
 
-    const ratio = moment.imageAspectRatio || 4 / 3;
-    const availableWidth = Dimensions.get("window").width - 98;
-    const isPortrait = ratio < 0.8;
-    const isLandscape = ratio > 1.2;
-    const maxWidth = Math.min(availableWidth, isPortrait ? 220 : isLandscape ? 320 : 250);
-    const maxHeight = isPortrait ? 360 : isLandscape ? 240 : 280;
-    const width = Math.min(maxWidth, maxHeight * ratio);
-    const height = width / ratio;
+    const { width, height } = getMomentImageLayout(
+      moment.imageAspectRatio,
+      Dimensions.get("window").width - 98,
+    );
 
     return (
       <View style={[styles.imageFrame, { width, height }]}>
