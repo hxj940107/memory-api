@@ -9,6 +9,7 @@ import {
   CACHE_POLICY,
   CONTEXT_BUDGET,
   SUMMARY_POLICY,
+  WEB_SEARCH_POLICY,
   normalizeChatModel,
   normalizeCacheText,
   shouldRunMemoryJudge,
@@ -62,6 +63,8 @@ function buildEnvironmentContext(timeZone = USER_TIMEZONE) {
 // --------------------
 const memoryCache = new Map()
 const memorySearchCache = new Map()
+const webSearchCache = new Map()
+let lastAutomaticWebSearchAt = 0
 
 function getLocalDateTimeParts(date = new Date(), timeZone = USER_TIMEZONE) {
   const parts = new Intl.DateTimeFormat("zh-CN", {
@@ -1391,7 +1394,55 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
 // --------------------
 // Web Search
 // --------------------
-async function searchWeb(query) {
+function normalizeWebSearchQuery(value) {
+  return String(value || "")
+    .replace(/^\/搜\s*/i, "")
+    .replace(/^(宝宝|老婆|小[cC])[,，、\s]*/i, "")
+    .replace(/^(请|麻烦)?(帮我)?(查一下|查查|搜索一下|搜一下)[,，、\s]*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, WEB_SEARCH_POLICY.queryChars)
+}
+
+function shouldAutomaticallySearchWeb(message) {
+  const text = normalizeWebSearchQuery(message)
+
+  if (!text) return false
+
+  const realtimeSignal = /最新|最近|今天|现在|刚刚|目前/
+  const changingSubject = /新闻|消息|进展|政策|规定|版本|发布|上市|比赛|比分|票房|价格|股价|汇率|天气|营业|开放|路线|路况|航班|车次/
+  const locationIntent = /附近|周边|哪里|哪家/.test(text) && /餐厅|咖啡|酒店|医院|药店|商场|门店|营业|路线|怎么走/.test(text)
+  const commerceIntent = /多少钱|什么价|价格多少|哪里买|怎么买|购买链接|有货吗|库存/.test(text)
+  const liveUtilityIntent = /天气|气温|下雨|空气质量|路线|路况|航班|车次|营业时间|几点关门/.test(text)
+
+  return (realtimeSignal.test(text) && changingSubject.test(text)) || locationIntent || commerceIntent || liveUtilityIntent
+}
+
+function parseWebSearchRequest(reply) {
+  const match = String(reply || "").trim().match(/^\[\[WEB_SEARCH_NEEDED:\s*([^\]]+)\]\]$/)
+
+  return match ? normalizeWebSearchQuery(match[1]) : ""
+}
+
+async function searchWeb(query, { automatic = false } = {}) {
+  const normalizedQuery = normalizeWebSearchQuery(query)
+
+  if (!normalizedQuery || !process.env.TAVILY_API_KEY) return ""
+
+  const cacheKey = normalizedQuery.toLowerCase()
+  const cached = webSearchCache.get(cacheKey)
+
+  if (cached && Date.now() - cached.createdAt < WEB_SEARCH_POLICY.cacheTtlMs) {
+    console.log("WEB SEARCH CACHE HIT:", normalizedQuery)
+    return cached.result
+  }
+
+  if (automatic && Date.now() - lastAutomaticWebSearchAt < WEB_SEARCH_POLICY.automaticCooldownMs) {
+    console.log("WEB SEARCH SKIPPED: cooldown")
+    return ""
+  }
+
+  if (automatic) lastAutomaticWebSearchAt = Date.now()
 
   try {
 
@@ -1404,9 +1455,9 @@ async function searchWeb(query) {
         },
         body: JSON.stringify({
           api_key: process.env.TAVILY_API_KEY,
-          query,
+          query: normalizedQuery,
           search_depth: "basic",
-          max_results: 5,
+          max_results: WEB_SEARCH_POLICY.maxResults,
           include_answer: true
         })
       }
@@ -1416,7 +1467,7 @@ async function searchWeb(query) {
 
     if (!data.results) return "";
 
-    return data.results
+    const result = data.results
       .map(r =>
         `标题：${r.title}
         内容：
@@ -1425,6 +1476,13 @@ async function searchWeb(query) {
         ${r.url}`
       )
       .join("\n\n------------------\n\n");
+
+    webSearchCache.set(cacheKey, {
+      result,
+      createdAt: Date.now()
+    })
+
+    return result
 
   } catch (err) {
 
@@ -1600,20 +1658,23 @@ const attributionCorrectionContext = isAttributionCorrection(message)
 `
   : "";
 
-if (message.startsWith("/搜 ")) {
+const forcedWebSearch = /^\/搜(?:\s|$)/i.test(message)
+const automaticWebSearch = !forcedWebSearch && shouldAutomaticallySearchWeb(message)
 
-  const query = message.replace("/搜 ", "");
+if (forcedWebSearch || automaticWebSearch) {
+  const query = normalizeWebSearchQuery(message)
 
-  console.log("WEB SEARCH:", query);
-  console.log(webSearch);
+  console.log("WEB SEARCH:", {
+    source: forcedWebSearch ? "forced" : "automatic_rule",
+    query
+  })
 
   webSearch = trimText(
-    await searchWeb(query),
+    await searchWeb(query, { automatic: automaticWebSearch }),
     CONTEXT_BUDGET.webSearchChars
-  );
+  )
 
-  userMessage = query;
-
+  if (forcedWebSearch) userMessage = query
 }
 
 // 4. build context
@@ -1686,6 +1747,13 @@ Environment 是本轮请求唯一可信的当前时间，来自服务端并已�
 历史消息、summary、memory 中出现的“晚安、晚上、刚才、现在”等都只属于当时语境，不能用来推断本轮当前时间。
 如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
 白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
+
+【Web Search Policy｜联网边界】
+${webSearch
+  ? "本轮已提供联网结果。只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答；不要输出搜索报告、来源清单或检索过程。"
+  : `普通聊天和可凭稳定知识回答的问题不要联网。
+只有当当前问题依赖会变化的外部事实，而且你确实无法可靠确认时，才只输出一行：[[WEB_SEARCH_NEEDED: 精简搜索词]]
+不要附加其他文字，不要把聊天历史、私人记忆、称呼或人格信息写进搜索词。`}
 
 
 【Identity｜人格层】
@@ -1813,8 +1881,41 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-const llm = await callLLM(messages, selectedChatModel)
+let llm = await callLLM(messages, selectedChatModel)
 let reply = llm.reply
+const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
+
+if (fallbackSearchQuery) {
+  console.log("WEB SEARCH:", {
+    source: "model_uncertainty",
+    query: fallbackSearchQuery
+  })
+
+  const fallbackWebSearch = trimText(
+    await searchWeb(fallbackSearchQuery, { automatic: true }),
+    CONTEXT_BUDGET.webSearchChars
+  )
+
+  if (fallbackWebSearch) {
+    const searchedMessages = [
+      ...messages.slice(0, -1),
+      {
+        role: "system",
+        content: `【Web Search｜联网搜索】
+
+${fallbackWebSearch}
+
+只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答。不要输出搜索报告、来源清单或检索过程。`
+      },
+      messages[messages.length - 1]
+    ]
+
+    llm = await callLLM(searchedMessages, selectedChatModel)
+    reply = llm.reply
+  } else {
+    reply = "这个我现在不太确定，宝宝可以用 /搜 让我帮你查一下。"
+  }
+}
 
 console.log("\n========== Prompt Inspector ==========")
 

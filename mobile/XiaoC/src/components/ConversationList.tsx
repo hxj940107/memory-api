@@ -12,6 +12,7 @@ import {
 
 import { useEffect, useState, useRef } from "react";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -80,9 +81,16 @@ type MomentInteractionsResponse = {
   unreadCount?: number;
 };
 
+type MomentsResponse = Array<{
+  author?: string;
+  createdAt?: string;
+}>;
+
 type TreeholeResponse = {
   unreadCount?: number;
 };
+
+const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
 
 function ConversationItem({
   item,
@@ -177,14 +185,35 @@ export default function ConversationList({
 
   const loadMomentUnread = async () => {
     try {
-      const data = await apiJson<MomentInteractionsResponse>("/api/memory", {
-        query: {
-          type: "moment_interactions",
-          user_id: APP_USER_ID,
-        },
-      });
+      const [interactionData, moments, lastReadAt] = await Promise.all([
+        apiJson<MomentInteractionsResponse>("/api/memory", {
+          query: {
+            type: "moment_interactions",
+            user_id: APP_USER_ID,
+          },
+        }),
+        apiJson<MomentsResponse>("/api/memory", {
+          query: {
+            type: "moments",
+            user_id: APP_USER_ID,
+          },
+        }),
+        AsyncStorage.getItem(MOMENTS_LAST_READ_AT_KEY),
+      ]);
 
-      setHasUnreadMoments(Number(data.unreadCount || 0) > 0);
+      const latestXiaoCMoment = moments.find(
+        (item) => !item.author || item.author === "小C",
+      );
+      const latestMomentTime = latestXiaoCMoment?.createdAt
+        ? new Date(latestXiaoCMoment.createdAt).getTime()
+        : 0;
+      const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+      const hasUnreadXiaoCMoment =
+        Number.isFinite(latestMomentTime) && latestMomentTime > lastReadTime;
+
+      setHasUnreadMoments(
+        Number(interactionData.unreadCount || 0) > 0 || hasUnreadXiaoCMoment,
+      );
     } catch (error) {
       console.log("Moments unread check failed:", error);
     }

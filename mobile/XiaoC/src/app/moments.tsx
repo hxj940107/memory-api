@@ -863,6 +863,7 @@ export default function MomentsScreen() {
   const renderImages = (
     image?: Moment["image"],
     imageAspectRatio?: number | null,
+    isXiaoC = false,
   ) => {
     const images = getMomentImages(image, imageAspectRatio);
 
@@ -894,11 +895,15 @@ export default function MomentsScreen() {
     const availableWidth = Dimensions.get("window").width - 98;
     const isPortrait = item.aspectRatio < 0.8;
     const isLandscape = item.aspectRatio > 1.2;
+    const xiaoCMaxWidth = isPortrait ? 190 : isLandscape ? 260 : 225;
+    const xiaoCMaxHeight = isPortrait ? 320 : isLandscape ? 195 : 250;
     const maxWidth = Math.min(
       availableWidth,
-      isPortrait ? 220 : isLandscape ? 320 : 250,
+      isXiaoC ? xiaoCMaxWidth : isPortrait ? 220 : isLandscape ? 320 : 250,
     );
-    const maxHeight = isPortrait ? 360 : isLandscape ? 240 : 280;
+    const maxHeight = isXiaoC
+      ? xiaoCMaxHeight
+      : isPortrait ? 360 : isLandscape ? 240 : 280;
     const width = Math.min(maxWidth, maxHeight * item.aspectRatio);
     const height = width / item.aspectRatio;
 
@@ -1037,7 +1042,7 @@ export default function MomentsScreen() {
 
                 {Boolean(moment.text) && <Text style={styles.text}>{moment.text}</Text>}
 
-                {renderImages(moment.image, moment.imageAspectRatio)}
+                {renderImages(moment.image, moment.imageAspectRatio, moment.author === "小C")}
 
                 <View style={styles.footer}>
                   <View style={styles.reactions}>
