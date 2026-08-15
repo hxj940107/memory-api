@@ -612,11 +612,10 @@ async function judgeXiaoCMomentActivity({ user_id, moment }) {
     userContent.push({ type: "image_url", image_url: { url: image } })
   }
 
-  const raw = await callSmallLLM(
-    [
-      {
-        role: "system",
-        content: `
+  const decisionMessages = [
+    {
+      role: "system",
+      content: `
 ${systemPrompt}
 
 【当前任务：朋友圈影子判断】
@@ -635,13 +634,35 @@ ${systemPrompt}
 【核心关系记忆】
 ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 `,
+    },
+    { role: "user", content: userContent },
+  ]
+  const decisionOptions = {
+    max_tokens: 180,
+    temperature: 0,
+    response_format: { type: "json_object" },
+  }
+
+  const raw = await callSmallLLM(decisionMessages, decisionOptions)
+
+  try {
+    return parseMomentDecision(raw)
+  } catch (err) {
+    console.error("moment decision parse failed, retrying:", trimText(raw, 300))
+  }
+
+  const retryRaw = await callSmallLLM(
+    [
+      ...decisionMessages,
+      {
+        role: "user",
+        content: '上一次输出无法解析。只输出一个 JSON 对象，例如：{"decision":"none","reason":"内部判断理由"}',
       },
-      { role: "user", content: userContent },
     ],
-    { max_tokens: 140, temperature: 0.2 }
+    decisionOptions
   )
 
-  return parseMomentDecision(raw)
+  return parseMomentDecision(retryRaw)
 }
 
 async function applyXiaoCMomentDecision({ activity, moment, decision }) {

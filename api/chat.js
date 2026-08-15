@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { waitUntil } from "@vercel/functions"
 import fs from "fs"
 import path from "path"
 import {
@@ -1957,24 +1958,23 @@ console.log("======================================\n")
       }
     })()
 
-    void (async () => {
-      try {
-        await maybeCreateMoment({
-          user_id,
-          conversation_id: cid,
-          assistant_message_id: assistantMessageId,
-          message,
-          reply,
-          isManualMomentRequest,
-          isDiaryRequest,
-          attributionCorrectionContext,
-          normalizedImageUrls,
-          hasFileText,
+    waitUntil(
+      maybeCreateMoment({
+        user_id,
+        conversation_id: cid,
+        assistant_message_id: assistantMessageId,
+        message,
+        reply,
+        isManualMomentRequest,
+        isDiaryRequest,
+        attributionCorrectionContext,
+        normalizedImageUrls,
+        hasFileText,
+      })
+        .catch(err => {
+          console.error("moment auto-create failed:", err)
         })
-      } catch (err) {
-        console.error("moment auto-create failed:", err)
-      }
-    })()
+    )
 
     try {
       const planTask = await enqueuePlanFollowUpTask({
