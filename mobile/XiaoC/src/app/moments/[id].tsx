@@ -13,7 +13,7 @@ import {
   MomentAvatarId,
   getAccountSettings,
 } from "../../lib/accountSettings";
-import { getMomentImageLayout } from "../../lib/momentImageLayout";
+import { MomentSingleImage } from "../../components/MomentSingleImage";
 
 type Moment = {
   id: string;
@@ -107,15 +107,13 @@ export default function MomentDetailScreen() {
   const renderImage = () => {
     if (!moment?.image) return null;
 
-    const { width, height } = getMomentImageLayout(
-      moment.imageAspectRatio,
-      Dimensions.get("window").width - 98,
-    );
-
     return (
-      <View style={[styles.imageFrame, { width, height }]}>
-        <Image source={{ uri: moment.image }} style={styles.image} contentFit="contain" />
-      </View>
+      <MomentSingleImage
+        uri={moment.image}
+        aspectRatio={moment.imageAspectRatio}
+        availableWidth={Dimensions.get("window").width - 98}
+        style={styles.imageFrame}
+      />
     );
   };
 
@@ -215,8 +213,7 @@ const styles = StyleSheet.create({
   author: { fontSize: 17, lineHeight: 22, fontWeight: "500", color: "#47658F" },
   date: { marginLeft: 10, fontSize: 12, color: "#A6A6AA" },
   text: { marginTop: 8, fontSize: 17, lineHeight: 26, color: "#1C1C1E" },
-  imageFrame: { marginTop: 10, overflow: "hidden", borderRadius: 4 },
-  image: { width: "100%", height: "100%" },
+  imageFrame: { marginTop: 10, borderRadius: 4 },
   reactions: { marginTop: 14, flexDirection: "row", alignItems: "center", gap: 6 },
   reactionCount: { marginRight: 14, fontSize: 14, color: "#8C8C91" },
   likedSection: {

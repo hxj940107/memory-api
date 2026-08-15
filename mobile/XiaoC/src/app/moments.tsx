@@ -21,7 +21,7 @@ import {
   MomentInteraction,
   saveMomentInteractionSnapshot,
 } from "../lib/momentInteractions";
-import { getMomentImageLayout } from "../lib/momentImageLayout";
+import { MomentSingleImage } from "../components/MomentSingleImage";
 
 type Moment = {
   id: string;
@@ -885,15 +885,13 @@ export default function MomentsScreen() {
       return null;
     }
 
-    const { width, height } = getMomentImageLayout(
-      item.aspectRatio,
-      Dimensions.get("window").width - 98,
-    );
-
     return (
-      <View style={[styles.singlePhotoFrame, { width, height }]}>
-        <Image source={item.source} style={styles.singlePhoto} contentFit="contain" />
-      </View>
+      <MomentSingleImage
+        uri={item.id}
+        aspectRatio={item.aspectRatio}
+        availableWidth={Dimensions.get("window").width - 98}
+        style={styles.singlePhotoFrame}
+      />
     );
   };
 
@@ -1613,15 +1611,7 @@ const styles = StyleSheet.create({
   },
 
   singlePhotoFrame: {
-    width: "100%",
-    backgroundColor: "#F7F7F7",
-    borderRadius: 7,
-    overflow: "hidden",
     marginBottom: 13,
-  },
-
-  singlePhoto: {
-    ...StyleSheet.absoluteFillObject,
   },
 
   photoGrid: {

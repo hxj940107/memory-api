@@ -3,17 +3,9 @@ export function getMomentImageLayout(
   availableWidth: number,
 ) {
   const ratio = Number(aspectRatio) > 0 ? Number(aspectRatio) : 4 / 3;
+  const maxWidth = ratio < 0.9 ? 220 : ratio <= 1.1 ? 250 : 320;
+  const maxHeight = ratio < 0.9 ? 320 : ratio <= 1.1 ? 250 : 240;
+  const width = Math.min(availableWidth, maxWidth, maxHeight * ratio);
 
-  if (ratio < 0.9) {
-    const width = Math.min(availableWidth, 220);
-    return { width, height: width / (3 / 4) };
-  }
-
-  if (ratio <= 1.1) {
-    const width = Math.min(availableWidth, 250);
-    return { width, height: width };
-  }
-
-  const width = Math.min(availableWidth, 320);
-  return { width, height: width / (4 / 3) };
+  return { width, height: width / ratio };
 }
