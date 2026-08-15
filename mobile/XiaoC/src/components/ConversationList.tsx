@@ -43,7 +43,7 @@ type ConversationListRow =
     };
 
 type XiaoCSpace = {
-  id: "we" | "treehole" | "diary" | "favorites" | "moments";
+  id: "we" | "treehole" | "diary" | "favorites" | "moments" | "album";
   iconName: string;
   title: string;
 };
@@ -68,6 +68,11 @@ const xiaoCSpaces: XiaoCSpace[] = [
     id: "moments",
     iconName: "rectangle.stack",
     title: "朋友圈",
+  },
+  {
+    id: "album",
+    iconName: "photo.on.rectangle",
+    title: "共享相册",
   },
 ];
 
@@ -458,6 +463,13 @@ export default function ConversationList({
       await onNavigate?.();
 
       router.push("/moments" as never);
+      return;
+    }
+
+    if (space.id === "album") {
+      await onNavigate?.();
+
+      router.push("/album" as never);
       return;
     }
 

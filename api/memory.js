@@ -195,6 +195,7 @@ function normalizeMomentInteraction(item) {
 }
 
 const MOMENT_IMAGE_BUCKET = "moment-images"
+const ALBUM_IMAGE_BUCKET = "album-images"
 const MOMENT_TIMEZONE = "Asia/Shanghai"
 const LEGACY_MOMENT_IMAGE_KEYS = new Set(["sunset", "notebook", "night"])
 
@@ -211,9 +212,100 @@ function parseMomentImage(value) {
         imageAspectRatio: Number(parsed.aspectRatio) || null,
       }
     }
+
+    if (parsed?.albumAssetId) {
+      return {
+        image: null,
+        imageAspectRatio: Number(parsed.aspectRatio) || null,
+      }
+    }
   } catch {}
 
   return { image: value, imageAspectRatio: null }
+}
+
+function parseAlbumImageReference(value) {
+  if (!value) return null
+
+  try {
+    const parsed = JSON.parse(value)
+    const albumAssetId = Number(parsed?.albumAssetId)
+
+    return albumAssetId > 0 ? albumAssetId : null
+  } catch {
+    return null
+  }
+}
+
+async function resolveMomentImageForResponse(user_id, value) {
+  const parsedImage = parseMomentImage(value)
+
+  if (parsedImage.image) return parsedImage
+
+  const albumAssetId = parseAlbumImageReference(value)
+
+  if (!albumAssetId) return parsedImage
+
+  const { data, error } = await supabase
+    .from("album_assets")
+    .select("storage_path,aspect_ratio")
+    .eq("user_id", user_id)
+    .eq("id", albumAssetId)
+    .maybeSingle()
+
+  if (error || !data?.storage_path) {
+    if (error) console.error("ALBUM MOMENT IMAGE LOAD FAILED:", error)
+    return parsedImage
+  }
+
+  const signedUrls = await getAlbumSignedUrls([data])
+
+  return {
+    image: signedUrls.get(data.storage_path) || null,
+    imageAspectRatio: Number(data.aspect_ratio) || null,
+  }
+}
+
+async function markAlbumAssetUsed(user_id, value) {
+  const albumAssetId = parseAlbumImageReference(value)
+
+  if (!albumAssetId) return
+
+  const { data, error } = await supabase
+    .from("album_assets")
+    .select("usage_count")
+    .eq("user_id", user_id)
+    .eq("id", albumAssetId)
+    .maybeSingle()
+
+  if (error || !data) return
+
+  await supabase
+    .from("album_assets")
+    .update({
+      usage_count: Number(data.usage_count || 0) + 1,
+      last_used_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", user_id)
+    .eq("id", albumAssetId)
+}
+
+async function isAlbumMomentImageAvailable(user_id, value) {
+  const albumAssetId = parseAlbumImageReference(value)
+
+  if (!albumAssetId) return true
+
+  const { data, error } = await supabase
+    .from("album_assets")
+    .select("access_scope,enabled,archived_at")
+    .eq("user_id", user_id)
+    .eq("id", albumAssetId)
+    .maybeSingle()
+
+  if (error) throw error
+
+  return Boolean(data && data.access_scope === "shared" && data.enabled && !data.archived_at)
 }
 
 async function uploadMomentImage(user_id, imageBase64, imageMimeType, imageAspectRatio) {
@@ -261,6 +353,79 @@ async function uploadMomentImage(user_id, imageBase64, imageMimeType, imageAspec
     url: data.publicUrl,
     aspectRatio: Number(imageAspectRatio) || null,
   })
+}
+
+async function uploadAlbumImage(user_id, imageBase64, imageMimeType) {
+  const mimeType = String(imageMimeType || "image/jpeg")
+
+  if (!/^image\/(jpeg|png|webp)$/.test(mimeType)) {
+    throw new Error("Unsupported album image type")
+  }
+
+  const rawBase64 = String(imageBase64 || "").replace(/^data:image\/[^;]+;base64,/, "")
+  const buffer = Buffer.from(rawBase64, "base64")
+
+  if (!buffer.length || buffer.length > 3 * 1024 * 1024) {
+    throw new Error("Album image must be smaller than 3MB")
+  }
+
+  const extension = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg"
+  const imagePath = `${user_id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`
+  let { error } = await supabase.storage
+    .from(ALBUM_IMAGE_BUCKET)
+    .upload(imagePath, buffer, { contentType: mimeType, upsert: false })
+
+  if (error && /bucket.*not found/i.test(error.message || "")) {
+    const { error: bucketError } = await supabase.storage.createBucket(
+      ALBUM_IMAGE_BUCKET,
+      { public: false, fileSizeLimit: 3 * 1024 * 1024 }
+    )
+
+    if (bucketError && !/already exists/i.test(bucketError.message || "")) {
+      throw bucketError
+    }
+
+    const retry = await supabase.storage
+      .from(ALBUM_IMAGE_BUCKET)
+      .upload(imagePath, buffer, { contentType: mimeType, upsert: false })
+
+    error = retry.error
+  }
+
+  if (error) throw error
+
+  return { storagePath: imagePath, mimeType }
+}
+
+async function getAlbumSignedUrls(items = []) {
+  const paths = items.map(item => item.storage_path).filter(Boolean)
+
+  if (!paths.length) return new Map()
+
+  const { data, error } = await supabase.storage
+    .from(ALBUM_IMAGE_BUCKET)
+    .createSignedUrls(paths, 60 * 60)
+
+  if (error) throw error
+
+  return new Map((data || []).map(item => [item.path, item.signedUrl]))
+}
+
+function normalizeAlbumAsset(item, signedUrl) {
+  return {
+    id: item.id,
+    image: signedUrl || null,
+    imageAspectRatio: Number(item.aspect_ratio) || null,
+    description: item.description || "",
+    categories: Array.isArray(item.categories) ? item.categories : [],
+    timePeriods: Array.isArray(item.time_periods) ? item.time_periods : [],
+    weather: item.weather || null,
+    accessScope: item.access_scope || "shared",
+    enabled: Boolean(item.enabled),
+    usageCount: Number(item.usage_count || 0),
+    lastUsedAt: item.last_used_at,
+    createdAt: item.created_at,
+  }
 }
 
 async function callSmallLLM(messages, options = {}) {
@@ -1855,6 +2020,20 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
+      if (!await isAlbumMomentImageAvailable(candidate.user_id, candidate.image_key)) {
+        await supabase
+          .from("moment_candidates")
+          .update({
+            status: "skipped",
+            skip_reason: "共享相册图片已停止授权",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id)
+          .eq("status", "processing")
+        skipped += 1
+        continue
+      }
+
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
       const [recentResult, dailyResult] = await Promise.all([
         supabase
@@ -1949,6 +2128,8 @@ async function checkPendingMomentCandidates() {
         .single()
 
       if (publishError) throw publishError
+
+      await markAlbumAssetUsed(candidate.user_id, candidate.image_key)
 
       const { error: completeError } = await supabase
         .from("moment_candidates")
@@ -2594,6 +2775,166 @@ export default async function handler(req, res) {
       })
     }
 
+    if (type === "album_assets") {
+      const normalizeStringList = (value, limit = 6) => Array.isArray(value)
+        ? value.map(item => String(item || "").trim()).filter(Boolean).slice(0, limit)
+        : []
+
+      if (req.method === "GET") {
+        const { data, error } = await supabase
+          .from("album_assets")
+          .select("*")
+          .eq("user_id", user_id)
+          .is("archived_at", null)
+          .order("created_at", { ascending: false })
+
+        if (error) return res.status(500).json({ error: error.message })
+
+        try {
+          const signedUrls = await getAlbumSignedUrls(data || [])
+
+          return res.status(200).json((data || []).map(item =>
+            normalizeAlbumAsset(item, signedUrls.get(item.storage_path))
+          ))
+        } catch (error) {
+          return res.status(500).json({ error: error.message || "Album image load failed" })
+        }
+      }
+
+      if (req.method === "POST") {
+        const {
+          imageBase64,
+          imageMimeType,
+          imageAspectRatio,
+          description,
+          categories,
+          timePeriods,
+          weather,
+          accessScope,
+        } = req.body
+
+        if (!imageBase64) return res.status(400).json({ error: "image required" })
+
+        try {
+          const uploaded = await uploadAlbumImage(user_id, imageBase64, imageMimeType)
+          const { data, error } = await supabase
+            .from("album_assets")
+            .insert({
+              user_id,
+              storage_path: uploaded.storagePath,
+              mime_type: uploaded.mimeType,
+              aspect_ratio: Number(imageAspectRatio) || null,
+              description: String(description || "").trim().slice(0, 120),
+              categories: normalizeStringList(categories),
+              time_periods: normalizeStringList(timePeriods, 5),
+              weather: String(weather || "").trim() || null,
+              access_scope: accessScope === "private" ? "private" : "shared",
+            })
+            .select()
+            .single()
+
+          if (error) throw error
+
+          const signedUrls = await getAlbumSignedUrls([data])
+
+          return res.status(200).json({
+            success: true,
+            asset: normalizeAlbumAsset(data, signedUrls.get(data.storage_path)),
+          })
+        } catch (error) {
+          return res.status(500).json({ error: error.message || "Album image upload failed" })
+        }
+      }
+
+      if (req.method === "PATCH") {
+        const id = Number(req.body.id)
+
+        if (!id) return res.status(400).json({ error: "id required" })
+
+        const updates = { updated_at: new Date().toISOString() }
+
+        if (Object.prototype.hasOwnProperty.call(req.body, "description")) {
+          updates.description = String(req.body.description || "").trim().slice(0, 120)
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "categories")) {
+          updates.categories = normalizeStringList(req.body.categories)
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "timePeriods")) {
+          updates.time_periods = normalizeStringList(req.body.timePeriods, 5)
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "weather")) {
+          updates.weather = String(req.body.weather || "").trim() || null
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "accessScope")) {
+          updates.access_scope = req.body.accessScope === "private" ? "private" : "shared"
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "enabled")) {
+          updates.enabled = Boolean(req.body.enabled)
+        }
+
+        const { data, error } = await supabase
+          .from("album_assets")
+          .update(updates)
+          .eq("user_id", user_id)
+          .eq("id", id)
+          .is("archived_at", null)
+          .select()
+          .maybeSingle()
+
+        if (error) return res.status(500).json({ error: error.message })
+        if (!data) return res.status(404).json({ error: "album asset not found" })
+
+        if (data.access_scope !== "shared" || !data.enabled) {
+          await supabase
+            .from("moment_candidates")
+            .update({ image_key: null })
+            .eq("user_id", user_id)
+            .like("image_key", `%\"albumAssetId\":${id}%`)
+            .eq("status", "pending")
+        }
+
+        const signedUrls = await getAlbumSignedUrls([data])
+
+        return res.status(200).json({
+          success: true,
+          asset: normalizeAlbumAsset(data, signedUrls.get(data.storage_path)),
+        })
+      }
+
+      if (req.method === "DELETE") {
+        const id = Number(req.body.id)
+
+        if (!id) return res.status(400).json({ error: "id required" })
+
+        const { data, error } = await supabase
+          .from("album_assets")
+          .update({
+            enabled: false,
+            archived_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", user_id)
+          .eq("id", id)
+          .is("archived_at", null)
+          .select("id")
+          .maybeSingle()
+
+        if (error) return res.status(500).json({ error: error.message })
+        if (!data) return res.status(404).json({ error: "album asset not found" })
+
+        await supabase
+          .from("moment_candidates")
+          .update({ image_key: null })
+          .eq("user_id", user_id)
+          .like("image_key", `%\"albumAssetId\":${id}%`)
+          .eq("status", "pending")
+
+        return res.status(200).json({ success: true, id })
+      }
+
+      return res.status(405).json({ error: "Method not allowed for album_assets" })
+    }
+
     if (type === "moments") {
       if (req.method === "DELETE") {
         const id = req.body.id
@@ -2687,16 +3028,16 @@ export default async function handler(req, res) {
         }
 
         return res.status(200).json(
-          (data || []).map((item) => ({
+          await Promise.all((data || []).map(async (item) => ({
             id: item.id,
             author: item.author || "小C",
             text: item.text || "",
-            ...parseMomentImage(item.image_key),
+            ...await resolveMomentImageForResponse(user_id, item.image_key),
             likes: Number(item.likes || 0),
             xiaocLiked: xiaocLikedMomentIds.has(item.id),
             commentsCount: commentCounts[item.id] || 0,
             createdAt: item.created_at
-          }))
+          })))
         )
       }
 
@@ -2769,7 +3110,7 @@ export default async function handler(req, res) {
         return res.status(200).json({
           success: true,
           id: data.id,
-          ...parseMomentImage(data.image_key),
+          ...await resolveMomentImageForResponse(user_id, data.image_key),
           xiaocActivity
         })
       }

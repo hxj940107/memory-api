@@ -1119,30 +1119,115 @@ function hasUnsupportedMomentWeather(text, sourceText) {
 }
 
 async function getAvailableMomentImages(user_id) {
-  const { data, error } = await supabase
-    .from("moment_entries")
-    .select("image_key")
-    .eq("user_id", user_id)
-    .eq("author", "小C")
-    .not("image_key", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(8)
+  const [momentResult, albumResult] = await Promise.all([
+    supabase
+      .from("moment_entries")
+      .select("image_key")
+      .eq("user_id", user_id)
+      .eq("author", "小C")
+      .not("image_key", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("album_assets")
+      .select("id,description,categories,time_periods,weather,aspect_ratio,last_used_at")
+      .eq("user_id", user_id)
+      .eq("access_scope", "shared")
+      .eq("enabled", true)
+      .is("archived_at", null)
+      .order("last_used_at", { ascending: true, nullsFirst: true })
+      .limit(8),
+  ])
+
+  const { data, error } = momentResult
 
   if (error) {
     console.error("MOMENT IMAGE HISTORY LOAD FAILED:", error)
     return MOMENT_IMAGE_LIBRARY
   }
 
-  const recentIds = new Set((data || []).map(item => {
+  if (albumResult.error && albumResult.error.code !== "42P01") {
+    console.error("MOMENT ALBUM LOAD FAILED:", albumResult.error)
+  }
+
+  const recentLibraryIds = new Set()
+  const recentAlbumIds = new Set()
+
+  for (const item of data || []) {
     try {
-      return JSON.parse(item.image_key)?.libraryId
-    } catch {
-      return null
-    }
-  }).filter(Boolean))
-  const available = MOMENT_IMAGE_LIBRARY.filter(image => !recentIds.has(image.id))
+      const parsed = JSON.parse(item.image_key)
+
+      if (parsed?.libraryId) recentLibraryIds.add(parsed.libraryId)
+      if (parsed?.albumAssetId) recentAlbumIds.add(Number(parsed.albumAssetId))
+    } catch {}
+  }
+
+  const categoryKeywords = {
+    日常: ["日常", "生活", "今天"],
+    风景: ["风景", "天空", "树", "散步", "路"],
+    美食: ["吃", "饭", "餐", "美食", "早餐", "午饭", "晚饭"],
+    咖啡: ["咖啡", "拿铁", "店"],
+    动物: ["猫", "狗", "小动物"],
+    城市: ["城市", "街", "路", "下班", "上班", "通勤"],
+    雨天: ["雨", "下雨", "雨后"],
+    夜晚: ["夜", "晚上", "深夜", "路灯"],
+    室内: ["家", "室内", "桌", "电脑"],
+  }
+  const albumImages = (albumResult.data || [])
+    .filter(item => !recentAlbumIds.has(Number(item.id)))
+    .map(item => {
+      const categories = Array.isArray(item.categories) ? item.categories : []
+      const keywords = [...new Set(categories.flatMap(category =>
+        categoryKeywords[category] || [category]
+      ))]
+
+      return {
+        id: `album-${item.id}`,
+        albumAssetId: item.id,
+        aspectRatio: Number(item.aspect_ratio) || null,
+        description: `[共享相册] ${item.description || categories.join("、") || "生活照片"}`,
+        timePeriods: Array.isArray(item.time_periods) && item.time_periods.length
+          ? item.time_periods
+          : ["morning", "daytime", "evening", "night", "lateNight"],
+        weather: item.weather || null,
+        keywords,
+      }
+    })
+  const libraryImages = MOMENT_IMAGE_LIBRARY
+    .filter(image => !recentLibraryIds.has(image.id))
+    .slice(0, albumImages.length ? 6 : MOMENT_IMAGE_LIBRARY.length)
+  const available = [...albumImages, ...libraryImages]
 
   return available.length ? available : MOMENT_IMAGE_LIBRARY
+}
+
+async function markMomentAlbumImageUsed(user_id, imageKey) {
+  try {
+    const albumAssetId = Number(JSON.parse(imageKey || "null")?.albumAssetId)
+
+    if (!albumAssetId) return
+
+    const { data } = await supabase
+      .from("album_assets")
+      .select("usage_count")
+      .eq("user_id", user_id)
+      .eq("id", albumAssetId)
+      .maybeSingle()
+
+    if (!data) return
+
+    await supabase
+      .from("album_assets")
+      .update({
+        usage_count: Number(data.usage_count || 0) + 1,
+        last_used_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", user_id)
+      .eq("id", albumAssetId)
+  } catch (error) {
+    console.error("MOMENT ALBUM USAGE UPDATE FAILED:", error)
+  }
 }
 
 function parseMomentCandidate(raw) {
@@ -1658,7 +1743,11 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     candidate.image = null
   }
 
-  candidate.image = resolveMomentImage(candidate.image, process.env.BASE_URL)
+  candidate.image = resolveMomentImage(
+    candidate.image,
+    process.env.BASE_URL,
+    availableMomentImages
+  )
 
   if (!isManualMomentRequest) {
     return saveMomentCandidate({
@@ -1687,6 +1776,8 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     console.error("MOMENT SAVE FAILED:", error)
     return null
   }
+
+  await markMomentAlbumImageUsed(user_id, candidate.image)
 
   console.log("MOMENT SAVED:", data?.id)
   return data?.id || null
