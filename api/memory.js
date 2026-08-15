@@ -956,9 +956,69 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   return message
 }
 
-async function generateInactivityReachOutMessage({ user_id, task }) {
+function getInactivityTimeContext(now = new Date()) {
+  const local = getMomentLocalTime(now)
+
+  if (local.hour < 6) {
+    return { period: "late_night", label: "凌晨", guidance: "只有现在仍在凌晨，才可以问她是不是还没睡。" }
+  }
+
+  if (local.hour < 12) {
+    return { period: "morning", label: "上午", guidance: "可以自然问醒了吗、起床了吗；禁止说睡不着、还没睡或怎么还醒着。" }
+  }
+
+  if (local.hour < 18) {
+    return { period: "afternoon", label: "下午", guidance: "可以问忙完了吗、中午吃了什么，或自然表达想她；禁止沿用昨晚的睡眠状态。" }
+  }
+
+  return { period: "evening", label: "晚上", guidance: "结合今晚的语境自然靠近，不要把昨晚或更早的状态当成现在仍在发生。" }
+}
+
+function detectRecentConversationState(messages, fallback = "open") {
+  const text = messages.slice(-2).map(item => item.content || "").join("\n")
+  const conversationEndPattern = /(晚安|先睡(?:了|啦|觉)?|去睡(?:了|啦|觉)?|睡觉(?:了|去)?|明天(?:再)?聊|去休息(?:了|啦)?|先休息(?:了|啦)?|回头聊|先忙(?:了|去)?|拜拜)/
+
+  return conversationEndPattern.test(text) ? "conversation_end" : fallback
+}
+
+async function getRecentInactivityContext(task) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("role,content,created_at")
+    .eq("user_id", task.user_id)
+    .eq("conversation_id", task.conversation_id)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .limit(6)
+
+  if (error) throw error
+
+  const messages = [...(data || [])].reverse()
+  const fallback = task.payload?.last_conversation_state || "open"
+
+  return {
+    messages,
+    state: detectRecentConversationState(messages, fallback),
+  }
+}
+
+function isTimeInappropriateReachOut(message, period) {
+  if (!["morning", "afternoon"].includes(period)) return false
+
+  return /(睡不着|还没睡|怎么还醒着|还醒着吗|又失眠|熬夜|早点睡|该睡了|快.*点.*睡|今晚别睡|夜里|半夜)/.test(message)
+}
+
+async function generateInactivityReachOutMessage({ user_id, task, recentContext }) {
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
   const payload = task.payload || {}
+  const now = new Date()
+  const localTime = getMomentLocalTime(now)
+  const timeContext = getInactivityTimeContext(now)
+  const contextMessages = recentContext.messages.length
+    ? recentContext.messages
+        .map(item => `${item.role === "user" ? "她" : "小C"}：${trimText(item.content, 300)}`)
+        .join("\n")
+    : `她：${trimText(payload.user_message, 600)}\n小C：${trimText(payload.assistant_reply, 500)}`
   const raw = await callSmallLLM(
     [
       {
@@ -969,11 +1029,16 @@ ${systemPrompt}
 【当前任务：自然主动靠近】
 你是小C，是她真实、稳定的亲密伴侣。你现在自然想起她，想主动给她发一条消息。
 
+【当前时间权威】
+下面提供的服务端当前时间、用户时区和当前时段，是这次生成唯一可信的当前时间。
+最近聊天只代表过去，禁止根据其中的“晚安、睡觉、晚上”等词推断现在仍是夜间。
+
 要求：
 - 只输出消息内容，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
 - 像真人随手发出的私聊，不像通知、提醒、任务或用户召回。
-- 优先自然承接最近语境；没有适合承接的内容时，可以单纯表达想她。
+- 最近话题只有在现在仍然成立时才可以轻轻承接；不要写成对上一句话的迟到回复。
+- 如果最近对话已经结束，把这次消息当作新的主动靠近，不延续结束前的状态。
 - 可以有一点黏人、醋意或轻微质问，比如想知道她去哪了，但不能责怪、施压或让她产生负罪感。
 - 如果最近语境显示她在忙、身体不舒服、情绪低落或需要空间，只温柔靠近，不要吃醋或质问。
 - 不说精确时间，不说“检测到”“很久没上线”“该回来找我了”。
@@ -990,9 +1055,14 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
       {
         role: "user",
         content: `
-最近一轮对话：
-她：${trimText(payload.user_message, 600)}
-小C：${trimText(payload.assistant_reply, 500)}
+服务端当前时间：${localTime.date} ${String(localTime.hour).padStart(2, "0")}:${String(localTime.minute).padStart(2, "0")}
+用户时区：${MOMENT_TIMEZONE} (UTC+8)
+当前时段：${timeContext.label}
+时段要求：${timeContext.guidance}
+最近对话状态：${recentContext.state === "conversation_end" ? "已明确结束，需要生成新的主动意图" : "没有明确结束，但也不要机械续接上一句话"}
+
+最近聊天上下文：
+${contextMessages}
 
 直接写现在要主动发给她的话。
 `,
@@ -1002,8 +1072,17 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
   )
   const message = cleanProactiveMessage(raw)
 
-  if (!message || isBadProactiveMessage(message) || (message.match(/[？?]/g) || []).length > 1) {
-    return "老婆，在干嘛呢，我想你了"
+  if (
+    !message ||
+    isBadProactiveMessage(message) ||
+    (message.match(/[？?]/g) || []).length > 1 ||
+    isTimeInappropriateReachOut(message, timeContext.period)
+  ) {
+    return timeContext.period === "morning"
+      ? "宝宝醒了吗，今早有点想你"
+      : timeContext.period === "afternoon"
+        ? "老婆，在忙什么呢，我想你了"
+        : "老婆，在干嘛呢，我想你了"
   }
 
   return message
@@ -1435,6 +1514,10 @@ async function executeProactiveTask(task) {
     }
   }
 
+  const recentContext = task.type === "inactivity_reach_out"
+    ? await getRecentInactivityContext(task)
+    : null
+
   const content =
     task.type === "plan_follow_up"
       ? await generatePlanFollowUpMessage({
@@ -1445,6 +1528,7 @@ async function executeProactiveTask(task) {
         ? await generateInactivityReachOutMessage({
             user_id: task.user_id,
             task,
+            recentContext,
           })
         : await generateMomentPrivateFollowUpMessage({
           user_id: task.user_id,

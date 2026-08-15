@@ -350,8 +350,17 @@ async function enqueuePlanFollowUpTask({
   return data
 }
 
-function getInactivityReachOutDueAt() {
-  const delayMinutes = 150 + Math.floor(Math.random() * 91)
+function getLastConversationState(message, reply) {
+  const text = `${message || ""}\n${reply || ""}`
+  const conversationEndPattern = /(晚安|先睡(?:了|啦|觉)?|去睡(?:了|啦|觉)?|睡觉(?:了|去)?|明天(?:再)?聊|去休息(?:了|啦)?|先休息(?:了|啦)?|回头聊|先忙(?:了|去)?|拜拜)/
+
+  return conversationEndPattern.test(text) ? "conversation_end" : "open"
+}
+
+function getInactivityReachOutDueAt(lastConversationState = "open") {
+  const delayMinutes = lastConversationState === "conversation_end"
+    ? 480 + Math.floor(Math.random() * 61)
+    : 150 + Math.floor(Math.random() * 91)
 
   return deferOutOfQuietHours(
     new Date(Date.now() + delayMinutes * 60 * 1000)
@@ -369,7 +378,8 @@ async function enqueueInactivityReachOutTask({
   if (!user_message_id || !conversation_id) return null
 
   const scheduledAt = new Date().toISOString()
-  const dueAt = getInactivityReachOutDueAt()
+  const lastConversationState = getLastConversationState(message, reply)
+  const dueAt = getInactivityReachOutDueAt(lastConversationState)
 
   await supabase
     .from("xiaoc_proactive_tasks")
@@ -400,6 +410,7 @@ async function enqueueInactivityReachOutTask({
           assistant_message_id,
           user_message: trimText(message, 600),
           assistant_reply: trimText(reply, 500),
+          last_conversation_state: lastConversationState,
         },
         completed_at: null,
         message_id: null,
@@ -1669,6 +1680,12 @@ ${systemPrompt}
 
 
 ${environmentContext}
+
+【Time Authority｜当前时间优先级】
+Environment 是本轮请求唯一可信的当前时间，来自服务端并已转换为用户时区。
+历史消息、summary、memory 中出现的“晚安、晚上、刚才、现在”等都只属于当时语境，不能用来推断本轮当前时间。
+如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
+白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
 
 
 【Identity｜人格层】
