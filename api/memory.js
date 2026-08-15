@@ -968,7 +968,7 @@ function getInactivityTimeContext(now = new Date()) {
   }
 
   if (local.hour < 18) {
-    return { period: "afternoon", label: "下午", guidance: "可以问忙完了吗、中午吃了什么，或自然表达想她；禁止沿用昨晚的睡眠状态。" }
+    return { period: "afternoon", label: "下午", guidance: "可以问忙完了吗、中午吃了什么，或自然表达想她；如果最近明确说要午睡、补觉，可以自然问睡醒了吗，但禁止沿用昨晚的失眠或熬夜状态。" }
   }
 
   return { period: "evening", label: "晚上", guidance: "结合今晚的语境自然靠近，不要把昨晚或更早的状态当成现在仍在发生。" }
@@ -1002,10 +1002,21 @@ async function getRecentInactivityContext(task) {
   }
 }
 
-function isTimeInappropriateReachOut(message, period) {
+function isTimeInappropriateReachOut(message, period, recentContext) {
   if (!["morning", "afternoon"].includes(period)) return false
 
-  return /(睡不着|还没睡|怎么还醒着|还醒着吗|又失眠|熬夜|早点睡|该睡了|快.*点.*睡|今晚别睡|夜里|半夜)/.test(message)
+  const recentText = recentContext.messages
+    .slice(-2)
+    .map(item => item.content || "")
+    .join("\n")
+  const hasNapContext = /(午睡|午觉|补觉|眯一会|眯一下|睡个午觉)/.test(recentText)
+  const nightOnlyPattern = /(睡不着|还没睡|怎么还醒着|还醒着吗|又失眠|熬夜|今晚别睡|夜里|半夜)/
+  const bedtimePattern = /(早点睡|该睡了|快.*点.*睡)/
+
+  if (nightOnlyPattern.test(message)) return true
+  if (bedtimePattern.test(message) && !hasNapContext) return true
+
+  return false
 }
 
 async function generateInactivityReachOutMessage({ user_id, task, recentContext }) {
@@ -1076,7 +1087,7 @@ ${contextMessages}
     !message ||
     isBadProactiveMessage(message) ||
     (message.match(/[？?]/g) || []).length > 1 ||
-    isTimeInappropriateReachOut(message, timeContext.period)
+    isTimeInappropriateReachOut(message, timeContext.period, recentContext)
   ) {
     return timeContext.period === "morning"
       ? "宝宝醒了吗，今早有点想你"
