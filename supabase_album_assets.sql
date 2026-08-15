@@ -5,9 +5,11 @@ create table if not exists public.album_assets (
   mime_type text not null default 'image/jpeg',
   aspect_ratio double precision,
   description text not null default '',
+  category text,
   categories text[] not null default '{}',
   time_periods text[] not null default '{}',
   weather text,
+  relations text[] not null default '{}',
   access_scope text not null default 'shared'
     check (access_scope in ('shared', 'private')),
   enabled boolean not null default true,
@@ -17,6 +19,30 @@ create table if not exists public.album_assets (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.album_assets
+  add column if not exists category text;
+
+alter table public.album_assets
+  add column if not exists relations text[] not null default '{}';
+
+update public.album_assets
+set category = case
+  when '日常' = any(categories) then '生活'
+  when '城市' = any(categories) then '城市'
+  when '美食' = any(categories) then '美食'
+  when '咖啡' = any(categories) then '咖啡'
+  when '动物' = any(categories) then '动物'
+  when '风景' = any(categories) then '自然'
+  when '室内' = any(categories) then '家'
+  else null
+end
+where category is null;
+
+update public.album_assets
+set weather = 'rain'
+where weather is null
+  and '雨天' = any(categories);
 
 create index if not exists album_assets_available_idx
   on public.album_assets (user_id, access_scope, enabled, last_used_at, created_at desc)

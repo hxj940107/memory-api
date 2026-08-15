@@ -1130,7 +1130,7 @@ async function getAvailableMomentImages(user_id) {
       .limit(8),
     supabase
       .from("album_assets")
-      .select("id,description,categories,time_periods,weather,aspect_ratio,last_used_at")
+      .select("id,description,category,categories,time_periods,weather,relations,aspect_ratio,last_used_at")
       .eq("user_id", user_id)
       .eq("access_scope", "shared")
       .eq("enabled", true)
@@ -1163,33 +1163,49 @@ async function getAvailableMomentImages(user_id) {
   }
 
   const categoryKeywords = {
-    日常: ["日常", "生活", "今天"],
-    风景: ["风景", "天空", "树", "散步", "路"],
+    生活: ["日常", "生活", "今天", "早餐", "做饭", "小物件"],
     美食: ["吃", "饭", "餐", "美食", "早餐", "午饭", "晚饭"],
     咖啡: ["咖啡", "拿铁", "店"],
     动物: ["猫", "狗", "小动物"],
     城市: ["城市", "街", "路", "下班", "上班", "通勤"],
-    雨天: ["雨", "下雨", "雨后"],
-    夜晚: ["夜", "晚上", "深夜", "路灯"],
-    室内: ["家", "室内", "桌", "电脑"],
+    旅行: ["旅行", "出发", "路途", "海边", "山", "住宿"],
+    自然: ["自然", "天空", "树", "花", "湖", "日落", "季节"],
+    家: ["家", "客厅", "阳台", "沙发", "室内", "桌", "电脑"],
+    纪念: ["纪念", "礼物", "特别", "第一次", "回忆"],
+  }
+  const relationKeywords = {
+    自己: ["自己", "一个人"],
+    和小天使: ["小天使", "宝宝", "老婆", "她"],
+    一起出门: ["一起", "出门", "散步", "旅行"],
+    共同回忆: ["以前", "记得", "回忆", "那次", "一起"],
   }
   const albumImages = (albumResult.data || [])
     .filter(item => !recentAlbumIds.has(Number(item.id)))
     .map(item => {
       const categories = Array.isArray(item.categories) ? item.categories : []
-      const keywords = [...new Set(categories.flatMap(category =>
-        categoryKeywords[category] || [category]
-      ))]
+      const category = item.category || categories[0] || null
+      const relations = Array.isArray(item.relations) ? item.relations : []
+      const weather = {
+        雨天: "rain",
+        雪天: "snow",
+        晴天: "sunny",
+        阴天: "cloudy",
+      }[item.weather] || item.weather || null
+      const keywords = [...new Set([
+        ...(categoryKeywords[category] || (category ? [category] : [])),
+        ...relations.flatMap(relation => relationKeywords[relation] || [relation]),
+      ])]
+      const metadata = [category, ...relations].filter(Boolean).join("；")
 
       return {
         id: `album-${item.id}`,
         albumAssetId: item.id,
         aspectRatio: Number(item.aspect_ratio) || null,
-        description: `[共享相册] ${item.description || categories.join("、") || "生活照片"}`,
+        description: `[共享相册] ${item.description || category || "生活照片"}${metadata ? `；标签 ${metadata}` : ""}`,
         timePeriods: Array.isArray(item.time_periods) && item.time_periods.length
           ? item.time_periods
-          : ["morning", "daytime", "evening", "night", "lateNight"],
-        weather: item.weather || null,
+          : ["earlyMorning", "morning", "afternoon", "evening", "night", "lateNight"],
+        weather,
         keywords,
       }
     })

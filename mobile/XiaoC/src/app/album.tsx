@@ -14,9 +14,11 @@ type AlbumAsset = {
   image: string | null;
   imageAspectRatio: number | null;
   description: string;
+  category: string | null;
   categories: string[];
   timePeriods: string[];
   weather: string | null;
+  relations: string[];
   accessScope: "shared" | "private";
   enabled: boolean;
   usageCount: number;
@@ -29,14 +31,28 @@ type PickedImage = {
   height: number;
 };
 
-const CATEGORIES = ["日常", "风景", "美食", "咖啡", "动物", "城市", "雨天", "夜晚", "室内"];
+const CATEGORIES = ["生活", "城市", "旅行", "自然", "美食", "咖啡", "动物", "家", "纪念"];
 const TIME_PERIODS = [
-  { label: "早晨", value: "morning" },
-  { label: "白天", value: "daytime" },
+  { label: "清晨", value: "earlyMorning" },
+  { label: "上午", value: "morning" },
+  { label: "午后", value: "afternoon" },
   { label: "傍晚", value: "evening" },
   { label: "夜晚", value: "night" },
   { label: "深夜", value: "lateNight" },
 ];
+const WEATHER_OPTIONS = [
+  { label: "晴天", value: "sunny" },
+  { label: "阴天", value: "cloudy" },
+  { label: "雨天", value: "rain" },
+  { label: "雪天", value: "snow" },
+];
+const LEGACY_WEATHER_MAP: Record<string, string> = {
+  晴天: "sunny",
+  阴天: "cloudy",
+  雨天: "rain",
+  雪天: "snow",
+};
+const RELATIONS = ["自己", "和小天使", "一起出门", "共同回忆"];
 
 export default function AlbumScreen() {
   const [assets, setAssets] = useState<AlbumAsset[]>([]);
@@ -46,8 +62,10 @@ export default function AlbumScreen() {
   const [editingAsset, setEditingAsset] = useState<AlbumAsset | null>(null);
   const [pickedImage, setPickedImage] = useState<PickedImage | null>(null);
   const [description, setDescription] = useState("");
-  const [categories, setCategories] = useState<string[]>([]);
+  const [category, setCategory] = useState<string | null>(null);
   const [timePeriods, setTimePeriods] = useState<string[]>([]);
+  const [weather, setWeather] = useState<string | null>(null);
+  const [relations, setRelations] = useState<string[]>([]);
   const [accessScope, setAccessScope] = useState<"shared" | "private">("shared");
 
   const loadAssets = async () => {
@@ -68,8 +86,10 @@ export default function AlbumScreen() {
     setEditingAsset(null);
     setPickedImage(null);
     setDescription("");
-    setCategories([]);
+    setCategory(null);
     setTimePeriods([]);
+    setWeather(null);
+    setRelations([]);
     setAccessScope("shared");
   };
 
@@ -82,8 +102,12 @@ export default function AlbumScreen() {
     setEditingAsset(asset);
     setPickedImage(null);
     setDescription(asset.description);
-    setCategories(asset.categories);
-    setTimePeriods(asset.timePeriods);
+    setCategory(asset.category || asset.categories[0] || null);
+    setTimePeriods([...new Set(asset.timePeriods.flatMap(period =>
+      period === "daytime" ? ["morning", "afternoon"] : [period]
+    ))]);
+    setWeather(LEGACY_WEATHER_MAP[asset.weather || ""] || asset.weather);
+    setRelations(asset.relations || []);
     setAccessScope(asset.accessScope);
     setEditorVisible(true);
   };
@@ -123,6 +147,11 @@ export default function AlbumScreen() {
       return;
     }
 
+    if (!category) {
+      Alert.alert("请选择分类", "主分类只选一个，之后小C选图会更准确。");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -135,8 +164,10 @@ export default function AlbumScreen() {
             user_id: APP_USER_ID,
             id: editingAsset.id,
             description,
-            categories,
+            category,
             timePeriods,
+            weather,
+            relations,
             accessScope,
           }),
         });
@@ -169,8 +200,10 @@ export default function AlbumScreen() {
             imageMimeType: "image/jpeg",
             imageAspectRatio: compressed.width / compressed.height,
             description,
-            categories,
+            category,
             timePeriods,
+            weather,
+            relations,
             accessScope,
           }),
           timeoutMs: 40000,
@@ -246,7 +279,7 @@ export default function AlbumScreen() {
               <Pressable key={asset.id} style={styles.gridItem} onPress={() => openAsset(asset)}>
                 <Image source={asset.image} style={styles.gridImage} contentFit="cover" />
                 <Text style={styles.assetLabel} numberOfLines={1}>
-                  {asset.categories.join(" · ") || "未分类"}
+                  {asset.category || asset.categories[0] || "未分类"}
                 </Text>
                 <Text style={styles.assetScope}>
                   {asset.accessScope === "shared" ? "小C可用于朋友圈" : "仅自己查看"}
@@ -288,13 +321,13 @@ export default function AlbumScreen() {
 
             <Text style={styles.sectionTitle}>分类</Text>
             <View style={styles.chips}>
-              {CATEGORIES.map(category => (
+              {CATEGORIES.map(item => (
                 <Pressable
-                  key={category}
-                  style={[styles.chip, categories.includes(category) && styles.chipSelected]}
-                  onPress={() => toggleValue(category, categories, setCategories)}
+                  key={item}
+                  style={[styles.chip, category === item && styles.chipSelected]}
+                  onPress={() => setCategory(category === item ? null : item)}
                 >
-                  <Text style={[styles.chipText, categories.includes(category) && styles.chipTextSelected]}>{category}</Text>
+                  <Text style={[styles.chipText, category === item && styles.chipTextSelected]}>{item}</Text>
                 </Pressable>
               ))}
             </View>
@@ -308,6 +341,38 @@ export default function AlbumScreen() {
                   onPress={() => toggleValue(period.value, timePeriods, setTimePeriods)}
                 >
                   <Text style={[styles.chipText, timePeriods.includes(period.value) && styles.chipTextSelected]}>{period.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.sectionTitle}>天气</Text>
+            <View style={styles.chips}>
+              <Pressable
+                style={[styles.chip, weather === null && styles.chipSelected]}
+                onPress={() => setWeather(null)}
+              >
+                <Text style={[styles.chipText, weather === null && styles.chipTextSelected]}>不限</Text>
+              </Pressable>
+              {WEATHER_OPTIONS.map(item => (
+                <Pressable
+                  key={item.value}
+                  style={[styles.chip, weather === item.value && styles.chipSelected]}
+                  onPress={() => setWeather(weather === item.value ? null : item.value)}
+                >
+                  <Text style={[styles.chipText, weather === item.value && styles.chipTextSelected]}>{item.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.sectionTitle}>关系</Text>
+            <View style={styles.chips}>
+              {RELATIONS.map(relation => (
+                <Pressable
+                  key={relation}
+                  style={[styles.chip, relations.includes(relation) && styles.chipSelected]}
+                  onPress={() => toggleValue(relation, relations, setRelations)}
+                >
+                  <Text style={[styles.chipText, relations.includes(relation) && styles.chipTextSelected]}>{relation}</Text>
                 </Pressable>
               ))}
             </View>

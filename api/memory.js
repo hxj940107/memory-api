@@ -412,14 +412,18 @@ async function getAlbumSignedUrls(items = []) {
 }
 
 function normalizeAlbumAsset(item, signedUrl) {
+  const legacyCategories = Array.isArray(item.categories) ? item.categories : []
+
   return {
     id: item.id,
     image: signedUrl || null,
     imageAspectRatio: Number(item.aspect_ratio) || null,
     description: item.description || "",
-    categories: Array.isArray(item.categories) ? item.categories : [],
+    category: item.category || legacyCategories[0] || null,
+    categories: legacyCategories,
     timePeriods: Array.isArray(item.time_periods) ? item.time_periods : [],
     weather: item.weather || null,
+    relations: Array.isArray(item.relations) ? item.relations : [],
     accessScope: item.access_scope || "shared",
     enabled: Boolean(item.enabled),
     usageCount: Number(item.usage_count || 0),
@@ -2807,9 +2811,11 @@ export default async function handler(req, res) {
           imageMimeType,
           imageAspectRatio,
           description,
+          category,
           categories,
           timePeriods,
           weather,
+          relations,
           accessScope,
         } = req.body
 
@@ -2825,9 +2831,11 @@ export default async function handler(req, res) {
               mime_type: uploaded.mimeType,
               aspect_ratio: Number(imageAspectRatio) || null,
               description: String(description || "").trim().slice(0, 120),
+              category: String(category || normalizeStringList(categories, 1)[0] || "").trim() || null,
               categories: normalizeStringList(categories),
-              time_periods: normalizeStringList(timePeriods, 5),
+              time_periods: normalizeStringList(timePeriods, 6),
               weather: String(weather || "").trim() || null,
+              relations: normalizeStringList(relations, 4),
               access_scope: accessScope === "private" ? "private" : "shared",
             })
             .select()
@@ -2859,11 +2867,17 @@ export default async function handler(req, res) {
         if (Object.prototype.hasOwnProperty.call(req.body, "categories")) {
           updates.categories = normalizeStringList(req.body.categories)
         }
+        if (Object.prototype.hasOwnProperty.call(req.body, "category")) {
+          updates.category = String(req.body.category || "").trim() || null
+        }
         if (Object.prototype.hasOwnProperty.call(req.body, "timePeriods")) {
-          updates.time_periods = normalizeStringList(req.body.timePeriods, 5)
+          updates.time_periods = normalizeStringList(req.body.timePeriods, 6)
         }
         if (Object.prototype.hasOwnProperty.call(req.body, "weather")) {
           updates.weather = String(req.body.weather || "").trim() || null
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, "relations")) {
+          updates.relations = normalizeStringList(req.body.relations, 4)
         }
         if (Object.prototype.hasOwnProperty.call(req.body, "accessScope")) {
           updates.access_scope = req.body.accessScope === "private" ? "private" : "shared"
