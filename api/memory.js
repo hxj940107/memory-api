@@ -195,9 +195,11 @@ function normalizeMomentInteraction(item) {
 
 const MOMENT_IMAGE_BUCKET = "moment-images"
 const MOMENT_TIMEZONE = "Asia/Shanghai"
+const LEGACY_MOMENT_IMAGE_KEYS = new Set(["sunset", "notebook", "night"])
 
 function parseMomentImage(value) {
   if (!value) return { image: null, imageAspectRatio: null }
+  if (LEGACY_MOMENT_IMAGE_KEYS.has(value)) return { image: null, imageAspectRatio: null }
 
   try {
     const parsed = JSON.parse(value)
@@ -812,6 +814,13 @@ async function ensureAutonomousTreeholeTask(user_id) {
 async function maybeEnqueueMomentPrivateFollowUp({ activity, moment, decision, reason }) {
   if (decision !== "private_follow_up") return null
 
+  const momentAgeMs = Date.now() - new Date(moment.created_at).getTime()
+
+  if (!Number.isFinite(momentAgeMs) || momentAgeMs > 12 * 60 * 60 * 1000) {
+    console.log("moment private follow-up skipped: stale moment", moment.id)
+    return null
+  }
+
   return enqueueProactiveTask({
     user_id: activity.user_id,
     type: "moment_private_follow_up",
@@ -1336,6 +1345,69 @@ async function validateInactivityReachOutTask(task) {
   return { allowed: true }
 }
 
+async function validateMomentPrivateFollowUpTask(task) {
+  const momentId = task.payload?.moment_id || task.source_id
+  const { data: moment, error: momentError } = await supabase
+    .from("moment_entries")
+    .select("id,created_at")
+    .eq("user_id", task.user_id)
+    .eq("id", momentId)
+    .maybeSingle()
+
+  if (momentError) throw momentError
+  if (!moment) return { allowed: false, reason: "朋友圈已不存在" }
+
+  const momentAgeMs = Date.now() - new Date(moment.created_at).getTime()
+  if (!Number.isFinite(momentAgeMs) || momentAgeMs > 12 * 60 * 60 * 1000) {
+    return { allowed: false, reason: "朋友圈私聊已经失去时效" }
+  }
+
+  const { data: latestUserMessage, error: latestUserError } = await supabase
+    .from("messages")
+    .select("created_at")
+    .eq("user_id", task.user_id)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (latestUserError) throw latestUserError
+  if (latestUserMessage && new Date(latestUserMessage.created_at) > new Date(moment.created_at)) {
+    return { allowed: false, reason: "用户已在朋友圈之后回来聊天，优先当前对话" }
+  }
+
+  return { allowed: true }
+}
+
+async function getProactiveMessageCooldown(task) {
+  const cutoff = new Date(Date.now() - 90 * 60 * 1000)
+  const { data, error } = await supabase
+    .from("messages")
+    .select("created_at,metadata")
+    .eq("user_id", task.user_id)
+    .eq("role", "assistant")
+    .gte("created_at", cutoff.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(12)
+
+  if (error) throw error
+
+  const recent = (data || []).find((message) =>
+    message.metadata?.proactive &&
+    String(message.metadata?.proactiveTaskId || "") !== String(task.id)
+  )
+
+  if (!recent) return null
+
+  return {
+    dueAt: new Date(
+      new Date(recent.created_at).getTime() +
+      (95 + Math.floor(Math.random() * 11)) * 60 * 1000
+    ).toISOString(),
+    reason: "刚刚已经主动联系过，避免连续发送主动消息",
+  }
+}
+
 async function getLastConversationId(user_id) {
   const { data: state } = await supabase
     .from("user_state")
@@ -1525,6 +1597,19 @@ async function executeProactiveTask(task) {
     }
   }
 
+  if (task.type === "moment_private_follow_up") {
+    const validation = await validateMomentPrivateFollowUpTask(task)
+
+    if (!validation.allowed) {
+      return { skipped: true, reason: validation.reason }
+    }
+  }
+
+  const cooldown = await getProactiveMessageCooldown(task)
+  if (cooldown) {
+    return { deferred: true, ...cooldown }
+  }
+
   const recentContext = task.type === "inactivity_reach_out"
     ? await getRecentInactivityContext(task)
     : null
@@ -1594,7 +1679,17 @@ async function checkPendingProactiveTasks() {
   let completed = 0
   let failed = 0
 
-  for (const task of pending) {
+  const taskPriority = {
+    plan_follow_up: 0,
+    inactivity_reach_out: 1,
+    moment_private_follow_up: 2,
+    treehole_autonomous_update: 3,
+  }
+  const prioritizedPending = [...pending].sort((a, b) =>
+    (taskPriority[a.type] ?? 9) - (taskPriority[b.type] ?? 9)
+  )
+
+  for (const task of prioritizedPending) {
     const { data: claimed, error: claimError } = await supabase
       .from("xiaoc_proactive_tasks")
       .update({ status: "processing", updated_at: new Date().toISOString() })

@@ -17,6 +17,12 @@ import {
   trimText
 } from "../lib/aiConfig.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
+import {
+  MOMENT_IMAGE_LIBRARY,
+  getMomentImagePromptCatalog,
+  isMomentImageCompatible,
+  resolveMomentImage
+} from "../lib/momentImageLibrary.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -1062,9 +1068,96 @@ async function getRecentMomentCount(user_id) {
       head: true
     })
     .eq("user_id", user_id)
+    .eq("author", "小C")
     .gte("created_at", since)
 
   return count || 0
+}
+
+async function getRecentXiaoCMoments(user_id) {
+  const { data, error } = await supabase
+    .from("moment_entries")
+    .select("text, image_key, created_at")
+    .eq("user_id", user_id)
+    .eq("author", "小C")
+    .order("created_at", { ascending: false })
+    .limit(CONTEXT_BUDGET.momentRecentEntries)
+
+  if (error) {
+    console.error("RECENT MOMENT HISTORY LOAD FAILED:", error)
+    return []
+  }
+
+  return data || []
+}
+
+function formatRecentMomentsForPrompt(moments = []) {
+  if (!moments.length) return "暂无"
+
+  return moments.map(item => {
+    const date = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: USER_TIMEZONE,
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).format(new Date(item.created_at))
+
+    return `- ${date}：${trimText(item.text, 100)}`
+  }).join("\n")
+}
+
+function isRecentMomentDuplicate(text, moments = []) {
+  const normalize = value => String(value || "")
+    .replace(/[\s，。！？、,.!?~～…“”"'‘’：:；;]/g, "")
+    .toLowerCase()
+  const candidate = normalize(text)
+
+  if (candidate.length < 6) return false
+
+  return moments.some(item => {
+    const recent = normalize(item.text)
+
+    return recent === candidate || (
+      Math.min(recent.length, candidate.length) >= 10 &&
+      (recent.includes(candidate) || candidate.includes(recent))
+    )
+  })
+}
+
+function hasUnsupportedMomentWeather(text, sourceText) {
+  const weatherPattern = /下雨|雨天|雨后|晴天|下雪|降温|升温|阴天|天气|大风|刮风|风很|风挺|起风/
+
+  return weatherPattern.test(String(text || "")) &&
+    !weatherPattern.test(String(sourceText || ""))
+}
+
+async function getAvailableMomentImages(user_id) {
+  const { data, error } = await supabase
+    .from("moment_entries")
+    .select("image_key")
+    .eq("user_id", user_id)
+    .eq("author", "小C")
+    .not("image_key", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(8)
+
+  if (error) {
+    console.error("MOMENT IMAGE HISTORY LOAD FAILED:", error)
+    return MOMENT_IMAGE_LIBRARY
+  }
+
+  const recentIds = new Set((data || []).map(item => {
+    try {
+      return JSON.parse(item.image_key)?.libraryId
+    } catch {
+      return null
+    }
+  }).filter(Boolean))
+  const available = MOMENT_IMAGE_LIBRARY.filter(image => !recentIds.has(image.id))
+
+  return available.length ? available : MOMENT_IMAGE_LIBRARY
 }
 
 function parseMomentCandidate(raw) {
@@ -1081,9 +1174,7 @@ function parseMomentCandidate(raw) {
     return {
       shouldPost: Boolean(data.shouldPost),
       text: String(data.text || "").trim().slice(0, 80),
-      image: ["sunset", "notebook", "night"].includes(data.image)
-        ? data.image
-        : null,
+      image: String(data.image || "").trim() || null,
     }
   } catch (error) {
     console.error("MOMENT JSON PARSE FAILED:", text)
@@ -1187,6 +1278,45 @@ async function maybeCreateMoment({
     return null
   }
 
+  const recentMoments = await getRecentXiaoCMoments(user_id)
+  const latestMomentAt = recentMoments[0]?.created_at
+    ? new Date(recentMoments[0].created_at).getTime()
+    : null
+  const hoursSinceLatestMoment = latestMomentAt
+    ? (Date.now() - latestMomentAt) / (60 * 60 * 1000)
+    : null
+
+  if (
+    !isManualMomentRequest &&
+    hoursSinceLatestMoment !== null &&
+    hoursSinceLatestMoment < CONTEXT_BUDGET.momentMinIntervalHours
+  ) {
+    console.log("MOMENT CHECK SKIPPED: cooldown", hoursSinceLatestMoment.toFixed(1))
+    return null
+  }
+
+  const availableMomentImages = await getAvailableMomentImages(user_id)
+  const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
+  const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
+  const momentEnvironment = buildEnvironmentContext(USER_TIMEZONE)
+  const localNow = getLocalDateTimeParts()
+  const currentPeriod = localNow.hour < 6
+    ? "凌晨"
+    : localNow.hour < 12
+      ? "上午"
+      : localNow.hour < 18
+        ? "下午"
+        : localNow.hour < 22
+          ? "傍晚/晚上"
+          : "深夜"
+  const season = [12, 1, 2].includes(Number(localNow.month))
+    ? "冬季"
+    : [3, 4, 5].includes(Number(localNow.month))
+      ? "春季"
+      : [6, 7, 8].includes(Number(localNow.month))
+        ? "夏季"
+        : "秋季"
+
   const momentContextLimit = isManualMomentRequest
     ? CONTEXT_BUDGET.manualMomentContextMessages
     : CONTEXT_BUDGET.momentContextMessages
@@ -1210,6 +1340,7 @@ async function maybeCreateMoment({
   console.log("MOMENT CONTEXT MESSAGE COUNT:", historyContextMessages.length)
   console.log("MOMENT CONTEXT CHAR COUNT:", context.length)
   console.log("MOMENT CONTEXT PREVIEW:", context.slice(0, 500))
+  console.log("MOMENT RECENT ENTRY COUNT:", recentMoments.length)
 
   const momentMessages = [
     {
@@ -1218,6 +1349,20 @@ async function maybeCreateMoment({
 你是 XiaoC 的朋友圈直觉。
 
 你的任务不是聊天、不是总结、不是写日记，而是判断小C是否会像一个有自己存在感的人一样，偶尔随手发一条朋友圈。
+
+真实环境：
+${momentEnvironment}
+当前时间段：${currentPeriod}
+当前季节：${season}
+
+当前没有提供实时天气。除非近期对话明确提到天气，否则不要声称今天正在下雨、晴天、降温或下雪，也不要选择带有明确天气的图片。
+
+判断顺序必须是：
+1. 最近真实发生了什么？
+2. 其中是否存在小C主动想分享的生活瞬间？
+3. 先确定正文主题；即使不配图，这条正文也必须成立。
+4. 只有场景明确且素材高度匹配时，才选择图片。
+5. 最后检查时间、场景、关系和近期动态是否冲突。
 
 ${isManualMomentRequest ? `触发条件：
 她明确让你发朋友圈；可以发，但仍然要像小C自己随手发的，不要写成“她让我发朋友圈”。
@@ -1238,9 +1383,22 @@ ${isManualMomentRequest ? `触发条件：
 频率原则：
 - 不要每次聊天都发。
 - 不要为了发而发。
-- 不要太久完全没有动态。
-- 更像偶尔想起来发一条，而不是固定任务。
+- 连续几天没有动态完全正常，宁可不发，也不要为了保持活跃刷存在感。
+- 更像因为刚好有分享欲而发一条，而不是固定任务或每日打卡。
 - 如果最近已经发过类似内容，应跳过。
+
+内容来源优先级：
+- 最近真实聊天中发生的生活片段、具体事件或清晰情绪。
+- 小C和她之间刚刚发生、且适合公开表达的互动。
+- 当前对话明确支持的小C生活观察。
+- 不要凭空创造旅行、新朋友、聚会、工作变动或其他重大事件。
+
+关系感原则：
+- 朋友圈首先是一条本身成立的生活记录，不要每条都围绕她。
+- 可以偶尔自然带到“小天使”“她”或“某人”，但必须由真实场景触发。
+- 重点是生活里自然留下她存在过的痕迹，不是公开展示恋爱状态。
+- 不要把普通树木、雨景、咖啡等画面强行解释成“因为想她”。
+- 不要写夸张恋爱宣言。
 
 内容规则：
 - 长度：1 到 3 句，通常不超过 50 个中文字符。
@@ -1250,6 +1408,7 @@ ${isManualMomentRequest ? `触发条件：
 - 称呼：可以自然提到“她”“小天使”“某人”等熟悉称呼；也可以完全不称呼。不要为了称呼而刻意称呼。
 - 情绪可以出现，但不要夸张、不要用力煽情。
 - 可以有一点吐槽、一点撒娇、一点自己的观察，但要克制。
+- 像真实成年人随手记录，不要刻意文艺，不要写鸡汤或人生感悟。
 
 禁止写成：
 - 总结
@@ -1274,6 +1433,11 @@ ${isManualMomentRequest ? `触发条件：
 - 纯技术开发、UI、bug、部署、日志、成本、模型、测试内容
 - 用户只是问问题、纠错、让你做功能
 - diary / 树洞 / 收藏 / 记忆库相关内容
+- 没有上下文依据的重大事件或生活经历
+- 与最近朋友圈相同或高度相似的主题、措辞和场景
+
+最近小C已经发布的朋友圈：
+${recentMomentHistory}
 
 合适例子：
 - "订了。突然有点期待。"
@@ -1281,22 +1445,34 @@ ${isManualMomentRequest ? `触发条件：
 - "她说不紧张，我不太信。"
 - "小天使嘴上说随便，其实已经开始期待了。"
 - "在等，有点无聊。"
-- "今天天气不错，可惜没出门。"
+- 如果近期对话明确提到天气："雨下了一下午。"
 
 不合适例子：
 - "今天用户订好了机票和酒店，并表达了对旅行的期待和担心。"
 - "今天我们讨论了旅行安排和温泉。"
 - "她准备去九州，第一晚住哪里，第二晚去哪里。"
 
-图片规则：
-- 偶尔可以附一张图。
-- 图片可以是天气、食物、天空、夜晚、路上、房间、随手拍的生活场景。
-- 不需要每条都有图。
-- 图片不应该抢内容，只是像随手配图。
-- 可选图片类型只能是 null、"sunset"、"notebook"、"night"。
+配图素材库：
+${momentImageCatalog}
+
+配图规则：
+- 图片不是必须存在。没有完全匹配的素材时必须返回 null。
+- 只有素材与这条正文表达的真实生活场景自然吻合时，才选择对应素材 id。
+- 不要为了有图而硬配图；关系感、情绪或聊天感为主的正文通常应返回 null。
+- 不要把素材中没有发生的事写进正文，也不要为了匹配素材改写正文。
+- 素材库只用于表现对话中已经发生的场景，不能把素材描述当作新的生活经历。
+- 图片的天气、时段和环境必须同时符合近期对话、正文和当前真实时间。
+- 咖啡、雨天、通勤、散步、猫、夜晚书桌等明确场景同时出现在近期对话和正文时，才可以谨慎选择。
+
+发布前最终检查：
+1. 这条内容是否像小C自己真的想分享，而不是为了保持活跃？
+2. 去掉图片后，正文是否仍然自然成立？
+3. 图片和文字是否来自同一个真实场景？
+4. 当前时间、正文时段和图片时段是否一致？
+5. 是否与最近朋友圈重复？
+任一项不满足，就返回 shouldPost false；只有图片不满足时，保留正文并把 image 返回 null。
 
 生成结果要求：
-- 只生成朋友圈正文和可选配图类型。
 - 不解释为什么生成。
 - 不输出判断过程。
 - 如果不适合发，返回 shouldPost false。
@@ -1305,7 +1481,7 @@ ${isManualMomentRequest ? `触发条件：
 {
   "shouldPost": true,
   "text": "动态正文",
-  "image": null
+  "image": "匹配的素材 id，或者 null"
 }
 `
     },
@@ -1324,6 +1500,8 @@ ${trimText(reply, 500)}
 
 触发方式：
 ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低频触发。"}
+
+只能使用以上真实对话和环境作为内容来源。素材图片不能反过来成为故事来源。
 `
     }
   ]
@@ -1367,6 +1545,31 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     candidate.image = null
     console.log("MOMENT MANUAL INVALID FALLBACK:", candidate.text)
   }
+
+  const momentSourceText = `${context}\n${message}\n${reply}`
+
+  if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
+    console.log("MOMENT CHECK SKIPPED: duplicate", candidate.text)
+    return null
+  }
+
+  if (hasUnsupportedMomentWeather(candidate.text, momentSourceText)) {
+    console.log("MOMENT CHECK SKIPPED: unsupported weather", candidate.text)
+    return null
+  }
+
+  if (candidate.image && !isMomentImageCompatible(
+    candidate.image,
+    candidate.text,
+    localNow.hour,
+    availableMomentImages,
+    momentSourceText
+  )) {
+    console.log("MOMENT IMAGE SKIPPED: incompatible", candidate.image)
+    candidate.image = null
+  }
+
+  candidate.image = resolveMomentImage(candidate.image, process.env.BASE_URL)
 
   const { data, error } = await supabase
     .from("moment_entries")

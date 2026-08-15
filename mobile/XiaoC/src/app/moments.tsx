@@ -82,19 +82,8 @@ type CreateMomentResponse = {
   imageAspectRatio?: number | null;
 };
 
-const momentImages: Record<string, number> = {
-  sunset: require("../../assets/moments-sunset.svg"),
-  notebook: require("../../assets/moments-notebook.svg"),
-  night: require("../../assets/moments-night.svg"),
-};
-
-const momentImageRatios: Record<string, number> = {
-  sunset: 16 / 9,
-  notebook: 16 / 9,
-  night: 16 / 9,
-};
-
 const profileCoverImage = require("../../assets/moments-cover.svg");
+const legacyMomentImageKeys = new Set(["sunset", "notebook", "night"]);
 
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
 const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
@@ -851,11 +840,15 @@ export default function MomentsScreen() {
       return [];
     }
 
+    if (legacyMomentImageKeys.has(image)) {
+      return [];
+    }
+
     return [
       {
         id: image,
-        source: momentImages[image] || { uri: image },
-        aspectRatio: imageAspectRatio || momentImageRatios[image] || 4 / 3,
+        source: { uri: image },
+        aspectRatio: imageAspectRatio || 4 / 3,
       },
     ];
   };
