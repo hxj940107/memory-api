@@ -32,6 +32,11 @@ type PickedImage = {
 };
 
 const CATEGORIES = ["生活", "城市", "旅行", "自然", "美食", "咖啡", "动物", "家", "纪念"];
+const LEGACY_CATEGORY_MAP: Record<string, string> = {
+  日常: "生活",
+  风景: "自然",
+  室内: "家",
+};
 const TIME_PERIODS = [
   { label: "清晨", value: "earlyMorning" },
   { label: "上午", value: "morning" },
@@ -62,7 +67,7 @@ export default function AlbumScreen() {
   const [editingAsset, setEditingAsset] = useState<AlbumAsset | null>(null);
   const [pickedImage, setPickedImage] = useState<PickedImage | null>(null);
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState<string | null>(null);
+  const [categories, setCategories] = useState<string[]>([]);
   const [timePeriods, setTimePeriods] = useState<string[]>([]);
   const [weather, setWeather] = useState<string | null>(null);
   const [relations, setRelations] = useState<string[]>([]);
@@ -86,7 +91,7 @@ export default function AlbumScreen() {
     setEditingAsset(null);
     setPickedImage(null);
     setDescription("");
-    setCategory(null);
+    setCategories([]);
     setTimePeriods([]);
     setWeather(null);
     setRelations([]);
@@ -102,7 +107,10 @@ export default function AlbumScreen() {
     setEditingAsset(asset);
     setPickedImage(null);
     setDescription(asset.description);
-    setCategory(asset.category || asset.categories[0] || null);
+    setCategories([...new Set([
+      ...(asset.categories || []),
+      ...(asset.category ? [asset.category] : []),
+    ].map(item => LEGACY_CATEGORY_MAP[item] || item).filter(item => CATEGORIES.includes(item)))]);
     setTimePeriods([...new Set(asset.timePeriods.flatMap(period =>
       period === "daytime" ? ["morning", "afternoon"] : [period]
     ))]);
@@ -147,8 +155,8 @@ export default function AlbumScreen() {
       return;
     }
 
-    if (!category) {
-      Alert.alert("请选择分类", "主分类只选一个，之后小C选图会更准确。");
+    if (!categories.length) {
+      Alert.alert("请选择分类", "可以选择一个或多个分类，帮助小C更准确地选图。");
       return;
     }
 
@@ -164,7 +172,8 @@ export default function AlbumScreen() {
             user_id: APP_USER_ID,
             id: editingAsset.id,
             description,
-            category,
+            category: categories[0],
+            categories,
             timePeriods,
             weather,
             relations,
@@ -200,7 +209,8 @@ export default function AlbumScreen() {
             imageMimeType: "image/jpeg",
             imageAspectRatio: compressed.width / compressed.height,
             description,
-            category,
+            category: categories[0],
+            categories,
             timePeriods,
             weather,
             relations,
@@ -279,7 +289,9 @@ export default function AlbumScreen() {
               <Pressable key={asset.id} style={styles.gridItem} onPress={() => openAsset(asset)}>
                 <Image source={asset.image} style={styles.gridImage} contentFit="cover" />
                 <Text style={styles.assetLabel} numberOfLines={1}>
-                  {asset.category || asset.categories[0] || "未分类"}
+                  {asset.categories.length
+                    ? asset.categories.join(" · ")
+                    : asset.category || "未分类"}
                 </Text>
                 <Text style={styles.assetScope}>
                   {asset.accessScope === "shared" ? "小C可用于朋友圈" : "仅自己查看"}
@@ -324,10 +336,10 @@ export default function AlbumScreen() {
               {CATEGORIES.map(item => (
                 <Pressable
                   key={item}
-                  style={[styles.chip, category === item && styles.chipSelected]}
-                  onPress={() => setCategory(category === item ? null : item)}
+                  style={[styles.chip, categories.includes(item) && styles.chipSelected]}
+                  onPress={() => toggleValue(item, categories, setCategories)}
                 >
-                  <Text style={[styles.chipText, category === item && styles.chipTextSelected]}>{item}</Text>
+                  <Text style={[styles.chipText, categories.includes(item) && styles.chipTextSelected]}>{item}</Text>
                 </Pressable>
               ))}
             </View>

@@ -1182,8 +1182,14 @@ async function getAvailableMomentImages(user_id) {
   const albumImages = (albumResult.data || [])
     .filter(item => !recentAlbumIds.has(Number(item.id)))
     .map(item => {
-      const categories = Array.isArray(item.categories) ? item.categories : []
-      const category = item.category || categories[0] || null
+      const categories = [...new Set([
+        ...(Array.isArray(item.categories) ? item.categories : []),
+        ...(item.category ? [item.category] : []),
+      ].map(category => ({
+        日常: "生活",
+        风景: "自然",
+        室内: "家",
+      }[category] || category)))]
       const relations = Array.isArray(item.relations) ? item.relations : []
       const weather = {
         雨天: "rain",
@@ -1192,16 +1198,16 @@ async function getAvailableMomentImages(user_id) {
         阴天: "cloudy",
       }[item.weather] || item.weather || null
       const keywords = [...new Set([
-        ...(categoryKeywords[category] || (category ? [category] : [])),
+        ...categories.flatMap(category => categoryKeywords[category] || [category]),
         ...relations.flatMap(relation => relationKeywords[relation] || [relation]),
       ])]
-      const metadata = [category, ...relations].filter(Boolean).join("；")
+      const metadata = [...categories, ...relations].filter(Boolean).join("；")
 
       return {
         id: `album-${item.id}`,
         albumAssetId: item.id,
         aspectRatio: Number(item.aspect_ratio) || null,
-        description: `[共享相册] ${item.description || category || "生活照片"}${metadata ? `；标签 ${metadata}` : ""}`,
+        description: `[共享相册] ${item.description || categories[0] || "生活照片"}${metadata ? `；标签 ${metadata}` : ""}`,
         timePeriods: Array.isArray(item.time_periods) && item.time_periods.length
           ? item.time_periods
           : ["earlyMorning", "morning", "afternoon", "evening", "night", "lateNight"],

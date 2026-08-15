@@ -413,6 +413,10 @@ async function getAlbumSignedUrls(items = []) {
 
 function normalizeAlbumAsset(item, signedUrl) {
   const legacyCategories = Array.isArray(item.categories) ? item.categories : []
+  const categories = [...new Set([
+    ...legacyCategories,
+    ...(item.category ? [item.category] : []),
+  ])]
 
   return {
     id: item.id,
@@ -420,7 +424,7 @@ function normalizeAlbumAsset(item, signedUrl) {
     imageAspectRatio: Number(item.aspect_ratio) || null,
     description: item.description || "",
     category: item.category || legacyCategories[0] || null,
-    categories: legacyCategories,
+    categories,
     timePeriods: Array.isArray(item.time_periods) ? item.time_periods : [],
     weather: item.weather || null,
     relations: Array.isArray(item.relations) ? item.relations : [],
