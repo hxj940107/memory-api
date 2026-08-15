@@ -5,6 +5,7 @@ import {
   AI_ENDPOINTS,
   AI_MODELS,
   APP_USER,
+  CONTEXT_BUDGET,
   TREEHOLE_AUTONOMOUS_POLICY,
   trimText,
 } from "../lib/aiConfig.js"
@@ -1762,6 +1763,225 @@ async function checkPendingProactiveTasks() {
   return { checked: pending.length, completed, deferred: 0, failed }
 }
 
+function normalizeMomentCandidateText(value) {
+  return String(value || "")
+    .replace(/[\s，。！？、,.!?~～…“”"'‘’：:；;]/g, "")
+    .toLowerCase()
+}
+
+function isMomentCandidateDuplicate(text, moments = []) {
+  const candidate = normalizeMomentCandidateText(text)
+
+  if (candidate.length < 6) return false
+
+  return moments.some((moment) => {
+    const recent = normalizeMomentCandidateText(moment.text)
+
+    return recent === candidate || (
+      Math.min(recent.length, candidate.length) >= 10 &&
+      (recent.includes(candidate) || candidate.includes(recent))
+    )
+  })
+}
+
+function getDeferredMomentCandidateTime(date) {
+  const target = new Date(date)
+
+  if (isMomentQuietHours(target)) {
+    return getNextMomentMorning(target)
+  }
+
+  target.setUTCMinutes(target.getUTCMinutes() + Math.floor(Math.random() * 61))
+  return target.toISOString()
+}
+
+async function checkPendingMomentCandidates() {
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const { error: expireError } = await supabase
+    .from("moment_candidates")
+    .update({
+      status: "skipped",
+      skip_reason: "候选内容已经失去时效",
+      updated_at: nowIso,
+    })
+    .eq("status", "pending")
+    .lte("expires_at", nowIso)
+
+  if (expireError?.code === "42P01") {
+    return { checked: 0, published: 0, skipped: 0, tableMissing: true }
+  }
+  if (expireError) throw expireError
+
+  const { data: candidates, error } = await supabase
+    .from("moment_candidates")
+    .select("*")
+    .eq("status", "pending")
+    .lte("publish_after", nowIso)
+    .gt("expires_at", nowIso)
+    .order("priority", { ascending: false })
+    .order("publish_after", { ascending: true })
+    .limit(10)
+
+  if (error) throw error
+  if (!candidates?.length) return { checked: 0, published: 0, skipped: 0 }
+
+  if (isMomentQuietHours(now)) {
+    const nextPublishAt = getNextMomentMorning(now)
+    const { error: deferError } = await supabase
+      .from("moment_candidates")
+      .update({ publish_after: nextPublishAt, updated_at: nowIso })
+      .in("id", candidates.map((candidate) => candidate.id))
+      .eq("status", "pending")
+
+    if (deferError) throw deferError
+    return { checked: candidates.length, published: 0, skipped: 0, deferred: candidates.length }
+  }
+
+  let published = 0
+  let skipped = 0
+  let deferred = 0
+  let failed = 0
+
+  for (const candidate of candidates) {
+    const { data: claimed, error: claimError } = await supabase
+      .from("moment_candidates")
+      .update({ status: "processing", updated_at: new Date().toISOString() })
+      .eq("id", candidate.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle()
+
+    if (claimError || !claimed) continue
+
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const [recentResult, dailyResult] = await Promise.all([
+        supabase
+          .from("moment_entries")
+          .select("id,text,created_at")
+          .eq("user_id", candidate.user_id)
+          .eq("author", "小C")
+          .order("created_at", { ascending: false })
+          .limit(CONTEXT_BUDGET.momentRecentEntries),
+        supabase
+          .from("moment_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", candidate.user_id)
+          .eq("author", "小C")
+          .gte("created_at", since),
+      ])
+
+      if (recentResult.error) throw recentResult.error
+      if (dailyResult.error) throw dailyResult.error
+
+      const recentMoments = recentResult.data || []
+      const latestMomentAt = recentMoments[0]?.created_at
+        ? new Date(recentMoments[0].created_at).getTime()
+        : null
+      const nextAllowedAt = latestMomentAt === null
+        ? null
+        : new Date(
+          latestMomentAt + CONTEXT_BUDGET.momentMinIntervalHours * 60 * 60 * 1000
+        )
+
+      if (isMomentCandidateDuplicate(candidate.text, recentMoments)) {
+        await supabase
+          .from("moment_candidates")
+          .update({
+            status: "skipped",
+            skip_reason: "与最近朋友圈重复",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id)
+          .eq("status", "processing")
+        skipped += 1
+        continue
+      }
+
+      let deferUntil = null
+
+      if (nextAllowedAt && nextAllowedAt.getTime() > Date.now()) {
+        deferUntil = getDeferredMomentCandidateTime(nextAllowedAt)
+      } else if ((dailyResult.count || 0) >= CONTEXT_BUDGET.momentMaxPer24Hours) {
+        deferUntil = getNextMomentMorning(now)
+      }
+
+      if (deferUntil) {
+        if (new Date(deferUntil) >= new Date(candidate.expires_at)) {
+          await supabase
+            .from("moment_candidates")
+            .update({
+              status: "skipped",
+              skip_reason: "发布窗口超过候选有效期",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", candidate.id)
+            .eq("status", "processing")
+          skipped += 1
+        } else {
+          await supabase
+            .from("moment_candidates")
+            .update({
+              status: "pending",
+              publish_after: deferUntil,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", candidate.id)
+            .eq("status", "processing")
+          deferred += 1
+        }
+        continue
+      }
+
+      const { data: moment, error: publishError } = await supabase
+        .from("moment_entries")
+        .insert({
+          user_id: candidate.user_id,
+          author: "小C",
+          text: candidate.text,
+          image_key: candidate.image_key,
+          likes: 0,
+          source_conversation_id: candidate.source_conversation_id,
+          source_message_id: candidate.source_message_id,
+        })
+        .select("id")
+        .single()
+
+      if (publishError) throw publishError
+
+      const { error: completeError } = await supabase
+        .from("moment_candidates")
+        .update({
+          status: "published",
+          published_moment_id: moment.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("status", "processing")
+
+      if (completeError) throw completeError
+      published += 1
+      break
+    } catch (candidateError) {
+      failed += 1
+      console.error("moment candidate publish failed:", candidateError)
+      await supabase
+        .from("moment_candidates")
+        .update({
+          status: "pending",
+          publish_after: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          last_error: candidateError.message || "candidate publish failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("status", "processing")
+    }
+  }
+
+  return { checked: candidates.length, published, skipped, deferred, failed }
+}
+
 async function checkPendingMomentsForXiaoC() {
   const now = new Date()
   const { data: pending, error } = await supabase
@@ -1900,11 +2120,12 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" })
       }
 
-      const [moments, proactive] = await Promise.all([
+      const [moments, proactive, momentCandidates] = await Promise.all([
         checkPendingMomentsForXiaoC(),
         checkPendingProactiveTasks(),
+        checkPendingMomentCandidates(),
       ])
-      const result = { moments, proactive }
+      const result = { moments, proactive, momentCandidates }
 
       console.log("MOMENT XIAOC CHECK:", result)
       return res.status(200).json({ success: true, ...result })

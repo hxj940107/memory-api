@@ -1059,21 +1059,6 @@ async function getUserMessageCount(user_id, conversation_id) {
   return count || 0
 }
 
-async function getRecentMomentCount(user_id) {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  const { count } = await supabase
-    .from("moment_entries")
-    .select("*", {
-      count: "exact",
-      head: true
-    })
-    .eq("user_id", user_id)
-    .eq("author", "小C")
-    .gte("created_at", since)
-
-  return count || 0
-}
-
 async function getRecentXiaoCMoments(user_id) {
   const { data, error } = await supabase
     .from("moment_entries")
@@ -1175,6 +1160,7 @@ function parseMomentCandidate(raw) {
       shouldPost: Boolean(data.shouldPost),
       text: String(data.text || "").trim().slice(0, 80),
       image: String(data.image || "").trim() || null,
+      priority: Math.round(Math.max(1, Math.min(3, Number(data.priority) || 1))),
     }
   } catch (error) {
     console.error("MOMENT JSON PARSE FAILED:", text)
@@ -1182,6 +1168,7 @@ function parseMomentCandidate(raw) {
       shouldPost: false,
       text: "",
       image: null,
+      priority: 1,
     }
   }
 }
@@ -1237,6 +1224,127 @@ function getManualMomentFallback(reply) {
   return null
 }
 
+function getMomentCandidatePublishAfter() {
+  const minDelay = CONTEXT_BUDGET.momentCandidateMinDelayMinutes
+  const maxDelay = CONTEXT_BUDGET.momentCandidateMaxDelayMinutes
+  const delayMinutes = minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1))
+  const target = new Date(Date.now() + delayMinutes * 60 * 1000)
+  const local = getLocalDateTimeParts(target)
+
+  if (local.hour >= 8 && (local.hour < 23 || (local.hour === 23 && local.minute < 30))) {
+    return target.toISOString()
+  }
+
+  const morning = new Date(`${local.year}-${local.month}-${local.day}T09:00:00+08:00`)
+
+  if (local.hour >= 23) {
+    morning.setUTCDate(morning.getUTCDate() + 1)
+  }
+
+  morning.setUTCMinutes(morning.getUTCMinutes() + Math.floor(Math.random() * 61))
+  return morning.toISOString()
+}
+
+async function saveMomentCandidate({
+  user_id,
+  conversation_id,
+  assistant_message_id,
+  candidate,
+}) {
+  const now = new Date()
+  const { data: pendingCandidates, error: pendingError } = await supabase
+    .from("moment_candidates")
+    .select("id,text,priority,created_at")
+    .eq("user_id", user_id)
+    .eq("status", "pending")
+    .gt("expires_at", now.toISOString())
+
+  if (pendingError) throw pendingError
+
+  if (isRecentMomentDuplicate(candidate.text, pendingCandidates || [])) {
+    console.log("MOMENT CANDIDATE SKIPPED: duplicate pending", candidate.text)
+    return null
+  }
+
+  if ((pendingCandidates?.length || 0) >= CONTEXT_BUDGET.momentCandidateMaxPending) {
+    const weakest = [...pendingCandidates].sort((a, b) =>
+      Number(a.priority || 1) - Number(b.priority || 1) ||
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    )[0]
+
+    if (candidate.priority <= Number(weakest?.priority || 1)) {
+      console.log("MOMENT CANDIDATE SKIPPED: pool full", pendingCandidates.length)
+      return null
+    }
+
+    const { error: replaceError } = await supabase
+      .from("moment_candidates")
+      .update({
+        status: "skipped",
+        skip_reason: "被更值得记录的新候选替代",
+        updated_at: now.toISOString(),
+      })
+      .eq("id", weakest.id)
+      .eq("status", "pending")
+
+    if (replaceError) throw replaceError
+  }
+
+  const publishAfter = getMomentCandidatePublishAfter()
+  const expiresAt = new Date(
+    now.getTime() + CONTEXT_BUDGET.momentCandidateExpiresHours * 60 * 60 * 1000
+  ).toISOString()
+  const { data, error } = await supabase
+    .from("moment_candidates")
+    .insert({
+      user_id,
+      text: candidate.text,
+      image_key: candidate.image,
+      priority: candidate.priority,
+      publish_after: publishAfter,
+      expires_at: expiresAt,
+      source_conversation_id: conversation_id,
+      source_message_id: assistant_message_id,
+    })
+    .select("id,publish_after")
+    .single()
+
+  if (error) throw error
+
+  const { data: currentPool, error: poolError } = await supabase
+    .from("moment_candidates")
+    .select("id,priority,created_at")
+    .eq("user_id", user_id)
+    .eq("status", "pending")
+    .gt("expires_at", now.toISOString())
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: false })
+
+  if (poolError) throw poolError
+
+  const overflowIds = (currentPool || [])
+    .slice(CONTEXT_BUDGET.momentCandidateMaxPending)
+    .map(item => item.id)
+
+  if (overflowIds.length) {
+    const { error: trimError } = await supabase
+      .from("moment_candidates")
+      .update({
+        status: "skipped",
+        skip_reason: "候选池已满",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", overflowIds)
+      .eq("status", "pending")
+
+    if (trimError) throw trimError
+    if (overflowIds.includes(data?.id)) return null
+  }
+
+  console.log("MOMENT CANDIDATE SAVED:", data?.id, data?.publish_after)
+  return data?.id || null
+}
+
 async function maybeCreateMoment({
   user_id,
   conversation_id,
@@ -1271,30 +1379,7 @@ async function maybeCreateMoment({
     return null
   }
 
-  const recentMomentCount = await getRecentMomentCount(user_id)
-
-  if (!isManualMomentRequest && recentMomentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
-    console.log("MOMENT CHECK SKIPPED: daily cap", recentMomentCount)
-    return null
-  }
-
   const recentMoments = await getRecentXiaoCMoments(user_id)
-  const latestMomentAt = recentMoments[0]?.created_at
-    ? new Date(recentMoments[0].created_at).getTime()
-    : null
-  const hoursSinceLatestMoment = latestMomentAt
-    ? (Date.now() - latestMomentAt) / (60 * 60 * 1000)
-    : null
-
-  if (
-    !isManualMomentRequest &&
-    hoursSinceLatestMoment !== null &&
-    hoursSinceLatestMoment < CONTEXT_BUDGET.momentMinIntervalHours
-  ) {
-    console.log("MOMENT CHECK SKIPPED: cooldown", hoursSinceLatestMoment.toFixed(1))
-    return null
-  }
-
   const availableMomentImages = await getAvailableMomentImages(user_id)
   const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
   const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
@@ -1378,6 +1463,7 @@ ${isManualMomentRequest ? `触发条件：
 - 对话里出现了一句有画面感、关系感、生活感的话。
 - 内容必须紧扣刚才的对话瞬间，不要泛化，不要脱离当前话题。
 - 一般闲聊、问答、功能讨论、技术内容，必须返回 shouldPost: false。
+- 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
 `}
 
 频率原则：
@@ -1481,8 +1567,11 @@ ${momentImageCatalog}
 {
   "shouldPost": true,
   "text": "动态正文",
-  "image": "匹配的素材 id，或者 null"
+  "image": "匹配的素材 id，或者 null",
+  "priority": 2
 }
+
+priority 只能是 1、2、3；只有非常值得记录的具体瞬间才给 3。
 `
     },
     {
@@ -1570,6 +1659,15 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
   }
 
   candidate.image = resolveMomentImage(candidate.image, process.env.BASE_URL)
+
+  if (!isManualMomentRequest) {
+    return saveMomentCandidate({
+      user_id,
+      conversation_id,
+      assistant_message_id,
+      candidate,
+    })
+  }
 
   const { data, error } = await supabase
     .from("moment_entries")
