@@ -417,6 +417,17 @@ function normalizeAlbumAsset(item, signedUrl) {
     ...legacyCategories,
     ...(item.category ? [item.category] : []),
   ])]
+  const legacyRelationMap = {
+    自己: ["小C"],
+    和小天使: ["小C", "小天使"],
+    一起出门: ["小C", "小天使"],
+    共同回忆: ["小C", "小天使"],
+  }
+  const relations = [...new Set(
+    (Array.isArray(item.relations) ? item.relations : [])
+      .flatMap(value => legacyRelationMap[value] || [value])
+      .filter(value => ["小C", "小天使", "榴莲"].includes(value))
+  )]
 
   return {
     id: item.id,
@@ -427,7 +438,7 @@ function normalizeAlbumAsset(item, signedUrl) {
     categories,
     timePeriods: Array.isArray(item.time_periods) ? item.time_periods : [],
     weather: item.weather || null,
-    relations: Array.isArray(item.relations) ? item.relations : [],
+    relations,
     accessScope: item.access_scope || "shared",
     enabled: Boolean(item.enabled),
     usageCount: Number(item.usage_count || 0),

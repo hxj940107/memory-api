@@ -57,7 +57,18 @@ const LEGACY_WEATHER_MAP: Record<string, string> = {
   雨天: "rain",
   雪天: "snow",
 };
-const RELATIONS = ["自己", "和小天使", "一起出门", "共同回忆"];
+const RELATIONS = ["小C", "小天使", "榴莲"];
+const LEGACY_RELATION_MAP: Record<string, string[]> = {
+  自己: ["小C"],
+  和小天使: ["小C", "小天使"],
+  一起出门: ["小C", "小天使"],
+  共同回忆: ["小C", "小天使"],
+};
+
+const normalizeRelations = (values: string[]) => [...new Set(
+  values.flatMap(value => LEGACY_RELATION_MAP[value] || [value])
+    .filter(value => RELATIONS.includes(value))
+)];
 
 export default function AlbumScreen() {
   const [assets, setAssets] = useState<AlbumAsset[]>([]);
@@ -115,7 +126,7 @@ export default function AlbumScreen() {
       period === "daytime" ? ["morning", "afternoon"] : [period]
     ))]);
     setWeather(LEGACY_WEATHER_MAP[asset.weather || ""] || asset.weather);
-    setRelations(asset.relations || []);
+    setRelations(normalizeRelations(asset.relations || []));
     setAccessScope(asset.accessScope);
     setEditorVisible(true);
   };
