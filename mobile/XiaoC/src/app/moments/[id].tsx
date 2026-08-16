@@ -1,8 +1,8 @@
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useState } from "react";
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Dimensions, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { apiJson, APP_USER_ID } from "../../config/api";
 import {
@@ -35,6 +35,7 @@ type MomentComment = {
   content?: string;
   parentId?: string | null;
   createdAt?: string;
+  xiaocReply?: MomentComment | null;
 };
 
 function formatMomentTime(value?: string) {
@@ -52,6 +53,7 @@ function formatMomentTime(value?: string) {
 }
 
 export default function MomentDetailScreen() {
+  const commentInputRef = useRef<TextInput>(null);
   const { id } = useLocalSearchParams<{ id: string }>();
   const [moment, setMoment] = useState<Moment | null>(null);
   const [comments, setComments] = useState<MomentComment[]>([]);
@@ -61,6 +63,9 @@ export default function MomentDetailScreen() {
     uri: string | null;
   }>({ avatar: DEFAULT_XIAOC_MOMENT_AVATAR, uri: null });
   const [previewImages, setPreviewImages] = useState<PreviewImage[]>([]);
+  const [replyTarget, setReplyTarget] = useState<MomentComment | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -121,6 +126,46 @@ export default function MomentDetailScreen() {
     );
   };
 
+  const startReply = (comment: MomentComment) => {
+    if (comment.authorType !== "xiaoc") return;
+    setReplyTarget(comment);
+    setTimeout(() => commentInputRef.current?.focus(), 80);
+  };
+
+  const postReply = async () => {
+    const content = commentDraft.trim();
+    if (!id || !replyTarget || !content || postingComment) return;
+
+    setPostingComment(true);
+    try {
+      const comment = await apiJson<MomentComment>("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "moment_comments",
+          user_id: APP_USER_ID,
+          moment_id: id,
+          author_type: "user",
+          author_name: accountName,
+          content,
+          parent_id: replyTarget.id,
+        }),
+      });
+      setComments((items) => [
+        ...items,
+        comment,
+        ...(comment.xiaocReply ? [comment.xiaocReply] : []),
+      ]);
+      setCommentDraft("");
+      setReplyTarget(null);
+      Keyboard.dismiss();
+    } catch (error) {
+      console.log("Moment reply failed:", error);
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.nav}>
@@ -131,11 +176,27 @@ export default function MomentDetailScreen() {
         <View style={styles.navSpacer} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => {
+          setReplyTarget(null);
+          Keyboard.dismiss();
+        }}
+      >
         {!moment ? (
           <Text style={styles.empty}>这条朋友圈暂时无法查看</Text>
         ) : (
-          <View style={styles.moment}>
+          <Pressable
+            style={styles.moment}
+            onPress={() => {
+              if (replyTarget) {
+                setReplyTarget(null);
+                Keyboard.dismiss();
+              }
+            }}
+          >
             {renderAvatar()}
             <View style={styles.body}>
               <View style={styles.header}>
@@ -166,18 +227,71 @@ export default function MomentDetailScreen() {
 
               {comments.length > 0 && (
                 <View style={styles.interactionPanel}>
-                  {comments.map((comment) => (
-                    <Text key={comment.id} style={styles.commentLine}>
-                      <Text style={styles.commentAuthor}>
-                        {comment.authorName || (comment.authorType === "xiaoc" ? "小C" : accountName)}
+                  {comments.map((comment) => {
+                    const parent = comment.parentId
+                      ? comments.find((item) => item.id === comment.parentId)
+                      : null;
+                    const authorName =
+                      comment.authorName ||
+                      (comment.authorType === "xiaoc" ? "小C" : accountName);
+                    const replyToName = parent
+                      ? parent.authorName ||
+                        (parent.authorType === "xiaoc" ? "小C" : accountName)
+                      : "";
+
+                    return (
+                      <Pressable
+                        key={comment.id}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          startReply(comment);
+                        }}
+                      >
+                        <Text style={styles.commentLine}>
+                          <Text style={styles.commentAuthor}>{authorName}</Text>
+                          {!!replyToName && (
+                            <Text>
+                              <Text style={styles.commentReplyHint}> 回复 </Text>
+                              <Text style={styles.commentAuthor}>{replyToName}</Text>
+                            </Text>
+                          )}
+                          <Text>：{comment.content || ""}</Text>
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+
+              {!!replyTarget && (
+                <View
+                  style={styles.commentInputRow}
+                  onTouchStart={(event) => event.stopPropagation()}
+                >
+                  <TextInput
+                    ref={commentInputRef}
+                    style={styles.commentInput}
+                    value={commentDraft}
+                    onChangeText={setCommentDraft}
+                    placeholder={`回复 ${replyTarget.authorName || "小C"}`}
+                    placeholderTextColor="#B1ACA7"
+                    multiline
+                  />
+                  {!!commentDraft.trim() && (
+                    <Pressable
+                      style={styles.sendCommentButton}
+                      disabled={postingComment}
+                      onPress={postReply}
+                    >
+                      <Text style={styles.sendCommentText}>
+                        {postingComment ? "发送中" : "发送"}
                       </Text>
-                      <Text>：{comment.content || ""}</Text>
-                    </Text>
-                  ))}
+                    </Pressable>
+                  )}
                 </View>
               )}
             </View>
-          </View>
+          </Pressable>
         )}
       </ScrollView>
       <ImagePreviewModal
@@ -239,4 +353,31 @@ const styles = StyleSheet.create({
   interactionPanel: { marginTop: 12, borderRadius: 4, padding: 10, backgroundColor: "#F5F5F7" },
   commentLine: { fontSize: 15, lineHeight: 22, color: "#2C2C2E" },
   commentAuthor: { color: "#47658F", fontWeight: "500" },
+  commentReplyHint: { color: "#5F6570" },
+  commentInputRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+  },
+  commentInput: {
+    flex: 1,
+    minHeight: 36,
+    maxHeight: 90,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#F2F2F4",
+    color: "#1C1C1E",
+    fontSize: 15,
+  },
+  sendCommentButton: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: "#47658F",
+  },
+  sendCommentText: { color: "#FFFFFF", fontSize: 14, fontWeight: "500" },
 });

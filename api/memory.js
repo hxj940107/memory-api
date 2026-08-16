@@ -674,8 +674,11 @@ async function createXiaoCCommentForUserMoment({ user_id, moment_id, text, image
   return normalizeMomentComment(data)
 }
 
-async function enqueueMomentForXiaoC({ user_id, moment_id }) {
-  const delayMinutes = 20 + Math.floor(Math.random() * 161)
+async function enqueueMomentForXiaoC({ user_id, moment_id, text }) {
+  const isUrgent = /生病|医院|急诊|受伤|发烧|很难受|撑不住|崩溃|出事/.test(String(text || ""))
+  const delayMinutes = isUrgent
+    ? 2 + Math.floor(Math.random() * 3)
+    : 5 + Math.floor(Math.random() * 6)
   const nextCheckAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString()
   const { data, error } = await supabase
     .from("moment_xiaoc_activity")
@@ -696,6 +699,34 @@ async function enqueueMomentForXiaoC({ user_id, moment_id }) {
   if (error) throw error
 
   return data
+}
+
+async function getRecentMomentChatContext(user_id) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("role,content,metadata,created_at")
+    .eq("user_id", user_id)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .limit(8)
+
+  if (error) throw error
+
+  return (data || [])
+    .reverse()
+    .map((message) => {
+      const metadata = message.metadata || {}
+      const imageContext = metadata.imageDescription || metadata.visionSummary
+      const content = [
+        trimText(message.content, 220),
+        imageContext ? `[图片背景信息] ${trimText(imageContext, 180)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+
+      return `${message.role === "user" ? "她" : "小C"}：${content}`
+    })
+    .join("\n")
 }
 
 function getMomentLocalTime(date = new Date()) {
@@ -771,7 +802,11 @@ function parseMomentDecision(raw) {
 }
 
 async function judgeXiaoCMomentActivity({ user_id, moment }) {
-  const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
+  const [pinMemory, recentChat] = await Promise.all([
+    fetchPinnedMemoryText(user_id).catch(() => ""),
+    getRecentMomentChatContext(user_id).catch(() => ""),
+  ])
+  const localTime = getMomentLocalTime()
   const image = parseMomentImage(moment.image_key).image
   const userContent = [
     {
@@ -781,6 +816,8 @@ async function judgeXiaoCMomentActivity({ user_id, moment }) {
 
 正文：${trimText(moment.text, 500) || "没有配文字"}
 发布时间：${moment.created_at}
+当前时间：${localTime.date} ${String(localTime.hour).padStart(2, "0")}:${String(localTime.minute).padStart(2, "0")}
+用户时区：${MOMENT_TIMEZONE} (UTC+8)
 
 请选择一个决定：
 - none：看过，不留下公开痕迹
@@ -811,7 +848,9 @@ ${systemPrompt}
 
 判断原则：
 - 看见不等于必须互动，不要讨好式地每条点赞或评论。
+- none 是正常选择；不要形成每条必点赞、必评论或必私聊的固定模式。
 - 开心生活、风景、食物、宠物、完成一件事，可以考虑点赞；仍允许不互动。
+- 旅行、榴莲、小天使或两个人的共同生活内容，可以提高互动意愿，但仍由当下语境决定。
 - 明显低落、孤独、身体不适、受挫、家人或榴莲健康问题，禁止点赞。
 - 低落但适合公开接住时选择 comment；涉及隐私、关系不安或严肃情绪时优先 private_follow_up。
 - 严肃内容不要用轻率的公开互动。
@@ -820,13 +859,18 @@ ${systemPrompt}
 
 【核心关系记忆】
 ${trimText(pinMemory, 1800) || "暂无额外记忆"}
+
+【最近聊天】
+${trimText(recentChat, 1800) || "最近没有可用聊天上下文"}
+
+结合最近聊天判断这条朋友圈是不是已经在对话中被充分承接，避免重复关心或机械复述。
 `,
     },
     { role: "user", content: userContent },
   ]
   const decisionOptions = {
     max_tokens: 180,
-    temperature: 0,
+    temperature: 0.35,
     response_format: { type: "json_object" },
   }
 
@@ -2195,20 +2239,6 @@ async function checkPendingMomentsForXiaoC() {
   if (error) throw error
   if (!pending?.length) return { checked: 0, completed: 0, deferred: 0 }
 
-  if (isMomentQuietHours(now)) {
-    const nextCheckAt = getNextMomentMorning(now)
-    const ids = pending.map((item) => item.id)
-    const { error: deferError } = await supabase
-      .from("moment_xiaoc_activity")
-      .update({ next_check_at: nextCheckAt, updated_at: now.toISOString() })
-      .in("id", ids)
-      .eq("status", "pending")
-
-    if (deferError) throw deferError
-
-    return { checked: pending.length, completed: 0, deferred: pending.length, nextCheckAt }
-  }
-
   let completed = 0
   let failed = 0
 
@@ -2328,6 +2358,36 @@ export default async function handler(req, res) {
       const result = { moments, proactive, momentCandidates }
 
       console.log("MOMENT XIAOC CHECK:", result)
+      return res.status(200).json({ success: true, ...result })
+    }
+
+    if (req.method === "GET" && type === "moment_interaction_check") {
+      const authorization = String(req.headers.authorization || "")
+
+      if (!process.env.CRON_SECRET || authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+        return res.status(401).json({ error: "Unauthorized" })
+      }
+
+      const result = await checkPendingMomentsForXiaoC()
+
+      console.log("MOMENT INTERACTION EVENT CHECK:", result)
+      return res.status(200).json({ success: true, ...result })
+    }
+
+    if (req.method === "GET" && type === "xiaoc_background_check") {
+      const authorization = String(req.headers.authorization || "")
+
+      if (!process.env.CRON_SECRET || authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+        return res.status(401).json({ error: "Unauthorized" })
+      }
+
+      const [proactive, momentCandidates] = await Promise.all([
+        checkPendingProactiveTasks(),
+        checkPendingMomentCandidates(),
+      ])
+      const result = { proactive, momentCandidates }
+
+      console.log("XIAOC BACKGROUND CHECK:", result)
       return res.status(200).json({ success: true, ...result })
     }
 
@@ -3130,6 +3190,7 @@ export default async function handler(req, res) {
             xiaocActivity = await enqueueMomentForXiaoC({
               user_id,
               moment_id: data.id,
+              text: normalizedText,
             })
           } catch (activityError) {
             console.error("moment xiaoc activity enqueue failed:", activityError)
@@ -3242,6 +3303,7 @@ export default async function handler(req, res) {
       if (req.method === "POST") {
         const moment_id = req.body.moment_id
         const content = String(req.body.content || "").trim()
+        const parent_id = req.body.reply_to_comment_id || req.body.parent_id || null
         const author_type = req.body.author_type === "xiaoc" ? "xiaoc" : "user"
         const author_name =
           String(req.body.author_name || "").trim() ||
@@ -3259,6 +3321,28 @@ export default async function handler(req, res) {
           })
         }
 
+        if (parent_id) {
+          const { data: parentComment, error: parentError } = await supabase
+            .from("moment_comments")
+            .select("id")
+            .eq("id", parent_id)
+            .eq("user_id", user_id)
+            .eq("moment_id", moment_id)
+            .maybeSingle()
+
+          if (parentError) {
+            return res.status(500).json({
+              error: parentError.message
+            })
+          }
+
+          if (!parentComment) {
+            return res.status(400).json({
+              error: "reply target not found"
+            })
+          }
+        }
+
         const { data, error } = await supabase
           .from("moment_comments")
           .insert({
@@ -3267,7 +3351,7 @@ export default async function handler(req, res) {
             author_type,
             author_name,
             content,
-            parent_id: req.body.parent_id || null
+            parent_id
           })
           .select()
           .single()

@@ -94,6 +94,7 @@ const MOMENTS_COVER_URI_KEY = "xiaoc_moments_cover_uri_v1";
 
 export default function MomentsScreen() {
   const scrollRef = useRef<ScrollView>(null);
+  const commentInputRefs = useRef<Record<string, TextInput | null>>({});
   const [moments, setMoments] = useState<Moment[]>([]);
   const [accountName, setAccountName] = useState(DEFAULT_ACCOUNT_NAME);
   const [profileAvatar, setProfileAvatar] = useState<{
@@ -110,6 +111,11 @@ export default function MomentsScreen() {
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [postingCommentId, setPostingCommentId] = useState<string | null>(null);
+  const [replyTarget, setReplyTarget] = useState<{
+    momentId: string;
+    commentId: string;
+    authorName: string;
+  } | null>(null);
   const [likedMomentIds, setLikedMomentIds] = useState<Record<string, boolean>>({});
   const [actionMenuMomentId, setActionMenuMomentId] = useState<string | null>(null);
   const [postComposerVisible, setPostComposerVisible] = useState(false);
@@ -504,6 +510,7 @@ export default function MomentsScreen() {
 
   const openCommentComposer = async (moment: Moment) => {
     setActionMenuMomentId(null);
+    setReplyTarget(null);
     setExpandedComments((items) => ({
       ...items,
       [moment.id]: true,
@@ -518,11 +525,47 @@ export default function MomentsScreen() {
       }
     }
 
-    scrollCommentInputIntoView();
+    focusCommentInput(moment.id);
+  };
+
+  const replyToComment = async (moment: Moment, comment: MomentComment) => {
+    if (comment.authorType !== "xiaoc") {
+      cancelCommentReply();
+      return;
+    }
+
+    setActionMenuMomentId(null);
+    setReplyTarget({
+      momentId: moment.id,
+      commentId: comment.id,
+      authorName: comment.authorName,
+    });
+    setExpandedComments((items) => ({
+      ...items,
+      [moment.id]: true,
+    }));
+
+    if (!commentsByMomentId[moment.id]) {
+      try {
+        await loadComments(moment.id);
+      } catch (error) {
+        console.log("Moment comments load failed:", error);
+      }
+    }
+
+    focusCommentInput(moment.id);
+  };
+
+  const cancelCommentReply = () => {
+    setReplyTarget(null);
+    Keyboard.dismiss();
   };
 
   const toggleCommentComposer = async (moment: Moment) => {
     if (expandedComments[moment.id]) {
+      if (replyTarget?.momentId === moment.id) {
+        setReplyTarget(null);
+      }
       setExpandedComments((items) => ({
         ...items,
         [moment.id]: false,
@@ -565,6 +608,10 @@ export default function MomentsScreen() {
           author_type: "user",
           author_name: accountName,
           content,
+          parent_id:
+            replyTarget?.momentId === moment.id
+              ? replyTarget.commentId
+              : null,
         }),
       });
       const nextComments = comment.xiaocReply
@@ -576,12 +623,20 @@ export default function MomentsScreen() {
         [moment.id]: [...(items[moment.id] || []), ...nextComments],
       }));
       setCommentDrafts((items) => ({ ...items, [moment.id]: "" }));
+      setReplyTarget(null);
       updateCommentCount(moment.id, nextComments.length);
     } catch (error) {
       Alert.alert("发送失败", error instanceof Error ? error.message : "请稍后再试。");
     } finally {
       setPostingCommentId(null);
     }
+  };
+
+  const focusCommentInput = (momentId: string) => {
+    setTimeout(() => {
+      commentInputRefs.current[momentId]?.focus();
+      scrollCommentInputIntoView();
+    }, 80);
   };
 
   const scrollCommentInputIntoView = () => {};
@@ -1015,6 +1070,9 @@ export default function MomentsScreen() {
                 styles.moment,
                 pressed && styles.momentPressed,
               ]}
+              onPress={() => {
+                if (replyTarget) cancelCommentReply();
+              }}
               onLongPress={() => confirmDelete(moment)}
             >
               {renderAvatar(moment)}
@@ -1153,6 +1211,10 @@ export default function MomentsScreen() {
                                 styles.commentRow,
                                 pressed && comment.authorType === "user" && styles.commentPressed,
                               ]}
+                              onPress={(event) => {
+                                event.stopPropagation();
+                                replyToComment(moment, comment);
+                              }}
                               onLongPress={() => confirmDeleteComment(moment, comment)}
                             >
                               <Text style={styles.commentLine}>
@@ -1176,8 +1238,14 @@ export default function MomentsScreen() {
                 )}
 
                 {composerVisible && (
-                  <View style={styles.commentInputRow}>
+                  <View
+                    style={styles.commentInputRow}
+                    onTouchStart={(event) => event.stopPropagation()}
+                  >
                     <TextInput
+                      ref={(input) => {
+                        commentInputRefs.current[moment.id] = input;
+                      }}
                       style={styles.commentInput}
                       value={commentDrafts[moment.id] || ""}
                       onChangeText={(text) =>
@@ -1186,7 +1254,11 @@ export default function MomentsScreen() {
                           [moment.id]: text,
                         }))
                       }
-                      placeholder="写评论…"
+                      placeholder={
+                        replyTarget?.momentId === moment.id
+                          ? `回复 ${replyTarget.authorName}`
+                          : "写评论…"
+                      }
                       placeholderTextColor="#B1ACA7"
                       multiline
                     />
@@ -1212,7 +1284,7 @@ export default function MomentsScreen() {
           );
         })}
 
-        <Pressable style={styles.keyboardDismissArea} onPress={Keyboard.dismiss} />
+        <Pressable style={styles.keyboardDismissArea} onPress={cancelCommentReply} />
       </ScrollView>
 
       <ImagePreviewModal
