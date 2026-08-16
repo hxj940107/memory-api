@@ -249,9 +249,9 @@ const shouldHideImagePlaceholderText = (content: string, imageUrl?: string) =>
 
 const normalizeShortAiText = (text: string) =>
   text
-    .replace(/\s*\n+\s*/g, "")
-    .replace(/([\u4e00-\u9fff，。！？、；：])[\s\u3000]+([\u4e00-\u9fff])/g, "$1$2")
-    .replace(/([\u4e00-\u9fff])[\s\u3000]+([，。！？、；：])/g, "$1$2")
+    .replace(/[ \t]*\n+[ \t]*/g, "\n")
+    .replace(/([\u4e00-\u9fff，。！？、；：])[\t \u3000]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(/([\u4e00-\u9fff])[\t \u3000]+([，。！？、；：])/g, "$1$2")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 
