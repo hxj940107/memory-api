@@ -182,7 +182,7 @@ const formatMessageTime = (createdAt: string) => {
   ).padStart(2, "0")}`;
 
   if (isSameCalendarDay(date, now)) {
-    return time;
+    return `今天 ${time}`;
   }
 
   const yesterday = new Date(now);
@@ -2439,7 +2439,7 @@ const styles = StyleSheet.create({
 
   messageTime: {
     alignSelf: "center",
-    marginTop: 18,
+    marginTop: 13,
     marginBottom: 9,
     color: XiaoCColors.textSecondary,
     fontSize: 12,
