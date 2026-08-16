@@ -33,7 +33,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 
-import { useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 
 import ConversationList from "../components/ConversationList";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
@@ -74,6 +74,12 @@ type Message = {
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
   treeholeDraft?: TreeholeDraft;
   treeholeSaveStatus?: "idle" | "saving" | "saved" | "failed";
+  createdAt?: string;
+  metadata?: {
+    proactive?: boolean;
+    proactiveType?: string;
+    proactiveTaskId?: string;
+  };
 };
 
 type SelectedFile = {
@@ -95,12 +101,16 @@ type HistoryItem = {
   id?: string;
   role: "user" | "assistant";
   content: string;
+  created_at?: string;
   metadata?: {
     imageUrl?: string;
     imageUrls?: string[];
     fileName?: string;
     fileMimeType?: string | null;
     fileSize?: number | null;
+    proactive?: boolean;
+    proactiveType?: string;
+    proactiveTaskId?: string;
   };
 };
 
@@ -133,6 +143,100 @@ const TEXT_FILE_EXTENSIONS = new Set([
 
 const createLocalMessageId = () =>
   `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const MESSAGE_TIME_GAP_MS = 60 * 60 * 1000;
+const WEEKDAY_LABELS = [
+  "星期日",
+  "星期一",
+  "星期二",
+  "星期三",
+  "星期四",
+  "星期五",
+  "星期六",
+];
+
+const isSameCalendarDay = (left: Date, right: Date) =>
+  left.getFullYear() === right.getFullYear() &&
+  left.getMonth() === right.getMonth() &&
+  left.getDate() === right.getDate();
+
+const getStartOfWeek = (date: Date) => {
+  const start = new Date(date);
+  const day = start.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - daysSinceMonday);
+
+  return start;
+};
+
+const formatMessageTime = (createdAt: string) => {
+  const date = new Date(createdAt);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  const now = new Date();
+  const time = `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes(),
+  ).padStart(2, "0")}`;
+
+  if (isSameCalendarDay(date, now)) {
+    return time;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (isSameCalendarDay(date, yesterday)) {
+    return `昨天 ${time}`;
+  }
+
+  if (date >= getStartOfWeek(now) && date <= now) {
+    return `${WEEKDAY_LABELS[date.getDay()]} ${time}`;
+  }
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  }
+
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+};
+
+const shouldShowMessageTime = (
+  message: Message,
+  previousMessage?: Message,
+) => {
+  if (!message.createdAt) return false;
+  if (!previousMessage?.createdAt) return true;
+
+  const currentDate = new Date(message.createdAt);
+  const previousDate = new Date(previousMessage.createdAt);
+
+  if (
+    Number.isNaN(currentDate.getTime()) ||
+    Number.isNaN(previousDate.getTime())
+  ) {
+    return false;
+  }
+
+  if (!isSameCalendarDay(currentDate, previousDate)) {
+    return true;
+  }
+
+  if (message.metadata?.proactive) {
+    const isSameProactiveTask =
+      !!message.metadata.proactiveTaskId &&
+      previousMessage.metadata?.proactiveTaskId ===
+        message.metadata.proactiveTaskId;
+
+    if (!isSameProactiveTask) {
+      return true;
+    }
+  }
+
+  return currentDate.getTime() - previousDate.getTime() >= MESSAGE_TIME_GAP_MS;
+};
 
 const IMAGE_PLACEHOLDER_TEXTS = new Set([
   "（图片）",
@@ -1270,6 +1374,8 @@ export default function ChatScreen() {
             treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
             diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
             imageUri: item.metadata?.imageUrl,
+            createdAt: item.created_at,
+            metadata: item.metadata,
             status: "sent",
           } satisfies Message;
         }),
@@ -1392,6 +1498,7 @@ export default function ChatScreen() {
           role: "assistant",
           text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
           treeholeDraft: treeholeDraft || undefined,
+          createdAt: new Date().toISOString(),
           status: "sent",
         },
       ]);
@@ -1430,6 +1537,7 @@ export default function ChatScreen() {
       imageUris: selectedImages.map((image) => image.uri),
       imageAsset: selectedImages[0],
       imageAssets: selectedImages,
+      createdAt: new Date().toISOString(),
       status: "sending",
     };
 
@@ -1730,13 +1838,22 @@ export default function ChatScreen() {
             )
           )}
 
-          {messages.map((item, index) =>
-            item.role === "user" ? (
-              <AnimatedMessage key={item.id}>
+          {messages.map((item, index) => (
+            <Fragment key={item.id}>
+              {shouldShowMessageTime(item, messages[index - 1]) && (
+                <Text style={styles.messageTime}>
+                  {formatMessageTime(item.createdAt || "")}
+                </Text>
+              )}
+
+              {item.role === "user" ? (
+              <AnimatedMessage>
                 <View
                   style={[
                     styles.userRow,
-                    index > 0 && messages[index - 1].role === item.role
+                    shouldShowMessageTime(item, messages[index - 1])
+                      ? styles.messageAfterTime
+                      : index > 0 && messages[index - 1].role === item.role
                       ? styles.messageFromSameSender
                       : styles.messageFromNewSender,
                   ]}
@@ -1842,12 +1959,14 @@ export default function ChatScreen() {
                 </View>
               </AnimatedMessage>
 	            ) : (
-	              <AnimatedMessage key={item.id}>
+	              <AnimatedMessage>
 	                <View
 	                  style={[
 	                    styles.aiWrap,
 	                    hasBlockMarkdown(item.text) && styles.aiWrapStructured,
-	                    index > 0 && messages[index - 1].role === item.role
+	                    shouldShowMessageTime(item, messages[index - 1])
+	                      ? styles.messageAfterTime
+	                      : index > 0 && messages[index - 1].role === item.role
 	                      ? styles.messageFromSameSender
 	                      : styles.messageFromNewSender,
 	                  ]}
@@ -1897,8 +2016,9 @@ export default function ChatScreen() {
 	                  )}
                 </View>
               </AnimatedMessage>
-            ),
-          )}
+            )}
+            </Fragment>
+          ))}
 
           {isTyping && <TypingDots />}
         </ScrollView>
@@ -2317,6 +2437,16 @@ const styles = StyleSheet.create({
     fontWeight: "400",
   },
 
+  messageTime: {
+    alignSelf: "center",
+    marginTop: 18,
+    marginBottom: 9,
+    color: XiaoCColors.textSecondary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "400",
+  },
+
   userRow: {
     alignItems: "flex-end",
     marginBottom: 2,
@@ -2369,6 +2499,10 @@ const styles = StyleSheet.create({
 
   messageFromSameSender: {
     marginTop: 4,
+  },
+
+  messageAfterTime: {
+    marginTop: 0,
   },
 
   messageFromNewSender: {

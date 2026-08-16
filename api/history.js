@@ -56,7 +56,8 @@ export default async function handler(req, res) {
           id: item.id,
           role: item.role,
           content: item.content,
-          metadata: item.metadata || {}
+          metadata: item.metadata || {},
+          created_at: item.created_at
         }))
     )
 
