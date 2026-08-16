@@ -263,6 +263,19 @@ const getDisplayAiText = (text: string) =>
     ? normalizeShortAiText(text)
     : text.replace(/\s*\n\s*/g, "\n");
 
+const getChatBubbleSegments = (text: string) => {
+  const segments = getDisplayAiText(text)
+    .split(/\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length <= 3) {
+    return segments;
+  }
+
+  return [segments[0], segments[1], segments.slice(2).join("\n")];
+};
+
 const renderInlineMarkdown = (text: string) =>
   text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
     part.startsWith("**") && part.endsWith("**") ? (
@@ -1998,21 +2011,27 @@ export default function ChatScreen() {
 	                      }
 	                    />
 	                  ) : (
-	                    <Pressable
-	                      style={styles.aiBox}
-	                      onLongPress={(event) =>
-	                        openMessageMenu(
-	                          getDisplayAiText(item.text),
-	                          item,
-	                          event.nativeEvent.pageX,
-	                          event.nativeEvent.pageY,
-	                        )
-	                      }
-	                    >
-	                      <Text style={styles.aiText}>
-	                        {renderInlineMarkdown(getDisplayAiText(item.text))}
-	                      </Text>
-	                    </Pressable>
+	                    getChatBubbleSegments(item.text).map((segment, segmentIndex) => (
+	                      <Pressable
+	                        key={`${item.id}_segment_${segmentIndex}`}
+	                        style={[
+	                          styles.aiBox,
+	                          segmentIndex > 0 && styles.aiBoxSegment,
+	                        ]}
+	                        onLongPress={(event) =>
+	                          openMessageMenu(
+	                            segment,
+	                            item,
+	                            event.nativeEvent.pageX,
+	                            event.nativeEvent.pageY,
+	                          )
+	                        }
+	                      >
+	                        <Text style={styles.aiText}>
+	                          {renderInlineMarkdown(segment)}
+	                        </Text>
+	                      </Pressable>
+	                    ))
 	                  )}
                 </View>
               </AnimatedMessage>
@@ -2482,6 +2501,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 17,
     paddingVertical: 9,
     overflow: "visible",
+  },
+
+  aiBoxSegment: {
+    marginTop: 4,
   },
 
   aiWrap: {
