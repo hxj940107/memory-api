@@ -95,7 +95,7 @@ function getLocalDateTimeParts(date = new Date(), timeZone = USER_TIMEZONE) {
 function isProactiveQuietHours(date = new Date()) {
   const local = getLocalDateTimeParts(date)
 
-  return local.hour < 8 || (local.hour === 8 && local.minute < 30) || (local.hour === 23 && local.minute >= 30)
+  return local.hour < 7 || (local.hour === 23 && local.minute >= 30)
 }
 
 function deferOutOfQuietHours(date = new Date()) {
@@ -108,7 +108,7 @@ function deferOutOfQuietHours(date = new Date()) {
     nextDate.setUTCDate(nextDate.getUTCDate() + 1)
   }
 
-  nextDate.setUTCMinutes(nextDate.getUTCMinutes() + 9 * 60 + Math.floor(Math.random() * 61))
+  nextDate.setUTCMinutes(nextDate.getUTCMinutes() + 7 * 60 + Math.floor(Math.random() * 31))
 
   return nextDate.toISOString()
 }
@@ -1265,12 +1265,20 @@ function parseMomentCandidate(raw) {
 
   try {
     const data = JSON.parse(jsonText)
+    const shareMode = ["immediate", "delayed"].includes(data.share_mode)
+      ? data.share_mode
+      : null
+    const parsedEventTime = data.event_time ? new Date(data.event_time) : null
 
     return {
       shouldPost: Boolean(data.shouldPost),
       text: String(data.text || "").trim().slice(0, 80),
       image: String(data.image || "").trim() || null,
       priority: Math.round(Math.max(1, Math.min(3, Number(data.priority) || 1))),
+      shareMode,
+      eventTime: parsedEventTime && Number.isFinite(parsedEventTime.getTime())
+        ? parsedEventTime.toISOString()
+        : null,
     }
   } catch (error) {
     console.error("MOMENT JSON PARSE FAILED:", text)
@@ -1279,6 +1287,8 @@ function parseMomentCandidate(raw) {
       text: "",
       image: null,
       priority: 1,
+      shareMode: null,
+      eventTime: null,
     }
   }
 }
@@ -1360,6 +1370,7 @@ async function saveMomentCandidate({
   conversation_id,
   assistant_message_id,
   candidate,
+  publishAfter,
 }) {
   const now = new Date()
   const { data: pendingCandidates, error: pendingError } = await supabase
@@ -1400,7 +1411,6 @@ async function saveMomentCandidate({
     if (replaceError) throw replaceError
   }
 
-  const publishAfter = getMomentCandidatePublishAfter()
   const expiresAt = new Date(
     now.getTime() + CONTEXT_BUDGET.momentCandidateExpiresHours * 60 * 60 * 1000
   ).toISOString()
@@ -1411,6 +1421,8 @@ async function saveMomentCandidate({
       text: candidate.text,
       image_key: candidate.image,
       priority: candidate.priority,
+      share_mode: candidate.shareMode,
+      event_time: candidate.eventTime,
       publish_after: publishAfter,
       expires_at: expiresAt,
       source_conversation_id: conversation_id,
@@ -1494,6 +1506,11 @@ async function maybeCreateMoment({
   const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
   const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
   const momentEnvironment = buildEnvironmentContext(USER_TIMEZONE)
+  const expectedPublishAfter = isManualMomentRequest
+    ? new Date().toISOString()
+    : getMomentCandidatePublishAfter()
+  const expectedPublishLocal = getLocalDateTimeParts(new Date(expectedPublishAfter))
+  const expectedPublishTime = `${expectedPublishLocal.year}-${expectedPublishLocal.month}-${expectedPublishLocal.day} ${String(expectedPublishLocal.hour).padStart(2, "0")}:${String(expectedPublishLocal.minute).padStart(2, "0")}`
   const localNow = getLocalDateTimeParts()
   const currentPeriod = localNow.hour < 6
     ? "凌晨"
@@ -1549,6 +1566,7 @@ async function maybeCreateMoment({
 ${momentEnvironment}
 当前时间段：${currentPeriod}
 当前季节：${season}
+这条候选预计发布于：${expectedPublishTime}（${USER_TIMEZONE}）
 
 当前没有提供实时天气。除非近期对话明确提到天气，否则不要声称今天正在下雨、晴天、降温或下雪，也不要选择带有明确天气的图片。
 
@@ -1575,6 +1593,14 @@ ${isManualMomentRequest ? `触发条件：
 - 一般闲聊、问答、功能讨论、技术内容，必须返回 shouldPost: false。
 - 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
 `}
+
+时间一致性规则：
+- 先判断正文描述的事情大约发生在什么时候，输出 event_time；它表示事件时间，不是发布时间。
+- share_mode 只能是 immediate 或 delayed。
+- immediate 表示即时记录：事件时间应接近预计发布时间，正文可以使用当前时段语气。
+- delayed 表示延迟分享：事件早于预计发布时间，正文必须自然说明是回忆或补发，例如“昨晚”“昨天”“前几天”“今天才想起来”“翻到这张”。
+- 如果昨晚的候选预计到第二天上午发布，不能写成仍在现场，也不能使用“刚刚”“这会儿”“现在才结束”等即时措辞。
+- 不确定事件时间，或无法让正文与预计发布时间自然对应时，返回 shouldPost false。
 
 频率原则：
 - 不要每次聊天都发。
@@ -1665,7 +1691,8 @@ ${momentImageCatalog}
 2. 去掉图片后，正文是否仍然自然成立？
 3. 图片和文字是否来自同一个真实场景？
 4. 当前时间、正文时段和图片时段是否一致？
-5. 是否与最近朋友圈重复？
+5. 事件时间和预计发布时间是否一致；若为延迟分享，正文是否明确表达回忆或补发？
+6. 是否与最近朋友圈重复？
 任一项不满足，就返回 shouldPost false；只有图片不满足时，保留正文并把 image 返回 null。
 
 生成结果要求：
@@ -1678,7 +1705,9 @@ ${momentImageCatalog}
   "shouldPost": true,
   "text": "动态正文",
   "image": "匹配的素材 id，或者 null",
-  "priority": 2
+  "priority": 2,
+  "share_mode": "immediate 或 delayed",
+  "event_time": "带时区的 ISO 时间，例如 2026-08-16T21:00:00+08:00"
 }
 
 priority 只能是 1、2、3；只有非常值得记录的具体瞬间才给 3。
@@ -1745,6 +1774,14 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     console.log("MOMENT MANUAL INVALID FALLBACK:", candidate.text)
   }
 
+  if (!isManualMomentRequest && (!candidate.shareMode || !candidate.eventTime)) {
+    console.log("MOMENT CHECK SKIPPED: missing time model", {
+      shareMode: candidate.shareMode,
+      eventTime: candidate.eventTime,
+    })
+    return null
+  }
+
   const momentSourceText = `${context}\n${message}\n${reply}`
 
   if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
@@ -1780,6 +1817,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       conversation_id,
       assistant_message_id,
       candidate,
+      publishAfter: expectedPublishAfter,
     })
   }
 

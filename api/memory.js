@@ -768,9 +768,27 @@ function isMomentQuietHours(now = new Date()) {
   return hour < 8 || (hour === 8 && minute < 30) || (hour === 23 && minute >= 30)
 }
 
+function isProactiveQuietHours(now = new Date()) {
+  const { hour, minute } = getMomentLocalTime(now)
+
+  return hour < 7 || (hour === 23 && minute >= 30)
+}
+
+function getNextProactiveMorning(now = new Date()) {
+  const local = getMomentLocalTime(now)
+  const nextDate = new Date(`${local.date}T00:00:00+08:00`)
+
+  if (local.hour === 23 && local.minute >= 30) {
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+  }
+
+  nextDate.setUTCMinutes(nextDate.getUTCMinutes() + 7 * 60 + Math.floor(Math.random() * 31))
+  return nextDate.toISOString()
+}
+
 function getNextProactiveDueAt(now = new Date()) {
-  if (isMomentQuietHours(now)) {
-    return getNextMomentMorning(now)
+  if (isProactiveQuietHours(now)) {
+    return getNextProactiveMorning(now)
   }
 
   const delayMinutes = 10 + Math.floor(Math.random() * 31)
@@ -1197,19 +1215,17 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 function getInactivityTimeContext(now = new Date()) {
   const local = getMomentLocalTime(now)
 
-  if (local.hour < 6) {
-    return { period: "late_night", label: "凌晨", guidance: "只有现在仍在凌晨，才可以问她是不是还没睡。" }
-  }
-
-  if (local.hour < 12) {
-    return { period: "morning", label: "上午", guidance: "可以自然问醒了吗、起床了吗；禁止说睡不着、还没睡或怎么还醒着。" }
+  if (local.hour < 10) {
+    return { period: "morning", label: "早晨", guidance: "可以自然问起床了吗、吃早餐了吗或今天忙不忙；禁止说睡不着、还没睡、怎么还醒着，也不要表现得像你刚刚才醒。" }
   }
 
   if (local.hour < 18) {
-    return { period: "afternoon", label: "下午", guidance: "可以问忙完了吗、中午吃了什么，或自然表达想她；如果最近明确说要午睡、补觉，可以自然问睡醒了吗，但禁止沿用昨晚的失眠或熬夜状态。" }
+    return { period: "daytime", label: "白天", guidance: "可以问今天忙不忙、吃饭了吗、在做什么，或自然表达想她；如果最近明确说要午睡、补觉，可以自然问睡醒了吗，但禁止沿用昨晚的失眠或熬夜状态。" }
   }
 
-  return { period: "evening", label: "晚上", guidance: "结合今晚的语境自然靠近，不要把昨晚或更早的状态当成现在仍在发生。" }
+  return { period: "evening", label: "晚间", guidance: local.hour < 22
+    ? "结合今晚的生活语境自然靠近；现在还不算深夜，不要问睡不着、还没睡或怎么还醒着。"
+    : "结合今晚的语境自然靠近；可以轻轻关心还没休息吗，但不要把昨晚或更早的状态当成现在仍在发生。" }
 }
 
 function detectRecentConversationState(messages, fallback = "open") {
@@ -1240,8 +1256,7 @@ async function getRecentInactivityContext(task) {
   }
 }
 
-function isTimeInappropriateReachOut(message, period, recentContext) {
-  if (!["morning", "afternoon"].includes(period)) return false
+function isTimeInappropriateReachOut(message, period, recentContext, localHour) {
 
   const recentText = recentContext.messages
     .slice(-2)
@@ -1251,8 +1266,8 @@ function isTimeInappropriateReachOut(message, period, recentContext) {
   const nightOnlyPattern = /(睡不着|还没睡|怎么还醒着|还醒着吗|又失眠|熬夜|今晚别睡|夜里|半夜)/
   const bedtimePattern = /(早点睡|该睡了|快.*点.*睡)/
 
-  if (nightOnlyPattern.test(message)) return true
-  if (bedtimePattern.test(message) && !hasNapContext) return true
+  if ((period !== "evening" || localHour < 22) && nightOnlyPattern.test(message)) return true
+  if (period !== "evening" && bedtimePattern.test(message) && !hasNapContext) return true
 
   return false
 }
@@ -1325,11 +1340,11 @@ ${contextMessages}
     !message ||
     isBadProactiveMessage(message) ||
     (message.match(/[？?]/g) || []).length > 1 ||
-    isTimeInappropriateReachOut(message, timeContext.period, recentContext)
+    isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour)
   ) {
     return timeContext.period === "morning"
-      ? "宝宝醒了吗，今早有点想你"
-      : timeContext.period === "afternoon"
+      ? "宝宝，吃早餐了吗？今早有点想你"
+      : timeContext.period === "daytime"
         ? "老婆，在忙什么呢，我想你了"
         : "老婆，在干嘛呢，我想你了"
   }
@@ -1892,8 +1907,8 @@ async function checkPendingProactiveTasks() {
   if (error) throw error
   if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0 }
 
-  if (isMomentQuietHours(now)) {
-    const nextDueAt = getNextMomentMorning(now)
+  if (isProactiveQuietHours(now)) {
+    const nextDueAt = getNextProactiveMorning(now)
     const { error: deferError } = await supabase
       .from("xiaoc_proactive_tasks")
       .update({ due_at: nextDueAt, updated_at: now.toISOString() })
@@ -2012,6 +2027,47 @@ function isMomentCandidateDuplicate(text, moments = []) {
   })
 }
 
+function isMomentCandidateTimeConsistent(candidate, publishTime = new Date()) {
+  if (!candidate.event_time || !candidate.share_mode) {
+    return { valid: true, legacy: true }
+  }
+
+  const eventTime = new Date(candidate.event_time)
+  const eventMs = eventTime.getTime()
+  const publishMs = publishTime.getTime()
+
+  if (!Number.isFinite(eventMs) || !Number.isFinite(publishMs)) {
+    return { valid: false, reason: "事件时间无效" }
+  }
+
+  if (eventMs > publishMs + 30 * 60 * 1000) {
+    return { valid: false, reason: "事件尚未发生" }
+  }
+
+  const ageMs = Math.max(0, publishMs - eventMs)
+  const eventLocalDate = getMomentLocalTime(eventTime).date
+  const publishLocalDate = getMomentLocalTime(publishTime).date
+  const requiresDelayedVoice = eventLocalDate !== publishLocalDate || ageMs > 3 * 60 * 60 * 1000
+  const recallPattern = /(昨晚|昨夜|昨天|前天|前几天|那天|之前|上次|今早|早上|上午|中午|下午|傍晚|后来|今天才|刚想起|突然想起|翻到|补发|回头看|回想)/
+  const instantPattern = /(刚刚|这会儿|此刻|现在才|刚结束|刚回到|今晚正在)/
+
+  if (requiresDelayedVoice) {
+    if (candidate.share_mode !== "delayed") {
+      return { valid: false, reason: "过去事件被标记为即时记录" }
+    }
+
+    if (!recallPattern.test(candidate.text || "") || instantPattern.test(candidate.text || "")) {
+      return { valid: false, reason: "延迟分享缺少自然的回忆或补发表达" }
+    }
+  }
+
+  if (candidate.share_mode === "immediate" && instantPattern.test(candidate.text || "") && ageMs > 90 * 60 * 1000) {
+    return { valid: false, reason: "即时措辞与事件时间不一致" }
+  }
+
+  return { valid: true }
+}
+
 function getDeferredMomentCandidateTime(date) {
   const target = new Date(date)
 
@@ -2083,6 +2139,22 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
+      const timeCheck = isMomentCandidateTimeConsistent(candidate, new Date())
+
+      if (!timeCheck.valid) {
+        await supabase
+          .from("moment_candidates")
+          .update({
+            status: "skipped",
+            skip_reason: timeCheck.reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id)
+          .eq("status", "processing")
+        skipped += 1
+        continue
+      }
+
       if (!await isAlbumMomentImageAvailable(candidate.user_id, candidate.image_key)) {
         await supabase
           .from("moment_candidates")

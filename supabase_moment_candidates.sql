@@ -7,6 +7,9 @@ create table if not exists public.moment_candidates (
     check (status in ('pending', 'processing', 'published', 'skipped', 'failed')),
   priority smallint not null default 1
     check (priority between 1 and 3),
+  share_mode text
+    check (share_mode in ('immediate', 'delayed')),
+  event_time timestamptz,
   publish_after timestamptz not null,
   expires_at timestamptz not null,
   source_conversation_id text,
@@ -22,3 +25,22 @@ create table if not exists public.moment_candidates (
 create index if not exists moment_candidates_pending_idx
   on public.moment_candidates (status, publish_after, priority desc)
   where status = 'pending';
+
+alter table public.moment_candidates
+  add column if not exists share_mode text;
+
+alter table public.moment_candidates
+  add column if not exists event_time timestamptz;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'moment_candidates_share_mode_check'
+  ) then
+    alter table public.moment_candidates
+      add constraint moment_candidates_share_mode_check
+      check (share_mode in ('immediate', 'delayed'));
+  end if;
+end $$;
