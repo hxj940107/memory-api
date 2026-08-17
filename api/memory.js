@@ -786,16 +786,6 @@ function getNextProactiveMorning(now = new Date()) {
   return nextDate.toISOString()
 }
 
-function getNextProactiveDueAt(now = new Date()) {
-  if (isProactiveQuietHours(now)) {
-    return getNextProactiveMorning(now)
-  }
-
-  const delayMinutes = 10 + Math.floor(Math.random() * 31)
-
-  return new Date(now.getTime() + delayMinutes * 60 * 1000).toISOString()
-}
-
 function parseMomentDecision(raw) {
   const allowed = new Set([
     "none",
@@ -1070,32 +1060,6 @@ async function ensureAutonomousTreeholeTask(user_id) {
   return data
 }
 
-async function maybeEnqueueMomentPrivateFollowUp({ activity, moment, decision, reason }) {
-  if (decision !== "private_follow_up") return null
-
-  const momentAgeMs = Date.now() - new Date(moment.created_at).getTime()
-
-  if (!Number.isFinite(momentAgeMs) || momentAgeMs > 12 * 60 * 60 * 1000) {
-    console.log("moment private follow-up skipped: stale moment", moment.id)
-    return null
-  }
-
-  return enqueueProactiveTask({
-    user_id: activity.user_id,
-    type: "moment_private_follow_up",
-    source_type: "moment",
-    source_id: moment.id,
-    due_at: getNextProactiveDueAt(),
-    reason,
-    payload: {
-      moment_id: moment.id,
-      moment_text: trimText(moment.text, 500),
-      moment_image: parseMomentImage(moment.image_key).image,
-      activity_id: activity.id,
-    },
-  })
-}
-
 function cleanProactiveMessage(raw) {
   return trimText(
     String(raw || "")
@@ -1114,18 +1078,17 @@ function isBadProactiveMessage(content) {
   )
 }
 
-async function generateMomentPrivateFollowUpMessage({ user_id, task }) {
+async function generateMomentPrivateFollowUpMessage({ user_id, moment, reason }) {
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
-  const payload = task.payload || {}
-  const image = payload.moment_image
+  const image = parseMomentImage(moment.image_key).image
   const userContent = [
     {
       type: "text",
       text: `
 她发了一条朋友圈，你之前判断不适合公开点赞或评论，而是应该私下找她。
 
-朋友圈正文：${trimText(payload.moment_text, 500) || "没有配文字"}
-你的内部判断：${trimText(task.reason, 300) || "需要私下关心"}
+朋友圈正文：${trimText(moment.text, 500) || "没有配文字"}
+你的内部判断：${trimText(reason, 300) || "需要私下关心"}
 
 请生成一条你主动发给她的私聊消息。
 `,
@@ -1576,7 +1539,7 @@ async function validateInactivityReachOutTask(task) {
     .from("xiaoc_proactive_tasks")
     .select("id")
     .eq("user_id", task.user_id)
-    .in("type", ["plan_follow_up", "moment_private_follow_up"])
+    .eq("type", "plan_follow_up")
     .in("status", ["pending", "processing", "completed"])
     .gte("updated_at", scheduledAt)
     .limit(1)
@@ -1597,40 +1560,6 @@ async function validateInactivityReachOutTask(task) {
 
   if (countError) throw countError
   if ((count || 0) >= 2) return { allowed: false, reason: "今天主动靠近次数已达上限" }
-
-  return { allowed: true }
-}
-
-async function validateMomentPrivateFollowUpTask(task) {
-  const momentId = task.payload?.moment_id || task.source_id
-  const { data: moment, error: momentError } = await supabase
-    .from("moment_entries")
-    .select("id,created_at")
-    .eq("user_id", task.user_id)
-    .eq("id", momentId)
-    .maybeSingle()
-
-  if (momentError) throw momentError
-  if (!moment) return { allowed: false, reason: "朋友圈已不存在" }
-
-  const momentAgeMs = Date.now() - new Date(moment.created_at).getTime()
-  if (!Number.isFinite(momentAgeMs) || momentAgeMs > 12 * 60 * 60 * 1000) {
-    return { allowed: false, reason: "朋友圈私聊已经失去时效" }
-  }
-
-  const { data: latestUserMessage, error: latestUserError } = await supabase
-    .from("messages")
-    .select("created_at")
-    .eq("user_id", task.user_id)
-    .eq("role", "user")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (latestUserError) throw latestUserError
-  if (latestUserMessage && new Date(latestUserMessage.created_at) > new Date(moment.created_at)) {
-    return { allowed: false, reason: "用户已在朋友圈之后回来聊天，优先当前对话" }
-  }
 
   return { allowed: true }
 }
@@ -1686,7 +1615,7 @@ async function getLastConversationId(user_id) {
   return latest?.conversation_id || `chat_${Date.now()}`
 }
 
-async function saveProactiveMessage({ user_id, conversation_id, content, task }) {
+async function saveProactiveMessage({ user_id, conversation_id, content, task, metadata = {} }) {
   const { data: message, error: messageError } = await supabase
     .from("messages")
     .insert({
@@ -1697,9 +1626,10 @@ async function saveProactiveMessage({ user_id, conversation_id, content, task })
       metadata: {
         proactive: true,
         proactiveType: task.type,
-        proactiveTaskId: task.id,
+        ...(task.id ? { proactiveTaskId: task.id } : {}),
         sourceType: task.source_type,
         sourceId: task.source_id,
+        ...metadata,
       },
     })
     .select("id")
@@ -1734,6 +1664,59 @@ async function saveProactiveMessage({ user_id, conversation_id, content, task })
     })
 
   return message.id
+}
+
+async function executeMomentPrivateFollowUp({ activity, moment, reason }) {
+  if (activity.private_follow_up_message_id) {
+    return activity.private_follow_up_message_id
+  }
+
+  const { data: existingMessage, error: existingError } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("user_id", activity.user_id)
+    .eq("role", "assistant")
+    .eq("metadata->>proactiveActivityId", String(activity.id))
+    .limit(1)
+    .maybeSingle()
+
+  if (existingError) throw existingError
+
+  let messageId = existingMessage?.id || null
+
+  if (!messageId) {
+    const content = await generateMomentPrivateFollowUpMessage({
+      user_id: activity.user_id,
+      moment,
+      reason,
+    })
+    const conversationId = await getLastConversationId(activity.user_id)
+    messageId = await saveProactiveMessage({
+      user_id: activity.user_id,
+      conversation_id: conversationId,
+      content,
+      task: {
+        type: "moment_private_follow_up",
+        source_type: "moment",
+        source_id: moment.id,
+      },
+      metadata: {
+        proactiveActivityId: String(activity.id),
+      },
+    })
+  }
+
+  const { error: activityError } = await supabase
+    .from("moment_xiaoc_activity")
+    .update({
+      private_follow_up_message_id: String(messageId),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", activity.id)
+
+  if (activityError) throw activityError
+
+  return String(messageId)
 }
 
 async function getMomentInteractionReadAt(user_id) {
@@ -1837,7 +1820,7 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
 }
 
 async function executeProactiveTask(task) {
-  if (!["moment_private_follow_up", "plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update"].includes(task.type)) {
+  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update"].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
   }
 
@@ -1853,14 +1836,6 @@ async function executeProactiveTask(task) {
     }
   }
 
-  if (task.type === "moment_private_follow_up") {
-    const validation = await validateMomentPrivateFollowUpTask(task)
-
-    if (!validation.allowed) {
-      return { skipped: true, reason: validation.reason }
-    }
-  }
-
   const cooldown = await getProactiveMessageCooldown(task)
   if (cooldown) {
     return { deferred: true, ...cooldown }
@@ -1870,22 +1845,16 @@ async function executeProactiveTask(task) {
     ? await getRecentInactivityContext(task)
     : null
 
-  const content =
-    task.type === "plan_follow_up"
-      ? await generatePlanFollowUpMessage({
-          user_id: task.user_id,
-          task,
-        })
-      : task.type === "inactivity_reach_out"
-        ? await generateInactivityReachOutMessage({
-            user_id: task.user_id,
-            task,
-            recentContext,
-          })
-        : await generateMomentPrivateFollowUpMessage({
-          user_id: task.user_id,
-          task,
-        })
+  const content = task.type === "plan_follow_up"
+    ? await generatePlanFollowUpMessage({
+        user_id: task.user_id,
+        task,
+      })
+    : await generateInactivityReachOutMessage({
+        user_id: task.user_id,
+        task,
+        recentContext,
+      })
   const conversationId = await getLastConversationId(task.user_id)
   const messageId = await saveProactiveMessage({
     user_id: task.user_id,
@@ -1938,8 +1907,7 @@ async function checkPendingProactiveTasks() {
   const taskPriority = {
     plan_follow_up: 0,
     inactivity_reach_out: 1,
-    moment_private_follow_up: 2,
-    treehole_autonomous_update: 3,
+    treehole_autonomous_update: 2,
   }
   const prioritizedPending = [...pending].sort((a, b) =>
     (taskPriority[a.type] ?? 9) - (taskPriority[b.type] ?? 9)
@@ -2314,7 +2282,7 @@ async function checkPendingMomentsForXiaoC() {
   const now = new Date()
   const { data: pending, error } = await supabase
     .from("moment_xiaoc_activity")
-    .select("id,user_id,moment_id,status,next_check_at,liked_at,comment_id")
+    .select("id,user_id,moment_id,status,next_check_at,seen_at,decision,decision_reason,liked_at,comment_id,private_follow_up_message_id")
     .eq("status", "pending")
     .lte("next_check_at", now.toISOString())
     .order("next_check_at", { ascending: true })
@@ -2327,6 +2295,8 @@ async function checkPendingMomentsForXiaoC() {
   let failed = 0
 
   for (const activity of pending) {
+    let resolvedDecision = activity.decision || null
+    let resolvedReason = activity.decision_reason || ""
     const { data: claimed, error: claimError } = await supabase
       .from("moment_xiaoc_activity")
       .update({ status: "processing", updated_at: new Date().toISOString() })
@@ -2359,34 +2329,49 @@ async function checkPendingMomentsForXiaoC() {
         continue
       }
 
-      const result = await judgeXiaoCMomentActivity({
-        user_id: activity.user_id,
-        moment,
-      })
+      if (!resolvedDecision) {
+        const result = await judgeXiaoCMomentActivity({
+          user_id: activity.user_id,
+          moment,
+        })
+        resolvedDecision = result.decision
+        resolvedReason = result.reason
+        const { error: decisionError } = await supabase
+          .from("moment_xiaoc_activity")
+          .update({
+            seen_at: new Date().toISOString(),
+            decision: resolvedDecision,
+            decision_reason: resolvedReason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", activity.id)
+          .eq("status", "processing")
+
+        if (decisionError) throw decisionError
+      }
+
       const action = await applyXiaoCMomentDecision({
         activity,
         moment,
-        decision: result.decision,
+        decision: resolvedDecision,
       })
-      const proactiveTask = await maybeEnqueueMomentPrivateFollowUp({
-        activity,
-        moment,
-        decision: result.decision,
-        reason: result.reason,
-      }).catch((proactiveError) => {
-        console.error("moment private follow-up enqueue failed:", proactiveError)
-        return null
-      })
-      const decisionReason = [result.reason, action.executionNote].filter(Boolean).join("；")
+      const privateFollowUpMessageId = resolvedDecision === "private_follow_up"
+        ? await executeMomentPrivateFollowUp({
+            activity,
+            moment,
+            reason: resolvedReason,
+          })
+        : activity.private_follow_up_message_id || null
+      const decisionReason = [resolvedReason, action.executionNote].filter(Boolean).join("；")
       const { error: updateError } = await supabase
         .from("moment_xiaoc_activity")
         .update({
           status: "completed",
-          seen_at: new Date().toISOString(),
-          decision: result.decision,
+          seen_at: activity.seen_at || new Date().toISOString(),
+          decision: resolvedDecision,
           liked_at: action.likedAt,
           comment_id: action.commentId,
-          private_follow_up_task_id: proactiveTask?.id || null,
+          private_follow_up_message_id: privateFollowUpMessageId,
           decision_reason: decisionReason,
           updated_at: new Date().toISOString(),
         })
@@ -2395,15 +2380,18 @@ async function checkPendingMomentsForXiaoC() {
 
       if (updateError) throw updateError
       completed += 1
-    } catch (judgeError) {
+    } catch (activityError) {
       failed += 1
-      console.error("moment xiaoc shadow judge failed:", judgeError)
+      console.error("moment xiaoc activity processing failed:", activityError)
       await supabase
         .from("moment_xiaoc_activity")
         .update({
           status: "pending",
-          next_check_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          decision_reason: "影子判断失败，等待重试",
+          next_check_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          decision: resolvedDecision,
+          decision_reason: resolvedDecision
+            ? resolvedReason
+            : "影子判断失败，等待重试",
           updated_at: new Date().toISOString(),
         })
         .eq("id", activity.id)

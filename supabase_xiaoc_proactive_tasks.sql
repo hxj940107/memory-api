@@ -27,3 +27,14 @@ on public.xiaoc_proactive_tasks (user_id, source_type, source_id);
 
 alter table public.moment_xiaoc_activity
 add column if not exists private_follow_up_task_id bigint;
+
+alter table public.moment_xiaoc_activity
+add column if not exists private_follow_up_message_id text;
+
+update public.xiaoc_proactive_tasks
+set
+  status = 'skipped',
+  last_error = '朋友圈私聊已改为 decision 后立即执行，旧延迟任务不再发送',
+  updated_at = now()
+where type = 'moment_private_follow_up'
+  and status = 'pending';

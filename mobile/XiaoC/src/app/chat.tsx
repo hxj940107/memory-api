@@ -12,6 +12,7 @@ import {
   Animated as RNAnimated,
   Dimensions,
   Keyboard,
+  AppState,
   ActionSheetIOS,
   Alert,
   type GestureResponderEvent,
@@ -25,7 +26,7 @@ import Animated, {
   ReduceMotion,
 } from "react-native-reanimated";
 
-import { useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
@@ -33,7 +34,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 
-import { Fragment, useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
 import ConversationList from "../components/ConversationList";
 import { APP_USER_ID, apiJson, postJson } from "../config/api";
@@ -933,10 +934,6 @@ export default function ChatScreen() {
   const incomingConversationId = params.conversationId as string | undefined;
   const shouldStartNewChat = params.newChat === "1";
 
-  useEffect(() => {
-    restoreConversation();
-  }, [incomingConversationId, shouldStartNewChat]);
-
   const [message, setMessage] = useState("");
 
   const [selectedImages, setSelectedImages] = useState<
@@ -967,6 +964,11 @@ export default function ChatScreen() {
   const sendButtonProgress = useRef(new RNAnimated.Value(0)).current;
 
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const latestCloudMessageIdRef = useRef<string | null>(null);
+  const historyRefreshInFlightRef = useRef(false);
+  const hasRestoredConversationRef = useRef(false);
+  const lastRestoreRouteKeyRef = useRef<string | null>(null);
 
   const [drawerVisible, setDrawerVisible] = useState(false);
 
@@ -1292,14 +1294,15 @@ export default function ChatScreen() {
     pickFile();
   };
 
-  const restoreConversation = async () => {
+  const restoreConversation = async ({ silent = false } = {}) => {
     try {
-      setLoadingHistory(true);
+      if (!silent) setLoadingHistory(true);
 
-      if (shouldStartNewChat) {
+      if (shouldStartNewChat && !silent) {
         setConversationId(null);
+        conversationIdRef.current = null;
+        latestCloudMessageIdRef.current = null;
         setMessages([]);
-        setLoadingHistory(false);
         return;
       }
 
@@ -1312,6 +1315,7 @@ export default function ChatScreen() {
       }
 
       setConversationId(id);
+      conversationIdRef.current = id;
 
       const data = await apiJson<HistoryItem[]>("/api/history", {
         query: {
@@ -1324,6 +1328,8 @@ export default function ChatScreen() {
       if (isRestoringLastConversation && data.length === 0) {
         await clearLastConversation();
         setConversationId(null);
+        conversationIdRef.current = null;
+        latestCloudMessageIdRef.current = null;
         setMessages([]);
         return;
       }
@@ -1395,12 +1401,65 @@ export default function ChatScreen() {
       );
 
       setMessages(restoredMessages);
+      latestCloudMessageIdRef.current = data.length
+        ? String(data[data.length - 1].id || "") || null
+        : null;
     } catch (error) {
       console.log(error);
     } finally {
-      setLoadingHistory(false);
+      if (!silent) setLoadingHistory(false);
     }
   };
+
+  const refreshIfCloudHistoryChanged = async () => {
+    const id = conversationIdRef.current;
+
+    if (!id || historyRefreshInFlightRef.current) return;
+
+    historyRefreshInFlightRef.current = true;
+
+    try {
+      const latest = await apiJson<HistoryItem[]>("/api/history", {
+        query: {
+          user_id: APP_USER_ID,
+          conversation_id: id,
+          limit: 1,
+        },
+      });
+      const latestCloudId = latest[0]?.id ? String(latest[0].id) : null;
+
+      if (latestCloudId && latestCloudId !== latestCloudMessageIdRef.current) {
+        await restoreConversation({ silent: true });
+      }
+    } catch (error) {
+      console.log("Chat background refresh failed:", error);
+    } finally {
+      historyRefreshInFlightRef.current = false;
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      const routeKey = `${incomingConversationId || "last"}:${shouldStartNewChat ? "new" : "restore"}`;
+      const routeChanged = lastRestoreRouteKeyRef.current !== routeKey;
+      const isInitialRestore = !hasRestoredConversationRef.current || routeChanged;
+      hasRestoredConversationRef.current = true;
+      lastRestoreRouteKeyRef.current = routeKey;
+      restoreConversation({ silent: !isInitialRestore });
+
+      const appStateSubscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") {
+          refreshIfCloudHistoryChanged();
+        }
+      });
+      const refreshTimer = setInterval(refreshIfCloudHistoryChanged, 30_000);
+
+      return () => {
+        appStateSubscription.remove();
+        clearInterval(refreshTimer);
+      };
+    }, [incomingConversationId, shouldStartNewChat]),
+  );
 
   const submitMessage = async (messageToSend: Message) => {
     const userText =
@@ -1469,6 +1528,7 @@ export default function ChatScreen() {
 
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
+        conversationIdRef.current = data.conversation_id;
 
         await saveLastConversation(data.conversation_id);
 
@@ -1515,6 +1575,7 @@ export default function ChatScreen() {
           status: "sent",
         },
       ]);
+      latestCloudMessageIdRef.current = data.assistant_message_id || null;
     } catch (error) {
       console.log("CHAT ERROR:", error);
 

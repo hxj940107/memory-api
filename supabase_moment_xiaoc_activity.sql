@@ -10,6 +10,7 @@ create table if not exists public.moment_xiaoc_activity (
   decision text,
   liked_at timestamptz,
   comment_id text,
+  private_follow_up_message_id text,
   decision_reason text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -19,6 +20,9 @@ create table if not exists public.moment_xiaoc_activity (
 create index if not exists moment_xiaoc_activity_pending_idx
   on public.moment_xiaoc_activity (status, next_check_at)
   where status = 'pending';
+
+alter table public.moment_xiaoc_activity
+  add column if not exists private_follow_up_message_id text;
 
 create extension if not exists pg_cron with schema extensions;
 create extension if not exists pg_net with schema extensions;
@@ -66,7 +70,7 @@ begin
 
   perform cron.schedule(
     'xiaoc-background-worker',
-    '0 * * * *',
+    '*/5 * * * *',
     $schedule$
       select net.http_get(
         url := (
