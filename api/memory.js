@@ -804,18 +804,28 @@ function parseMomentDecision(raw) {
     "like_and_comment",
     "private_follow_up",
   ])
-  const match = String(raw || "").match(/\{[\s\S]*\}/)
+  const text = String(raw || "").trim()
+  const match = text.match(/\{[\s\S]*\}/)
+  let parsed = null
 
-  if (!match) throw new Error("Moment decision JSON missing")
+  if (match) {
+    try {
+      parsed = JSON.parse(match[0])
+    } catch (error) {
+      console.error("moment decision JSON invalid, trying recovery")
+    }
+  }
 
-  const parsed = JSON.parse(match[0])
-  const decision = String(parsed.decision || "")
+  const recoveredDecision = text.match(/"decision"\s*:\s*"([a-z_]+)"/)?.[1]
+  const decision = String(parsed?.decision || recoveredDecision || "")
 
   if (!allowed.has(decision)) throw new Error("Invalid moment decision")
 
+  const recoveredReason = text.match(/"reason"\s*:\s*"([^"\n]{1,80})/)?.[1]
+
   return {
     decision,
-    reason: trimText(parsed.reason, 240),
+    reason: trimText(parsed?.reason || recoveredReason || "内部判断已完成", 60),
   }
 }
 
@@ -845,7 +855,9 @@ async function judgeXiaoCMomentActivity({ user_id, moment }) {
 - private_follow_up：不在朋友圈互动，适合之后私下关心
 
 只输出 JSON：
-{"decision":"none","reason":"内部判断理由"}
+{"decision":"none","reason":"30字以内的内部理由"}
+
+reason 只写一句结论，最多 30 个中文字符。不要解释分析过程。
 `,
     },
   ]
@@ -905,7 +917,7 @@ ${trimText(recentChat, 1800) || "最近没有可用聊天上下文"}
       ...decisionMessages,
       {
         role: "user",
-        content: '上一次输出无法解析。只输出一个 JSON 对象，例如：{"decision":"none","reason":"内部判断理由"}',
+        content: '只输出一个完整 JSON 对象。reason 最多 30 个中文字符，不要写分析过程。例如：{"decision":"none","reason":"适合安静看见，不公开互动"}',
       },
     ],
     decisionOptions
