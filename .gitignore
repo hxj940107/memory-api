@@ -11,6 +11,9 @@ node_modules/
 # Logs
 *.log
 
+# Local generated artifacts
+tmp/
+
 # Archives
 *.zip
 

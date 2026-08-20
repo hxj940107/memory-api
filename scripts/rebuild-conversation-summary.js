@@ -18,6 +18,7 @@ import {
 export const REBUILD_CONVERSATION_ID = "chat_1786454918423"
 export const REBUILT_SUMMARY_MAX_CHARS = 1500
 const MESSAGE_PAGE_SIZE = 500
+const REBUILD_PROVIDER_ORDER = ["Google", "Azure", "Anthropic"]
 
 export function hashText(value) {
   return createHash("sha256").update(String(value || ""), "utf8").digest("hex")
@@ -178,13 +179,24 @@ async function requestSummary(oldSummary, conversationData) {
       model: AI_MODELS.summary,
       messages: requestMessages,
       max_tokens: SUMMARY_OUTPUT_MAX_TOKENS,
+      provider: {
+        order: REBUILD_PROVIDER_ORDER,
+        allow_fallbacks: true,
+      },
     }),
   })
   const data = await response.json()
   const durationMs = Date.now() - startedAt
 
   if (!response.ok) {
-    throw new Error(data?.error?.message || "Summary rebuild model request failed")
+    const error = new Error(data?.error?.message || "Summary rebuild model request failed")
+    error.details = {
+      status: response.status,
+      code: data?.error?.code ?? null,
+      provider: data?.error?.metadata?.provider_name ?? null,
+      rawProvider: data?.error?.metadata?.raw ?? null,
+    }
+    throw error
   }
 
   const summary = data?.choices?.[0]?.message?.content?.trim()
@@ -290,6 +302,7 @@ export async function rebuildSummary({ supabase, conversationId, outputPath }) {
       maxCharsPerBatch: SUMMARY_BATCH_MAX_CHARS,
       maxOutputTokensPerCall: SUMMARY_OUTPUT_MAX_TOKENS,
       maxRebuiltSummaryChars: REBUILT_SUMMARY_MAX_CHARS,
+      providerOrder: REBUILD_PROVIDER_ORDER,
     },
     batches,
     totals: {
@@ -360,7 +373,10 @@ const isMain = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href =
 
 if (isMain) {
   main().catch((error) => {
-    console.error("SUMMARY REBUILD FAILED:", error?.message || error)
+    console.error("SUMMARY REBUILD FAILED:", {
+      message: error?.message || String(error),
+      details: error?.details || null,
+    })
     process.exitCode = 1
   })
 }

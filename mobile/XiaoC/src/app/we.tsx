@@ -27,6 +27,7 @@ type WeMemory = {
 
 type WeCategory = {
   name: string;
+  total: number;
   items: WeMemory[];
 };
 
@@ -148,9 +149,11 @@ function MemoryCard({
 function MemorySection({
   title,
   items,
+  total,
 }: {
   title: string;
   items: WeMemory[];
+  total?: number;
 }) {
   if (items.length === 0) {
     return null;
@@ -158,7 +161,23 @@ function MemorySection({
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+
+        {typeof total === "number" && total > items.length && (
+          <Pressable
+            hitSlop={10}
+            onPress={() =>
+              router.push({
+                pathname: "/we/category",
+                params: { category: title },
+              })
+            }
+          >
+            <Text style={styles.viewAllText}>查看全部  ›</Text>
+          </Pressable>
+        )}
+      </View>
 
       {items.map((memory) => (
         <MemoryCard key={memory.id} memory={memory} />
@@ -256,7 +275,9 @@ export default function WeScreen() {
           <>
             {data.pinned.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>最重要</Text>
+                <Text style={[styles.sectionTitle, styles.standaloneSectionTitle]}>
+                  最重要
+                </Text>
 
                 {data.pinned.map((memory) => (
                   <MemoryCard key={memory.id} memory={memory} pinned />
@@ -269,6 +290,7 @@ export default function WeScreen() {
                 key={category.name}
                 title={category.name}
                 items={category.items}
+                total={category.total}
               />
             ))}
 
@@ -374,11 +396,28 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    marginBottom: 10,
     paddingHorizontal: 2,
     fontSize: 14,
     color: "#A69D98",
     fontWeight: "600",
+  },
+
+  sectionHeader: {
+    minHeight: 26,
+    marginBottom: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  standaloneSectionTitle: {
+    marginBottom: 10,
+  },
+
+  viewAllText: {
+    paddingHorizontal: 2,
+    fontSize: 13,
+    color: "#8A817C",
   },
 
   memoryCard: {

@@ -132,6 +132,25 @@ function categorizeMemory(memory) {
   return "小小偏好"
 }
 
+const WE_MEMORY_CATEGORIES = ["关于你", "我们之间", "一起经历过", "小小偏好"]
+
+function getWeCategoryMemories(memories, name) {
+  return memories
+    .filter((memory) => !memory.pinned && categorizeMemory(memory) === name)
+    .sort((a, b) => b.importance - a.importance || b.score - a.score)
+}
+
+function buildWeMemoryCategoryResponse(memories, category, source = "ombre") {
+  const items = getWeCategoryMemories(memories, category)
+
+  return {
+    source,
+    category,
+    total: items.length,
+    items,
+  }
+}
+
 function buildWeMemoryResponse(memories, source = "ombre") {
   const now = Date.now()
   const recentSince = now - 7 * 24 * 60 * 60 * 1000
@@ -144,13 +163,15 @@ function buildWeMemoryResponse(memories, source = "ombre") {
     .filter((memory) => memory.pinned)
     .sort((a, b) => b.importance - a.importance || b.score - a.score)
   const pinnedIds = new Set(pinned.map((memory) => memory.id))
-  const categories = ["关于你", "我们之间", "一起经历过", "小小偏好"].map((name) => ({
-    name,
-    items: memories
-      .filter((memory) => !memory.pinned && categorizeMemory(memory) === name)
-      .sort((a, b) => b.importance - a.importance || b.score - a.score)
-      .slice(0, 6),
-  }))
+  const categories = WE_MEMORY_CATEGORIES.map((name) => {
+    const items = getWeCategoryMemories(memories, name)
+
+    return {
+      name,
+      total: items.length,
+      items: items.slice(0, 6),
+    }
+  })
   const recent = [...memories]
     .filter((memory) => !(source !== "ombre" && pinnedIds.has(memory.id)))
     .sort((a, b) =>
@@ -2509,11 +2530,21 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "GET" && type === "we") {
+      const category = String(req.query.category || "").trim()
+
+      if (category && !WE_MEMORY_CATEGORIES.includes(category)) {
+        return res.status(400).json({ error: "unsupported memory category" })
+      }
+
       try {
         const buckets = await fetchXiaoCMemories()
         const memories = buckets.map(normalizeMemoryBucket)
 
-        return res.status(200).json(buildWeMemoryResponse(memories, "ombre-xiaoc"))
+        return res.status(200).json(
+          category
+            ? buildWeMemoryCategoryResponse(memories, category, "ombre-xiaoc")
+            : buildWeMemoryResponse(memories, "ombre-xiaoc")
+        )
       } catch (error) {
         console.error("we memory xiaoc endpoint failed:", error)
 
@@ -2567,8 +2598,12 @@ export default async function handler(req, res) {
           })
         }
 
+        const fallbackSource = pinText ? "fallback-with-pin" : "fallback"
+
         return res.status(200).json(
-          buildWeMemoryResponse(fallbackMemories, pinText ? "fallback-with-pin" : "fallback")
+          category
+            ? buildWeMemoryCategoryResponse(fallbackMemories, category, fallbackSource)
+            : buildWeMemoryResponse(fallbackMemories, fallbackSource)
         )
       }
     }
