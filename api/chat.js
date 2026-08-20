@@ -16,6 +16,11 @@ import {
   trimList,
   trimText
 } from "../lib/aiConfig.js"
+import {
+  buildImageDescriptionPrompt,
+  buildImageUnderstandingContext,
+  normalizeImageKinds,
+} from "../lib/imageUnderstanding.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
 import {
   MOMENT_IMAGE_LIBRARY,
@@ -460,6 +465,7 @@ async function saveUserMessage(
   content,
   conversation_id,
   imageUrls = [],
+  imageKinds = [],
   fileInfo = null
 ) {
   const metadata = {}
@@ -467,6 +473,7 @@ async function saveUserMessage(
   if (imageUrls.length > 0) {
     metadata.imageUrl = imageUrls[0]
     metadata.imageUrls = imageUrls
+    metadata.imageKinds = imageKinds
   }
 
   if (fileInfo?.fileName) {
@@ -2000,6 +2007,7 @@ export default async function handler(req, res) {
       conversation_id,
       imageUrl,
       imageUrls,
+      imageKinds,
       fileName,
       fileText,
       fileMimeType,
@@ -2014,6 +2022,10 @@ export default async function handler(req, res) {
       : imageUrl
         ? [imageUrl]
         : []
+    const normalizedImageKinds = normalizeImageKinds(
+      imageKinds,
+      normalizedImageUrls.length
+    )
     const normalizedFileName = trimText(String(fileName || "").trim(), 160)
     const normalizedFileText = trimText(String(fileText || "").trim(), 12000)
     const hasFileText = Boolean(normalizedFileName && normalizedFileText)
@@ -2024,6 +2036,7 @@ const userMessageId = await saveUserMessage(
   message,
   cid,
   normalizedImageUrls,
+  normalizedImageKinds,
   normalizedFileName
     ? {
         fileName: normalizedFileName,
@@ -2187,6 +2200,7 @@ try {
 }
 
 const environmentContext = buildEnvironmentContext()
+const imageUnderstandingContext = buildImageUnderstandingContext(normalizedImageKinds)
 
 const messages = [
   {
@@ -2196,6 +2210,8 @@ ${systemPrompt}
 
 
 ${environmentContext}
+
+${imageUnderstandingContext}
 
 【Time Authority｜当前时间优先级】
 Environment 是本轮请求唯一可信的当前时间，来自服务端并已转换为用户时区。
@@ -2321,7 +2337,7 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
             })),
             {
               type: "text",
-              text: "你正在为后续聊天建立一条小C的视觉记忆笔记。先准确辨别主体类别，尤其要谨慎区分猫、狗等相似宠物；无法确定时写‘白色长毛宠物’等可确认特征，不要武断判断。请用150字以内记录主体、关键物体、可见文字、数量、颜色、位置和环境，并保留有画面依据的生活场景、关系和可观察情绪线索。只输出一段连续的第三人称纯文本，不要标题、Markdown、列表或换行，不要直接回复用户、提问、使用聊天句式、小C口吻或夸赞用户。"
+              text: buildImageDescriptionPrompt(normalizedImageKinds)
             }
           ]
         }
@@ -2329,7 +2345,7 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       AI_MODELS.imageDescription,
       { max_tokens: 220 }
     )
-      .then(result => String(result.reply || "").trim().slice(0, 150))
+      .then(result => String(result.reply || "").trim().slice(0, 180))
       .catch(err => {
         console.error("image description failed:", err)
         return ""

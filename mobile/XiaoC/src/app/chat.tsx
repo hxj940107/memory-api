@@ -52,6 +52,10 @@ import { saveFavorite } from "../lib/favoritesState";
 import { getSelectedChatModel } from "../lib/modelSettings";
 import { saveChatUsageFromResponse } from "../lib/costState";
 import {
+  getImageCompressionProfile,
+  type ImageKind,
+} from "../lib/imageUploadProfile";
+import {
   getStableMessageId,
   mergeCloudMessages,
   reconcileLocalMessageCloudId,
@@ -1479,9 +1483,14 @@ export default function ChatScreen() {
         : "请看这张图片。");
     const imagesToSend = messageToSend.imageAssets || [];
     const imageUrls = [];
+    const imageKinds: ImageKind[] = [];
 
     for (const imageToSend of imagesToSend) {
-      const maxImageSide = imagesToSend.length > 1 ? 768 : 1024;
+      const profile = getImageCompressionProfile(
+        imageToSend,
+        imagesToSend.length,
+      );
+      const maxImageSide = profile.maxLongSide;
       const width = imageToSend.width || maxImageSide;
       const height = imageToSend.height || maxImageSide;
       const longestSide = Math.max(width, height);
@@ -1501,7 +1510,7 @@ export default function ChatScreen() {
         imageToSend.uri,
         resizeAction,
         {
-          compress: imagesToSend.length > 1 ? 0.58 : 0.65,
+          compress: profile.quality,
           format: ImageManipulator.SaveFormat.JPEG,
           base64: true,
         },
@@ -1509,6 +1518,7 @@ export default function ChatScreen() {
 
       if (compressedImage.base64) {
         imageUrls.push(`data:image/jpeg;base64,${compressedImage.base64}`);
+        imageKinds.push(profile.kind);
       }
     }
 
@@ -1528,6 +1538,7 @@ export default function ChatScreen() {
         model: selectedModel.id,
         imageUrl: imageUrls[0],
         imageUrls,
+        imageKinds,
         fileName: messageToSend.fileName,
         fileText: messageToSend.fileText,
         fileMimeType: messageToSend.fileMimeType,
