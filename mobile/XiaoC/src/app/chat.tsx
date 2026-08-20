@@ -51,6 +51,12 @@ import {
 import { saveFavorite } from "../lib/favoritesState";
 import { getSelectedChatModel } from "../lib/modelSettings";
 import { saveChatUsageFromResponse } from "../lib/costState";
+import {
+  getStableMessageId,
+  mergeCloudMessages,
+  reconcileLocalMessageCloudId,
+  upsertCloudMessage,
+} from "../lib/messageSync";
 import { XiaoCColors } from "../constants/theme";
 import {
   isTreeholeDraftSaved,
@@ -1374,8 +1380,8 @@ export default function ChatScreen() {
             : false;
 
           return {
-            id: createLocalMessageId(),
-            cloudId: item.id,
+            id: String(item.id),
+            cloudId: String(item.id),
             role: item.role,
             imageUris: item.metadata?.imageUrls || (
               item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
@@ -1400,7 +1406,11 @@ export default function ChatScreen() {
         }),
       );
 
-      setMessages(restoredMessages);
+      setMessages((current) =>
+        silent
+          ? mergeCloudMessages(current, restoredMessages)
+          : restoredMessages,
+      );
       latestCloudMessageIdRef.current = data.length
         ? String(data[data.length - 1].id || "") || null
         : null;
@@ -1547,14 +1557,11 @@ export default function ChatScreen() {
       });
 
       setMessages((prev) =>
-        prev.map((item) =>
-          item.id === messageToSend.id
-            ? {
-              ...item,
-              cloudId: data.user_message_id || item.cloudId,
-              status: "sent",
-              }
-            : item,
+        reconcileLocalMessageCloudId(
+          prev,
+          messageToSend.id,
+          data.user_message_id,
+          { status: "sent" },
         ),
       );
 
@@ -1562,20 +1569,25 @@ export default function ChatScreen() {
 
       const treeholeDraft = parseTreeholeDraft(data.reply || "");
 
-      setMessages((prev) => [
-        ...prev,
+      const assistantCloudId = data.assistant_message_id
+        ? String(data.assistant_message_id)
+        : null;
+      const assistantMessage: Message = {
+        id: assistantCloudId || createLocalMessageId(),
+        cloudId: assistantCloudId || undefined,
+        role: "assistant",
+        text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
+        treeholeDraft: treeholeDraft || undefined,
+        createdAt: new Date().toISOString(),
+        status: "sent",
+      };
 
-        {
-          id: createLocalMessageId(),
-          cloudId: data.assistant_message_id || undefined,
-          role: "assistant",
-          text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
-          treeholeDraft: treeholeDraft || undefined,
-          createdAt: new Date().toISOString(),
-          status: "sent",
-        },
-      ]);
-      latestCloudMessageIdRef.current = data.assistant_message_id || null;
+      setMessages((prev) =>
+        assistantCloudId
+          ? upsertCloudMessage(prev, assistantMessage)
+          : [...prev, assistantMessage],
+      );
+      latestCloudMessageIdRef.current = assistantCloudId;
     } catch (error) {
       console.log("CHAT ERROR:", error);
 
@@ -1912,13 +1924,16 @@ export default function ChatScreen() {
             )
           )}
 
-          {messages.map((item, index) => (
-            <Fragment key={item.id}>
-              {shouldShowMessageTime(item, messages[index - 1]) && (
-                <Text style={styles.messageTime}>
-                  {formatMessageTime(item.createdAt || "")}
-                </Text>
-              )}
+          {messages.map((item, index) => {
+            const stableMessageId = getStableMessageId(item);
+
+            return (
+              <Fragment key={stableMessageId}>
+                {shouldShowMessageTime(item, messages[index - 1]) && (
+                  <Text style={styles.messageTime}>
+                    {formatMessageTime(item.createdAt || "")}
+                  </Text>
+                )}
 
               {item.role === "user" ? (
               <AnimatedMessage>
@@ -1945,7 +1960,7 @@ export default function ChatScreen() {
                           (imageUri, imageIndex) =>
                             imageUri && (
                               <Pressable
-                                key={`${item.id}_${imageIndex}`}
+                                key={`${stableMessageId}_${imageIndex}`}
                                 onPress={() =>
                                   item.status !== "sending" &&
                                   setPreviewImageUri(imageUri)
@@ -2074,7 +2089,7 @@ export default function ChatScreen() {
 	                  ) : (
 	                    getChatBubbleSegments(item.text).map((segment, segmentIndex) => (
 	                      <Pressable
-	                        key={`${item.id}_segment_${segmentIndex}`}
+	                        key={`${stableMessageId}_segment_${segmentIndex}`}
 	                        style={[
 	                          styles.aiBox,
 	                          segmentIndex > 0 && styles.aiBoxSegment,
@@ -2097,8 +2112,9 @@ export default function ChatScreen() {
                 </View>
               </AnimatedMessage>
             )}
-            </Fragment>
-          ))}
+              </Fragment>
+            );
+          })}
 
           {isTyping && <TypingDots />}
         </ScrollView>

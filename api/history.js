@@ -41,6 +41,7 @@ export default async function handler(req, res) {
       .eq("user_id", user_id)
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .range(offset, offset + limit - 1)
 
     if (error) {
