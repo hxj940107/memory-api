@@ -9,6 +9,7 @@ import {
   TREEHOLE_AUTONOMOUS_POLICY,
   trimText,
 } from "../lib/aiConfig.js"
+import { isInvalidMomentText } from "../lib/momentPublishing.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2140,6 +2141,22 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
+      if (isInvalidMomentText(candidate.text)) {
+        const { error: invalidError } = await supabase
+          .from("moment_candidates")
+          .update({
+            status: "skipped",
+            skip_reason: "候选正文未通过发布校验",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id)
+          .eq("status", "processing")
+
+        if (invalidError) throw invalidError
+        skipped += 1
+        continue
+      }
+
       const timeCheck = isMomentCandidateTimeConsistent(candidate, new Date())
 
       if (!timeCheck.valid) {

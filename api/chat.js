@@ -1,5 +1,10 @@
 import { createClient } from "@supabase/supabase-js"
 import { waitUntil } from "@vercel/functions"
+import {
+  isInvalidMomentText,
+  isMomentTechnicalDiscussion,
+  isMomentWritingRequest,
+} from "../lib/momentPublishing.js"
 import fs from "fs"
 import path from "path"
 import {
@@ -1026,9 +1031,9 @@ function shouldConsiderMoment({
     return false
   }
 
-  if (isManualMomentRequest) {
-    return true
-  }
+  if (isMomentTechnicalDiscussion(text) && !isManualMomentRequest) return false
+
+  if (isManualMomentRequest) return true
 
   if (/diary|观察日记|树洞|小号|朋友圈|存入|保存|删除|修改|合并|置顶/.test(text)) {
     return false
@@ -1039,17 +1044,6 @@ function shouldConsiderMoment({
   }
 
   return text.trim().length >= 6
-}
-
-function isMomentWritingRequest(message) {
-  const text = String(message || "").trim()
-
-  if (!text) return false
-
-  return (
-    /(发|写|来|生成|更新|补|试).{0,8}(朋友圈|动态)/.test(text) ||
-    /(朋友圈|动态).{0,8}(发|写|来|生成|更新|补|试)(一条|一下|一个)?/.test(text)
-  )
 }
 
 async function getUserMessageCount(user_id, conversation_id) {
@@ -1298,57 +1292,6 @@ function parseMomentCandidate(raw) {
       eventTime: null,
     }
   }
-}
-
-function isInvalidMomentText(text) {
-  const value = String(text || "").trim()
-
-  if (!value) return true
-
-  if (value.length > 80) return true
-
-  if (
-    /用户|对话对象|本次对话|聊天中|表达了|提到了|讨论了|总结|记录一下|报告|任务|功能说明|心理分析|情绪状态/.test(
-      value
-    )
-  ) {
-    return true
-  }
-
-  if (/^(今天|刚刚)?(我们|小C和她).*(聊了|讨论了|说了)/.test(value)) {
-    return true
-  }
-
-  return false
-}
-
-function normalizeManualMomentText(text) {
-  const value = String(text || "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim()
-
-  if (!value) return ""
-
-  const quoted =
-    value.match(/[「『"]([^」』"]{6,80})[」』"]/)?.[1] ||
-    value.match(/(?:朋友圈|动态)(?:正文|内容)?[：:]\s*([^\n]{6,80})/)?.[1] ||
-    value.match(/(?:发了|写)[：:]\s*[「『"]?([^」』"\n]{6,80})/)?.[1]
-
-  if (!quoted) return ""
-
-  return quoted.trim().slice(0, 80)
-}
-
-function getManualMomentFallback(reply) {
-  const fromReply = normalizeManualMomentText(reply)
-
-  if (fromReply && !isInvalidMomentText(fromReply)) {
-    return fromReply
-  }
-
-  return null
 }
 
 function getMomentCandidatePublishAfter() {
@@ -1749,36 +1692,11 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
 
   console.log("MOMENT CANDIDATE:", candidate)
 
-  if (!candidate.shouldPost || !candidate.text) {
-    if (!isManualMomentRequest) {
-      return null
-    }
-
-    candidate.text = getManualMomentFallback(reply)
-    if (!candidate.text) {
-      console.log("MOMENT MANUAL FALLBACK SKIPPED: no quoted moment text")
-      return null
-    }
-
-    candidate.shouldPost = true
-    candidate.image = null
-    console.log("MOMENT MANUAL FALLBACK:", candidate.text)
-  }
+  if (!candidate.shouldPost || !candidate.text) return null
 
   if (isInvalidMomentText(candidate.text)) {
-    if (!isManualMomentRequest) {
-      console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
-      return null
-    }
-
-    candidate.text = getManualMomentFallback(reply)
-    if (!candidate.text) {
-      console.log("MOMENT MANUAL INVALID FALLBACK SKIPPED: no quoted moment text")
-      return null
-    }
-
-    candidate.image = null
-    console.log("MOMENT MANUAL INVALID FALLBACK:", candidate.text)
+    console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
+    return null
   }
 
   if (!isManualMomentRequest && (!candidate.shareMode || !candidate.eventTime)) {
