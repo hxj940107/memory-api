@@ -12,6 +12,11 @@ import {
   SUMMARY_OUTPUT_MAX_TOKENS,
   buildSummaryMessages,
 } from "../lib/summaryPrompt.js";
+import { normalizeAssistantOutput } from "../lib/assistantOutput.js";
+import {
+  getSummaryTrust,
+  validateSummarySemantics,
+} from "../lib/summaryPolicy.js";
 
 const SUMMARY_QUERY_LIMIT = SUMMARY_BATCH_MAX_MESSAGES + 1
 
@@ -20,7 +25,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-async function updateSummaryWithClaude(oldSummary, newMessages, batchMessageCount) {
+async function updateSummaryWithClaude(
+  oldSummary,
+  newMessages,
+  batchMessageCount,
+  validationMessages
+) {
   const startedAt = Date.now()
   const requestMessages = buildSummaryMessages(oldSummary, newMessages)
   const inputChars = requestMessages.reduce(
@@ -43,7 +53,7 @@ async function updateSummaryWithClaude(oldSummary, newMessages, batchMessageCoun
     });
 
     const data = await response.json();
-    const summary = data?.choices?.[0]?.message?.content?.trim()
+    const summary = normalizeAssistantOutput(data?.choices?.[0]?.message).trim()
 
     console.log("AI TASK USAGE:", {
       task: "update-summary",
@@ -66,6 +76,21 @@ async function updateSummaryWithClaude(oldSummary, newMessages, batchMessageCoun
       throw new Error("Claude Summary Missing")
     }
 
+    const validation = validateSummarySemantics({
+      summary,
+      userMessages: (validationMessages || []).filter(message => message.role === "user"),
+      trustedPriorSummary: oldSummary,
+    })
+
+    if (!validation.valid) {
+      console.error("SUMMARY SEMANTIC VALIDATION REJECTED:", {
+        violationTypes: validation.violations.map(item => item.type),
+        hasExplicitUserRelationshipEndEvidence:
+          validation.hasExplicitUserRelationshipEndEvidence,
+      })
+      throw new Error("Summary semantic validation failed")
+    }
+
     return summary;
   } catch (error) {
     console.error("AI TASK FAILED:", {
@@ -85,14 +110,19 @@ async function updateSummaryWithClaude(oldSummary, newMessages, batchMessageCoun
 
 async function summarizeBatch(oldSummary, batch) {
   if (!batch.oversizedSingleMessage) {
-    return updateSummaryWithClaude(oldSummary, batch.formatted, batch.messages.length)
+    return updateSummaryWithClaude(
+      oldSummary,
+      batch.formatted,
+      batch.messages.length,
+      batch.messages
+    )
   }
 
   const chunks = splitOversizedSummaryMessage(batch.messages[0])
   let summary = oldSummary
 
   for (const chunk of chunks) {
-    summary = await updateSummaryWithClaude(summary, chunk, 1)
+    summary = await updateSummaryWithClaude(summary, chunk, 1, batch.messages)
   }
 
   return summary
@@ -112,7 +142,7 @@ export default async function handler(req, res) {
 
     const { data: summaryRow, error: summaryError } = await supabase
       .from("conversation_summary")
-      .select("summary,last_summarized_at")
+      .select("summary,last_summarized_at,updated_at")
       .eq("conversation_id", conversation_id)
       .maybeSingle();
 
@@ -122,6 +152,21 @@ export default async function handler(req, res) {
 
     const oldSummary = summaryRow?.summary || "";
     const lastSummarizedAt = summaryRow?.last_summarized_at;
+    const summaryTrust = getSummaryTrust(summaryRow)
+
+    if (oldSummary && !summaryTrust.trusted) {
+      console.warn("LEGACY SUMMARY UPDATE BLOCKED:", {
+        conversationId: conversation_id,
+        reason: summaryTrust.reason,
+        updatedAt: summaryRow.updated_at || null,
+        checkpointPreserved: true,
+      })
+      return res.status(409).json({
+        error: "Legacy conversation summary requires a clean rebuild",
+        reason: summaryTrust.reason,
+        checkpointPreserved: true,
+      })
+    }
 
     if (oldSummary.length > SUMMARY_EXISTING_MAX_CHARS) {
       console.error("SUMMARY SAFETY BLOCK:", {
@@ -159,7 +204,11 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, message: "No new messages." });
     }
 
-    const batch = selectSummaryBatch(messages)
+    const sanitizedMessages = messages.map(message => ({
+      ...message,
+      content: normalizeAssistantOutput(message),
+    }))
+    const batch = selectSummaryBatch(sanitizedMessages)
 
     if (!batch.messages.length) {
       throw new Error("Summary batch selection returned no messages")

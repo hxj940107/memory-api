@@ -9,6 +9,7 @@ import {
   TREEHOLE_AUTONOMOUS_POLICY,
   trimText,
 } from "../lib/aiConfig.js"
+import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 
 const supabase = createClient(
@@ -495,7 +496,7 @@ async function callSmallLLM(messages, options = {}) {
     )
   }
 
-  return String(data?.choices?.[0]?.message?.content || "").trim()
+  return normalizeAssistantOutput(data?.choices?.[0]?.message).trim()
 }
 
 function cleanMomentReply(raw) {
@@ -740,7 +741,7 @@ async function getRecentMomentChatContext(user_id) {
       const metadata = message.metadata || {}
       const imageContext = metadata.imageDescription || metadata.visionSummary
       const content = [
-        trimText(message.content, 220),
+        trimText(normalizeAssistantOutput(message), 220),
         imageContext ? `[图片背景信息] ${trimText(imageContext, 180)}` : "",
       ]
         .filter(Boolean)
@@ -1244,7 +1245,10 @@ async function getRecentInactivityContext(task) {
 
   if (error) throw error
 
-  const messages = [...(data || [])].reverse()
+  const messages = [...(data || [])].reverse().map(message => ({
+    ...message,
+    content: normalizeAssistantOutput(message),
+  }))
   const fallback = task.payload?.last_conversation_state || "open"
 
   return {
@@ -1411,7 +1415,7 @@ async function getAutonomousTreeholeContext(user_id) {
     .map((message) => {
       const metadata = message.metadata || {}
       const imageContext = metadata.imageDescription || metadata.visionSummary
-      const content = trimText(message.content, 700)
+      const content = trimText(normalizeAssistantOutput(message), 700)
       return `${message.role === "user" ? "她" : "小C"}：${content}${
         imageContext ? `\n[图片背景信息]：${trimText(imageContext, 220)}` : ""
       }`

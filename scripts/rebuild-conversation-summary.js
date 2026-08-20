@@ -14,8 +14,14 @@ import {
   SUMMARY_OUTPUT_MAX_TOKENS,
   buildSummaryMessages,
 } from "../lib/summaryPrompt.js"
+import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import {
+  STRICT_SUMMARY_PROMPT_ENABLED_AT,
+  getSummaryTrust,
+  validateSummarySemantics,
+} from "../lib/summaryPolicy.js"
 
-export const REBUILD_CONVERSATION_ID = "chat_1786454918423"
+export const REBUILD_CONVERSATION_ID = "chat_1783598999283"
 export const REBUILT_SUMMARY_MAX_CHARS = 1500
 const MESSAGE_PAGE_SIZE = 500
 const REBUILD_PROVIDER_ORDER = ["Google", "Azure", "Anthropic"]
@@ -33,6 +39,22 @@ export function validateRebuiltSummary(summary) {
     nonEmpty: chars > 0,
     withinLengthLimit: chars > 0 && chars <= REBUILT_SUMMARY_MAX_CHARS,
     applyEligible: chars > 0 && chars <= REBUILT_SUMMARY_MAX_CHARS,
+  }
+}
+
+function createSummaryDiff(oldSummary, rebuiltSummary) {
+  const oldLines = String(oldSummary || "").split("\n")
+  const rebuiltLines = String(rebuiltSummary || "").split("\n")
+  const removed = oldLines.filter(line => line && !rebuiltLines.includes(line))
+  const added = rebuiltLines.filter(line => line && !oldLines.includes(line))
+
+  return {
+    removed,
+    added,
+    unified: [
+      ...removed.map(line => `- ${line}`),
+      ...added.map(line => `+ ${line}`),
+    ].join("\n"),
   }
 }
 
@@ -95,32 +117,47 @@ function requireEnvironment() {
 }
 
 async function loadSnapshot(supabase, conversationId) {
-  const [summaryResult, latestMessageResult] = await Promise.all([
-    supabase
-      .from("conversation_summary")
-      .select("summary,last_summarized_at,updated_at")
-      .eq("conversation_id", conversationId)
-      .maybeSingle(),
-    supabase
-      .from("messages")
-      .select("id,created_at")
-      .eq("conversation_id", conversationId)
-      .eq("user_id", APP_USER.defaultUserId)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ])
+  const summaryResult = await supabase
+    .from("conversation_summary")
+    .select("summary,last_summarized_at,updated_at")
+    .eq("conversation_id", conversationId)
+    .maybeSingle()
 
   if (summaryResult.error) throw summaryResult.error
-  if (latestMessageResult.error) throw latestMessageResult.error
   if (!summaryResult.data) throw new Error("Conversation summary not found")
-  if (!latestMessageResult.data) throw new Error("Conversation has no messages")
+
+  const checkpoint = summaryResult.data.last_summarized_at
+  if (!checkpoint) throw new Error("Conversation summary checkpoint missing")
+
+  const boundaryResult = await supabase
+    .from("messages")
+    .select("id,created_at")
+    .eq("conversation_id", conversationId)
+    .eq("user_id", APP_USER.defaultUserId)
+    .lte("created_at", checkpoint)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (boundaryResult.error) throw boundaryResult.error
+  if (!boundaryResult.data) throw new Error("Conversation has no messages at checkpoint")
 
   return {
     originalSummary: summaryResult.data,
-    lastMessage: latestMessageResult.data,
+    lastMessage: boundaryResult.data,
   }
+}
+
+async function loadLegacyInventory(supabase) {
+  const { data, error } = await supabase
+    .from("conversation_summary")
+    .select("conversation_id,last_summarized_at,updated_at")
+    .lt("updated_at", STRICT_SUMMARY_PROMPT_ENABLED_AT)
+    .order("updated_at", { ascending: true })
+
+  if (error) throw error
+  return data || []
 }
 
 async function loadSnapshotMessages(supabase, conversationId, snapshotLastMessage) {
@@ -199,7 +236,7 @@ async function requestSummary(oldSummary, conversationData) {
     throw error
   }
 
-  const summary = data?.choices?.[0]?.message?.content?.trim()
+  const summary = normalizeAssistantOutput(data?.choices?.[0]?.message).trim()
   if (!summary) throw new Error("Summary rebuild model response missing")
 
   return {
@@ -240,11 +277,23 @@ function sumMetric(calls, key) {
 
 export async function rebuildSummary({ supabase, conversationId, outputPath }) {
   const startedAt = Date.now()
-  const snapshot = await loadSnapshot(supabase, conversationId)
-  const messages = await loadSnapshotMessages(supabase, conversationId, snapshot.lastMessage)
+  const [snapshot, legacyInventory] = await Promise.all([
+    loadSnapshot(supabase, conversationId),
+    loadLegacyInventory(supabase),
+  ])
+  const rawMessages = await loadSnapshotMessages(
+    supabase,
+    conversationId,
+    snapshot.lastMessage
+  )
+  const messages = rawMessages.map(message => ({
+    ...message,
+    content: normalizeAssistantOutput(message),
+  }))
   const originalSummary = String(snapshot.originalSummary.summary || "")
   const batches = []
   let rebuiltSummary = ""
+  let processedMessages = []
   let offset = 0
 
   while (offset < messages.length) {
@@ -252,8 +301,21 @@ export async function rebuildSummary({ supabase, conversationId, outputPath }) {
     if (!batch.messages.length) throw new Error("Summary rebuild selected an empty batch")
 
     const summaryCharsBefore = rebuiltSummary.length
+    const priorSummary = rebuiltSummary
     const result = await summarizeLogicalBatch(rebuiltSummary, batch)
     rebuiltSummary = result.summary
+    processedMessages = [...processedMessages, ...batch.messages]
+    const semanticValidation = validateSummarySemantics({
+      summary: rebuiltSummary,
+      userMessages: processedMessages.filter(message => message.role === "user"),
+      trustedPriorSummary: priorSummary,
+    })
+
+    if (!semanticValidation.valid) {
+      const error = new Error("Rebuilt summary failed semantic validation")
+      error.details = semanticValidation
+      throw error
+    }
     const first = batch.messages[0]
     const last = batch.messages[batch.messages.length - 1]
 
@@ -275,27 +337,45 @@ export async function rebuildSummary({ supabase, conversationId, outputPath }) {
       outputTokens: sumMetric(result.calls, "outputTokens"),
       durationMs: sumMetric(result.calls, "durationMs"),
       calls: result.calls,
+      semanticValidation,
     })
 
     offset += batch.messages.length
   }
 
   const validation = validateRebuiltSummary(rebuiltSummary)
+  const semanticValidation = validateSummarySemantics({
+    summary: rebuiltSummary,
+    userMessages: messages.filter(message => message.role === "user"),
+  })
+  const summaryTrust = getSummaryTrust(snapshot.originalSummary)
   const artifact = {
-    artifactVersion: 1,
+    artifactVersion: 2,
     mode: "read-only-rebuild",
     generatedAt: new Date().toISOString(),
     conversationId,
     source: {
+      oldSummary: originalSummary,
       originalSummaryChars: originalSummary.length,
       originalSummarySha256: hashText(originalSummary),
       originalLastSummarizedAt: snapshot.originalSummary.last_summarized_at,
       originalUpdatedAt: snapshot.originalSummary.updated_at,
+      trust: summaryTrust,
+    },
+    legacyScope: {
+      strictPromptEnabledAt: STRICT_SUMMARY_PROMPT_ENABLED_AT,
+      classificationBasis: "conversation_summary.updated_at before strict prompt commit time",
+      deploymentTimeProven: false,
+      count: legacyInventory.length,
+      conversations: legacyInventory,
     },
     snapshot: {
       messageCount: messages.length,
+      firstMessageId: messages[0]?.id || null,
+      firstCheckpoint: messages[0]?.created_at || null,
       finalMessageId: snapshot.lastMessage.id,
       finalCheckpoint: snapshot.lastMessage.created_at,
+      assistantMessagesSanitized: true,
     },
     policy: {
       maxMessagesPerBatch: SUMMARY_BATCH_MAX_MESSAGES,
@@ -315,6 +395,8 @@ export async function rebuildSummary({ supabase, conversationId, outputPath }) {
     result: {
       summary: rebuiltSummary,
       ...validation,
+      semanticValidation,
+      diff: createSummaryDiff(originalSummary, rebuiltSummary),
       applySupportedByThisScript: false,
     },
   }

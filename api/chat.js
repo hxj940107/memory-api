@@ -27,6 +27,8 @@ import {
   normalizeImageKinds,
 } from "../lib/imageUnderstanding.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
+import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import { getSummaryTrust } from "../lib/summaryPolicy.js"
 import {
   MOMENT_IMAGE_LIBRARY,
   getMomentImagePromptCatalog,
@@ -516,12 +518,16 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
     .limit(limit)
 
   if (!data) return []
-  return data.reverse().map(item => ({
-    role: item.role,
-    content: item.metadata?.imageDescription || item.metadata?.visionSummary
-      ? `${item.content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
-      : item.content
-  }))
+  return data.reverse().map(item => {
+    const content = normalizeAssistantOutput(item)
+
+    return {
+      role: item.role,
+      content: item.metadata?.imageDescription || item.metadata?.visionSummary
+        ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
+        : content
+    }
+  })
 }
 
 function shouldUpdateRollingSummary(messageCount, historySize) {
@@ -549,7 +555,10 @@ async function getDiaryContextMessages(user_id, conversation_id) {
     .limit(CONTEXT_BUDGET.diaryContextMessages)
 
   if (!data) return []
-  return data.reverse()
+  return data.reverse().map(item => ({
+    ...item,
+    content: normalizeAssistantOutput(item),
+  }))
 }
 
 async function getMomentContextMessages(user_id, conversation_id, limit = CONTEXT_BUDGET.momentContextMessages) {
@@ -562,7 +571,10 @@ async function getMomentContextMessages(user_id, conversation_id, limit = CONTEX
     .limit(limit)
 
   if (!data) return []
-  return data.reverse()
+  return data.reverse().map(item => ({
+    ...item,
+    content: normalizeAssistantOutput(item),
+  }))
 }
 
 function formatMessagesForDiaryContext(messages = []) {
@@ -1905,7 +1917,7 @@ async function callLLM(messages, model = AI_MODELS.chat, options = {}) {
   }
 
   return {
-    reply: data?.choices?.[0]?.message?.content || "...",
+    reply: normalizeAssistantOutput(data?.choices?.[0]?.message) || "...",
     usage: data?.usage || {},
     raw: data
   }
@@ -2098,14 +2110,24 @@ try {
 
   const { data } = await supabase
     .from("conversation_summary")
-    .select("summary")
+    .select("summary,updated_at")
     .eq("conversation_id", cid)
     .maybeSingle();
 
-  summaryMemory = trimText(
-    data?.summary || "",
-    CONTEXT_BUDGET.summaryChars
-  );
+  const summaryTrust = getSummaryTrust(data)
+
+  if (summaryTrust.trusted) {
+    summaryMemory = trimText(
+      normalizeAssistantOutput({ role: "assistant", content: data?.summary || "" }),
+      CONTEXT_BUDGET.summaryChars
+    );
+  } else if (data?.summary) {
+    console.warn("SUMMARY INJECTION SKIPPED:", {
+      conversationId: cid,
+      reason: summaryTrust.reason,
+      updatedAt: data.updated_at || null,
+    })
+  }
 
   if (attributionCorrectionContext) {
     summaryMemory = "";

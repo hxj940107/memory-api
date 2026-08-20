@@ -9,7 +9,7 @@ import {
   validateRebuiltSummary,
 } from "../scripts/rebuild-conversation-summary.js"
 
-assert.equal(REBUILD_CONVERSATION_ID, "chat_1786454918423")
+assert.equal(REBUILD_CONVERSATION_ID, "chat_1783598999283")
 assert.equal(hashText("same"), hashText("same"))
 assert.notEqual(hashText("same"), hashText("different"))
 
@@ -38,11 +38,13 @@ class FakeQuery {
     this.orders = []
     this.rangeValue = null
     this.limitValue = null
+    this.single = false
   }
 
   select() { return this }
   eq() { return this }
   lte() { return this }
+  lt() { return this }
   order(column, options) {
     this.orders.push({ column, ascending: options?.ascending !== false })
     return this
@@ -55,20 +57,32 @@ class FakeQuery {
     this.rangeValue = [from, to]
     return this
   }
-  maybeSingle() { return this }
+  maybeSingle() {
+    this.single = true
+    return this
+  }
 
   then(resolve, reject) {
     let result
 
     if (this.table === "conversation_summary") {
-      result = {
-        data: {
-          summary: sourceSummary,
-          last_summarized_at: "2026-08-17T14:27:42.012292Z",
-          updated_at: "2026-08-17T14:30:16.379Z",
-        },
-        error: null,
-      }
+      result = this.single
+        ? {
+            data: {
+              summary: sourceSummary,
+              last_summarized_at: sourceMessages[sourceMessages.length - 1].created_at,
+              updated_at: "2026-07-28T15:28:17.090Z",
+            },
+            error: null,
+          }
+        : {
+            data: [{
+              conversation_id: REBUILD_CONVERSATION_ID,
+              last_summarized_at: sourceMessages[sourceMessages.length - 1].created_at,
+              updated_at: "2026-07-28T15:28:17.090Z",
+            }],
+            error: null,
+          }
     } else if (this.limitValue === 1 && !this.rangeValue) {
       const latest = sourceMessages[sourceMessages.length - 1]
       result = { data: { id: latest.id, created_at: latest.created_at }, error: null }
@@ -113,6 +127,9 @@ try {
   const savedArtifact = JSON.parse(readFileSync(outputPath, "utf8"))
 
   assert.equal(artifact.source.originalSummarySha256, hashText(sourceSummary))
+  assert.equal(artifact.source.oldSummary, sourceSummary)
+  assert.equal(artifact.source.trust.reason, "legacy_prompt")
+  assert.equal(artifact.legacyScope.count, 1)
   assert.equal(artifact.snapshot.messageCount, 55)
   assert.equal(artifact.snapshot.finalMessageId, 55)
   assert.equal(artifact.totals.batchCount, 2)
@@ -125,6 +142,7 @@ try {
   assert.equal(artifact.totals.outputTokens, 203)
   assert.equal(artifact.result.applyEligible, true)
   assert.equal(artifact.result.applySupportedByThisScript, false)
+  assert.equal(artifact.result.semanticValidation.valid, true)
   assert.deepEqual(savedArtifact, artifact)
 } finally {
   globalThis.fetch = originalFetch
