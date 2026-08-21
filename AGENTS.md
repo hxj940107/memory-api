@@ -37,53 +37,74 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 ## 当前进程
 
-- Moments 朋友圈功能已经进入移动端主线。
-- 用户发布朋友圈后，小C不会立刻互动，而是通过 `moment_xiaoc_activity` 按时间看到并判断。
-- 小C的朋友圈判断已经支持 `none`、`like`、`comment`、`like_and_comment`、`private_follow_up`。
-- 当前已完成公开互动执行：小C判断为点赞或评论时，会实际更新朋友圈点赞数或写入小C评论。
-- `private_follow_up` 当前只记录为私下跟进意图，还没有接入聊天里的主动私聊。
-- Moments 互动提醒已完成第一版：
-  - Supabase 需要存在 `moment_interaction_state` 表。
-  - 后端 `type=moment_interactions` 可返回未读互动和标记已读。
-  - 左侧栏 Moments 入口会因小C点赞、评论、回复显示红点。
-  - Moments 页面顶部会显示“X条新消息”轻量胶囊。
-  - 点击胶囊进入唯一的朋友圈互动消息页，默认展示本次全部新互动。
-  - “查看全部互动消息”会在当前页面加载并合并历史互动，不再跳转第二个列表页。
-  - 每条互动同时展示小C、互动行为、时间，以及对应朋友圈的图片缩略图或文字摘要。
-  - 点击互动进入对应朋友圈详情；从详情返回时回到互动消息列表。
-  - 进入互动页后标记已读，返回 Moments 后顶部胶囊和侧栏红点消失。
-- 用户朋友圈统一显示账户当前设置昵称，不继续展示发布时保存的旧昵称。
-- 小C点赞用户朋友圈时，Feed 会返回 `xiaocLiked`，复用现有红心和点赞昵称区域展示“小C”。
-- 小C朋友圈发布已改为“生活上下文 → 候选内容 → 合适时机发布”的方向，不把朋友圈当作每日打卡；允许无内容时不发、允许纯文字，配图必须与主题、时间和天气一致。
-- 共享相册已完成第一阶段：
-  - 移动端新增共享相册入口，可由用户主动上传、编辑标签、设置是否允许小C用于朋友圈，并支持软删除。
-  - 相册原图保存在私有 Supabase Storage `album-images`；App 通过短时签名 URL 展示。
-  - 已被朋友圈使用的相册图片会保留历史引用；从共享相册移除后只是不再参与后续选图，不会让旧朋友圈丢图。
-  - 小C选图只读取用户手动填写的描述和标签，不把相册原图发送给模型，也不额外调用视觉模型判断分类。
-  - 分类支持多选：生活、城市、旅行、自然、美食、咖啡、动物、家、纪念。
-  - 时间标签支持：清晨、上午、午后、傍晚、夜晚、深夜；天气独立为晴天、阴天、雨天、雪天或不限；关系标签支持自己、和小天使、一起出门、共同回忆。
-  - 小C朋友圈选图会综合全部分类、时间、天气、关系标签、描述、近期使用记录，避免只读取单一主分类或短期重复使用同一张图。
-  - 数据库仍保留 `category` 和旧 `categories` 兼容路径；新数据以 `categories[]` 多选结果为准，同时把首个分类写入 `category` 兼容旧逻辑。
-- 以上 Moments 互动链路已 push；当前正在等待新发朋友圈由小C按计划时间查看并互动后做完整真机验证。
-- 主动私聊按以下优先级推进：
-  1. 朋友圈 `private_follow_up` 私聊。
-  2. 聊天里的计划/回访，例如“剪头发后问剪好了吗”。
-  3. 久未对话后的主动靠近。
-  4. 情绪状态延迟关心。
-- 主动私聊第一版已开始实现：新增 `xiaoc_proactive_tasks` 队列，已接入 `moment_private_follow_up` 和 `plan_follow_up`。
-- 当小C判断朋友圈为 `private_follow_up` 时，会创建主动私聊任务；到期后由定时检查生成一条克制的私聊消息，并写入最近聊天。
-- 当用户在聊天里明确提到近期生活计划或预约，例如剪头发、医院、面试、带榴莲复查等，会异步创建 `plan_follow_up` 任务；到期后小C会自然回问一句。
-- 部署前需要先在 Supabase 执行 `supabase_xiaoc_proactive_tasks.sql`，创建 `xiaoc_proactive_tasks` 表，并给 `moment_xiaoc_activity` 添加 `private_follow_up_task_id`。
-- 深夜树洞已完成新一阶段改造：
-  - 小C可以通过主动任务自主更新树洞，每次根据近期聊天与少量近期树洞决定写入 `0–3` 条；没有值得记录的内容时允许不更新。
-  - 当前主动更新测试间隔约为 `24` 小时，后续稳定后可调整为更自然的 `48–72` 小时。
-  - 主动判断只读取最近有限聊天上下文与最近少量树洞，不会随着历史增长反复读取完整树洞。
-  - 树洞页面新增低存在感“催更”入口；点击后由小C自行决定更新 `0–3` 条，不再依赖聊天中识别“更新树洞”等固定说法。
-  - 催更没有写入内容时，页面显示轻量提示；生成内容直接进入树洞，不在聊天页输出正文。
-  - 新树洞沿用现有未读状态与红点提醒，最新内容排在前面。
-  - 树洞长按管理已支持“置顶/取消置顶、删除、取消”；删除使用 iOS 红色操作并二次确认。
-  - 同一时间只保留一条置顶；置顶状态使用 `treehole_entries.pinned` 持久化，不需要新增数据库字段。
-  - 树洞长按管理和催更流程已经完成真机验证。
+- 手机 App 已形成聊天、历史会话、Memory、Moments、共享相册、深夜树洞和 Wife Observation Diary 的主体验框架。
+
+- Moments 朋友圈已进入稳定迭代阶段：
+  - 用户发布朋友圈后立即创建 `moment_xiaoc_activity`，小C随机等待约 `5–10` 分钟后看到并处理。
+  - 判断支持 `none`、`like`、`comment`、`like_and_comment`、`private_follow_up`。
+  - 点赞、评论和 `private_follow_up` 都在 decision 后立即执行；朋友圈私聊不再创建二阶段延迟 proactive task。
+  - `private_follow_up` 使用 message ID 做幂等保护；旧的 pending `moment_private_follow_up` 任务有部署兼容处理，避免重复发送。
+  - activity worker 按分钟消费到期事件；没有到期事件时不调用模型。
+  - 朋友圈生成区分即时记录和延迟分享，明确区分 `event_time` 与 `publish_time`，避免上午使用错误的昨夜即时语境。
+  - Moments 互动提醒已完成：侧栏红点、页面顶部新互动胶囊、互动列表、对应朋友圈预览、进入详情及已读状态都已接通。
+  - 用户昵称、Feed 中小C点赞状态、评论和回复展示均已接入。
+
+- 主动私聊已形成独立任务链路：
+  - `plan_follow_up` 可以从聊天中的明确计划或预约生成，例如剪头发、医院、面试、带榴莲复查等。
+  - 回访时间不再只靠固定程序间隔；模型结合用户时区、计划时间和语境给出合理执行时间。
+  - 久未聊天后的主动靠近已接入，并区分早晨、白天、晚间语境；静默时段为 `23:30–07:00`。
+  - 朋友圈 `private_follow_up` 属于 Moments 当场动作，不走上述二阶段主动任务。
+
+- 聊天消息同步与附件体验已完善：
+  - 支持图片和文件附件；图片可在发送前后打开预览，历史记录刷新后仍能恢复显示。
+  - 云端 `message.id` 是稳定身份，本地临时消息只在尚未获得云端 ID 时使用 local ID。
+  - HTTP 回调、30 秒主动消息 polling、AppState/focus refresh 统一按 ID merge/upsert，已修复 assistant 和 user message 的临时重复。
+  - Claude 多段气泡继续使用稳定的 message ID 和 segment index；后台同步不再让整页重新入场或跳动。
+  - 图片当前轮由 Sonnet 直接接收原始 multimodal content；Haiku 并行生成短期视觉描述，后续轮只使用 description。
+  - 截图与普通照片使用不同压缩策略；朋友圈和聊天截图会保留 UI 层级，避免把头像、评论头像或按钮误认为正文配图。
+
+- 长期记忆与 Memory UI 已完成一轮整理：
+  - Ombre memory extraction 已统一为小C关系视角：提到用户使用“她”，避免“用户画像”式语言。
+  - Memory 首页保留简洁布局，各分类增加“查看全部”，完整列表支持查看、钉选和删除。
+  - 35 条含“用户”称呼的历史 memory 已通过 preview、冲突检查、正式 apply 和写后校验完成安全迁移，并保留 rollback artifact。
+  - 核心 PIN 已从旧 5 条切换为重新整理的 6 条；旧 5 条保留但已 unpin，新 6 条全部 pinned。
+  - 重要日期、关系里程碑等 Protected Memory schema 尚未实施，后续应单独设计。
+
+- Core Memory Snapshot 第一阶段已部署并验证：
+  - conversation 第一次需要 Core Memory 时读取当时完整的 6 条 PIN，确定性原样组合，不调用模型总结，也不受旧 `pinMemoryChars = 700` 截断。
+  - snapshot、SHA-256 hash、创建时间和 source bucket IDs 按 `conversation_id` 持久化在 `conversation_summary`。
+  - 同一 conversation 后续只读取持久化 snapshot；PIN 后续变化不会影响旧窗口，新窗口使用创建时最新 PIN。
+  - 支持历史窗口 lazy initialization、Vercel 冷启动和并发首次请求；Ombre 首次失败时不会写入空 snapshot。
+
+- 主聊天 Prompt Caching 第二阶段已部署：
+  - 稳定前缀由 `system.md` 人格、Core Memory Snapshot、固定时间规则和固定项目/关系规则组成。
+  - 当前时间、summary、普通动态 memory、recent messages、本轮用户消息和图片全部位于 cache breakpoint 之后。
+  - OpenRouter 主聊天使用 Anthropic-compatible explicit prompt caching，TTL 为 `1h`，并以 `conversation_id` 作为 `session_id` 保持 provider affinity。
+  - usage 日志记录 input、cache write、cache read、output、cost 和 upstream inference cost；Haiku/background 调用保持隔离。
+
+- 动态 Memory retrieval 已增加 Core 排除：
+  - 当前 snapshot 的 6 个 source bucket 永远不再作为动态 Memory 注入。
+  - 被新 Core 取代的旧 5 PIN bucket 也按明确 ID 排除，但不会删除 Ombre 数据。
+  - 过滤只使用 bucket ID 对应的精确标题、正文或明确截断前缀，不做每轮 embedding/语义相似度去重。
+  - 工作、旅行、当天事件、榴莲等真正动态相关的普通 memory 继续保留；排除信息读取失败时，本轮宁可跳过动态 Memory，也不重复注入 Core 内容。
+
+- 滚动摘要与 token 安全已加固：
+  - `update-summary` 从最早未摘要消息开始分批处理，不做尾部截断；成功保存后才推进 checkpoint。
+  - 摘要模型使用 `max_tokens: 1800`，长期记忆判断使用 `max_tokens: 220`。
+  - 后台 AI 调用记录任务、模型、输入规模、usage、耗时和成功状态，不记录完整私人正文。
+  - 异常历史 conversation summary 已通过只读 rebuild 和 final compression 生成本地 artifact；线上替换必须继续遵循先验证、后一次性 apply 的原则。
+
+- 深夜树洞已完成主动更新、页面催更、未读红点、置顶和删除管理：
+  - 小C每次可根据有限近期上下文决定写入 `0–3` 条，没有值得记录的内容时允许不更新。
+  - 页面“催更”由小C自行判断，不依赖聊天中的固定口令；生成内容直接进入树洞，不在聊天页输出正文。
+  - 同一时间只保留一条置顶；长按管理和催更流程已经完成真机验证。
+
+- 共享相册第一阶段已完成：
+  - 原图保存在私有 Supabase Storage `album-images`，App 通过短时签名 URL 展示，移除使用软删除。
+  - 用户可编辑多选分类、时间、天气、关系标签和描述，并控制是否允许小C用于朋友圈。
+  - 小C选图只读取用户填写的描述和标签，不额外调用视觉模型；旧朋友圈图片引用不会因相册移除而丢失。
+
+- 设置页 token 花费已改为优先读取 OpenRouter 当前 key 的真实月度 usage，同时保留本地统计作为降级路径。
 
 ## 伴侣人格
 
