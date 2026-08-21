@@ -1,0 +1,81 @@
+import assert from "node:assert/strict"
+import fs from "node:fs"
+import {
+  buildCachedPromptMessages,
+  buildPromptCacheUsageLog,
+} from "../lib/promptCaching.js"
+
+{
+  const messages = buildCachedPromptMessages({
+    persona: "PERSONA-STABLE",
+    coreMemorySnapshot: "CORE-SNAPSHOT-STABLE",
+    fixedRules: "FIXED-RULES-STABLE",
+    dynamicContext: "CURRENT-TIME-2026-08-21 SUMMARY-DYNAMIC IMAGE-DYNAMIC",
+  })
+  const stable = JSON.stringify(messages[0])
+  const dynamic = JSON.stringify(messages[1])
+
+  assert.match(stable, /PERSONA-STABLE/)
+  assert.match(stable, /CORE-SNAPSHOT-STABLE/)
+  assert.match(stable, /FIXED-RULES-STABLE/)
+  assert.doesNotMatch(stable, /CURRENT-TIME|SUMMARY-DYNAMIC|IMAGE-DYNAMIC/)
+  assert.match(dynamic, /CURRENT-TIME-2026-08-21/)
+  assert.equal(messages[0].content.at(-1).cache_control.type, "ephemeral")
+  assert.equal(messages[0].content.at(-1).cache_control.ttl, "1h")
+  assert.equal(messages[1].content.cache_control, undefined)
+}
+
+{
+  const usage = buildPromptCacheUsageLog({
+    prompt_tokens: 7000,
+    completion_tokens: 120,
+    total_tokens: 7120,
+    cost: 0.021,
+    cost_details: { upstream_inference_cost: 0.019 },
+    prompt_tokens_details: {
+      cached_tokens: 5000,
+      cache_write_tokens: 0,
+    },
+  })
+
+  assert.deepEqual(usage, {
+    inputTokens: 7000,
+    normalInputTokensDerived: 2000,
+    cacheReadTokens: 5000,
+    cacheWriteTokens: 0,
+    outputTokens: 120,
+    totalTokens: 7120,
+    cost: 0.021,
+    upstreamInferenceCost: 0.019,
+  })
+}
+
+{
+  const chat = fs.readFileSync("api/chat.js", "utf8")
+  const fixedStart = chat.indexOf("const fixedPromptRules")
+  const dynamicStart = chat.indexOf("const dynamicPromptContext")
+  const cachedBuildStart = chat.indexOf("const cachedPromptMessages")
+  const fixedSource = chat.slice(fixedStart, dynamicStart)
+  const dynamicSource = chat.slice(dynamicStart, cachedBuildStart)
+
+  assert.ok(fixedStart >= 0 && dynamicStart > fixedStart && cachedBuildStart > dynamicStart)
+  assert.doesNotMatch(
+    fixedSource,
+    /environmentContext|imageUnderstandingContext|summaryMemory|dynamicMemory|stableMemory|diaryContext|webSearch/
+  )
+  assert.match(dynamicSource, /environmentContext/)
+  assert.match(dynamicSource, /imageUnderstandingContext/)
+  assert.match(dynamicSource, /summaryMemory/)
+  assert.match(dynamicSource, /dynamicMemory/)
+  assert.match(dynamicSource, /stableMemory/)
+  assert.match(dynamicSource, /diaryContext/)
+  assert.match(dynamicSource, /webSearch/)
+  assert.match(chat, /const mainChatOptions = \{ session_id: cid \}/)
+  assert.match(chat, /callLLM\(messages, selectedChatModel, mainChatOptions\)/)
+  assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)
+  assert.match(chat, /dynamicPromptContext = `\$\{environmentContext\}/)
+  assert.match(chat, /buildCachedPromptMessages\(\{/)
+  assert.doesNotMatch(chat, /callLLM\([\s\S]{0,300}AI_MODELS\.imageDescription,[\s\S]{0,100}session_id/)
+}
+
+console.log("prompt caching tests passed")

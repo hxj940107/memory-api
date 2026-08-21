@@ -148,7 +148,7 @@ test("chat persists the client message identity before calling the model", () =>
   const source = readFileSync("api/chat.js", "utf8")
   const metadataWrite = source.indexOf("metadata.clientMessageId = clientMessageId")
   const userSave = source.indexOf("const userMessageId = await saveUserMessage(")
-  const modelCall = source.indexOf("let llm = await callLLM(messages, selectedChatModel)")
+  const modelCall = source.indexOf("let llm = await callLLM(messages, selectedChatModel")
 
   assert.ok(metadataWrite >= 0)
   assert.ok(userSave >= 0)

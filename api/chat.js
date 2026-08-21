@@ -31,6 +31,10 @@ import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
 import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
 import {
+  buildCachedPromptMessages,
+  buildPromptCacheUsageLog,
+} from "../lib/promptCaching.js"
+import {
   MOMENT_IMAGE_LIBRARY,
   getMomentImagePromptCatalog,
   isMomentImageCompatible,
@@ -2189,22 +2193,20 @@ try {
 const environmentContext = buildEnvironmentContext()
 const imageUnderstandingContext = buildImageUnderstandingContext(normalizedImageKinds)
 
-const messages = [
-  {
-    role: "system",
-    content: `
-${systemPrompt}
-
-
-${environmentContext}
-
-${imageUnderstandingContext}
-
-【Time Authority｜当前时间优先级】
+const fixedPromptRules = `【Time Authority｜当前时间优先级】
 Environment 是本轮请求唯一可信的当前时间，来自服务端并已转换为用户时区。
 历史消息、summary、memory 中出现的“晚安、晚上、刚才、现在”等都只属于当时语境，不能用来推断本轮当前时间。
 如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
 白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
+
+【Project Context｜项目上下文】
+当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
+Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
+深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。`
+
+const dynamicPromptContext = `${environmentContext}
+
+${imageUnderstandingContext}
 
 【Web Search Policy｜联网边界】
 ${webSearch
@@ -2212,11 +2214,6 @@ ${webSearch
   : `普通聊天和可凭稳定知识回答的问题不要联网。
 只有当当前问题依赖会变化的外部事实，而且你确实无法可靠确认时，才只输出一行：[[WEB_SEARCH_NEEDED: 精简搜索词]]
 不要附加其他文字，不要把聊天历史、私人记忆、称呼或人格信息写进搜索词。`}
-
-
-【Identity｜人格层】
-
-${injectedPinMemory}
 
 
 【User Profile｜用户长期事实】
@@ -2243,17 +2240,25 @@ ${diaryContext
 ${diaryContext}`
   : ""}
 
-【Project Context｜项目上下文】
-当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
-Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
-深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。
-
 ${attributionCorrectionContext}
 
 ${diaryStyleContext}
 
 `
-  },
+
+const cachedPromptMessages = buildCachedPromptMessages({
+  persona: `
+${systemPrompt}
+`,
+  coreMemorySnapshot: `【Identity｜人格层】
+
+${injectedPinMemory}`,
+  fixedRules: fixedPromptRules,
+  dynamicContext: dynamicPromptContext,
+})
+
+const messages = [
+  ...cachedPromptMessages,
 
   // 保留历史，但去掉最后一条用户消息
   // 因为最后一条要重新加入（可能带图片）
@@ -2339,7 +2344,8 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-let llm = await callLLM(messages, selectedChatModel)
+const mainChatOptions = { session_id: cid }
+let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 let reply = llm.reply
 const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
 
@@ -2368,7 +2374,7 @@ ${fallbackWebSearch}
       messages[messages.length - 1]
     ]
 
-    llm = await callLLM(searchedMessages, selectedChatModel)
+    llm = await callLLM(searchedMessages, selectedChatModel, mainChatOptions)
     reply = llm.reply
   } else {
     reply = "这个我现在不太确定，宝宝可以用 /搜 让我帮你查一下。"
@@ -2377,23 +2383,11 @@ ${fallbackWebSearch}
 
 console.log("\n========== Prompt Inspector ==========")
 
-console.log({
-  prompt_tokens: llm.usage?.prompt_tokens,
-
-  completion_tokens:
-    llm.usage?.completion_tokens,
-
-  total_tokens:
-    llm.usage?.total_tokens,
-
-  reasoning_tokens:
-    llm.usage?.completion_tokens_details?.reasoning_tokens,
-
-  cached_tokens:
-    llm.usage?.prompt_tokens_details?.cached_tokens,
-
-  cache_write_tokens:
-    llm.usage?.prompt_tokens_details?.cache_write_tokens
+console.log("MAIN CHAT USAGE:", {
+  model: selectedChatModel,
+  sessionId: cid,
+  ...buildPromptCacheUsageLog(llm.usage),
+  reasoningTokens: llm.usage?.completion_tokens_details?.reasoning_tokens ?? null,
 })
 
 console.log("======================================\n")
