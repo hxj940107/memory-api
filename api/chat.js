@@ -29,7 +29,14 @@ import {
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
-import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
+import {
+  ensureCoreMemorySnapshot,
+  fetchCompleteMemoriesByIds,
+} from "../lib/coreMemorySnapshot.js"
+import {
+  filterDynamicMemorySearchText,
+  LEGACY_CORE_MEMORY_BUCKET_IDS,
+} from "../lib/dynamicMemoryFilter.js"
 import {
   buildCachedPromptMessages,
   buildPromptCacheUsageLog,
@@ -86,6 +93,7 @@ function buildEnvironmentContext(timeZone = USER_TIMEZONE) {
 // --------------------
 const memoryCache = new Map()
 const memorySearchCache = new Map()
+const dynamicMemoryExclusionCache = new Map()
 const webSearchCache = new Map()
 let lastAutomaticWebSearchAt = 0
 
@@ -690,6 +698,7 @@ async function getMemorySmart(
   const memorySearchQuery = buildMemorySearchQuery(history, message)
   const dynamicCacheKey = [
     conversation_id,
+    normalizeCacheText((options.excludedBucketIds || []).join(","), 220),
     normalizeCacheText(
       memorySearchQuery,
       CACHE_POLICY.dynamicMemoryKeyChars
@@ -848,16 +857,17 @@ async function getMemorySmart(
         // Limit dynamic memory size
         // ==========================
 
+        const filteredSearchText = filterDynamicMemorySearchText(
+          searchTxt,
+          options.excludedMemories || []
+        )
         const trimmedMemory =
           trimText(
-            searchTxt,
+            filteredSearchText,
             CONTEXT_BUDGET.dynamicMemoryChars
           );
 
-
-        dynamicMemory = [
-          trimmedMemory
-        ];
+        dynamicMemory = trimmedMemory ? [trimmedMemory] : [];
 
 
         memorySearchCache.set(
@@ -975,6 +985,26 @@ async function initializeCoreMemorySnapshot(candidate) {
 
   if (error) throw new Error(`Core memory snapshot initialization failed: ${error.message}`)
   return Array.isArray(data) ? data[0] : data
+}
+
+async function getDynamicMemoryExclusions(sourceBucketIds) {
+  const excludedBucketIds = [...new Set([
+    ...(sourceBucketIds || []).map(String),
+    ...LEGACY_CORE_MEMORY_BUCKET_IDS,
+  ])].sort()
+  const cacheKey = excludedBucketIds.join(",")
+  const cached = dynamicMemoryExclusionCache.get(cacheKey)
+
+  if (cached && Date.now() - cached.createdAt < CACHE_POLICY.pinMemoryTtlMs) {
+    return { excludedBucketIds, excludedMemories: cached.value }
+  }
+
+  const excludedMemories = await fetchCompleteMemoriesByIds(excludedBucketIds)
+  dynamicMemoryExclusionCache.set(cacheKey, {
+    value: excludedMemories,
+    createdAt: Date.now(),
+  })
+  return { excludedBucketIds, excludedMemories }
 }
 
 function isDiaryWritingRequest(message) {
@@ -2074,13 +2104,25 @@ const coreMemorySnapshot = await ensureCoreMemorySnapshot({
   initializeSnapshot: initializeCoreMemorySnapshot,
 })
 
-const { dynamicMemory } = await getMemorySmart(
-  user_id,
-  message,
-  cid,
-  history,
-  { includePinned: false }
-)
+let dynamicMemory = []
+try {
+  const dynamicMemoryExclusions = await getDynamicMemoryExclusions(
+    coreMemorySnapshot.sourceBucketIds
+  )
+  const memoryResult = await getMemorySmart(
+    user_id,
+    message,
+    cid,
+    history,
+    {
+      includePinned: false,
+      ...dynamicMemoryExclusions,
+    }
+  )
+  dynamicMemory = memoryResult.dynamicMemory
+} catch (err) {
+  console.error("dynamic memory exclusion load failed; injection skipped:", err)
+}
 
 const stableMemory = await getStableMemories(user_id)
 
