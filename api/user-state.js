@@ -22,13 +22,16 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && req.query.action === "openrouter-credits") {
       try {
-        const creditsRes = await fetch("https://openrouter.ai/api/v1/credits", {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
-          }
-        })
+        const headers = {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
+        }
+        const [creditsRes, keyRes] = await Promise.all([
+          fetch("https://openrouter.ai/api/v1/credits", { headers }),
+          fetch("https://openrouter.ai/api/v1/key", { headers }).catch(() => null)
+        ])
 
         const rawCredits = await creditsRes.json().catch(() => null)
+        const rawKey = await keyRes?.json().catch(() => null)
 
         if (!creditsRes.ok) {
           return res.status(200).json({
@@ -40,17 +43,20 @@ export default async function handler(req, res) {
         }
 
         const credits = rawCredits?.data || rawCredits || {}
+        const key = keyRes?.ok ? rawKey?.data || rawKey || {} : {}
         const totalCredits = Number(
           credits.total_credits ?? credits.totalCredits ?? 0
         )
         const totalUsage = Number(
           credits.total_usage ?? credits.totalUsage ?? 0
         )
+        const monthlyUsage = Number(key.usage_monthly)
 
         return res.status(200).json({
           balance: Math.max(totalCredits - totalUsage, 0),
           total_credits: totalCredits,
-          total_usage: totalUsage
+          total_usage: totalUsage,
+          usage_monthly: Number.isFinite(monthlyUsage) ? monthlyUsage : null
         })
       } catch (error) {
         return res.status(200).json({

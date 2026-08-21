@@ -39,6 +39,7 @@ type CreditsResponse = {
   balance?: number | null;
   total_credits?: number | null;
   total_usage?: number | null;
+  usage_monthly?: number | null;
   error?: string;
 };
 
@@ -448,7 +449,10 @@ export default function SettingsScreen() {
         >
           <InfoRow label="24h 消耗" value={formatUsd(summary.last24hCost)} />
           <InfoRow label="账户余额" value={formatUsd(credits?.balance)} />
-          <InfoRow label="本月花费" value={formatUsd(summary.monthCost)} />
+          <InfoRow
+            label="本月花费"
+            value={formatUsd(credits?.usage_monthly ?? summary.monthCost)}
+          />
           <InfoRow
             label="累计已用"
             value={formatUsd(credits?.total_usage)}
