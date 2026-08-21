@@ -1,6 +1,7 @@
 export type SyncMessage = {
   id: string;
   cloudId?: string;
+  clientId?: string;
   role: "user" | "assistant";
   text: string;
   createdAt?: string;
@@ -91,6 +92,12 @@ export function mergeCloudMessages<T extends SyncMessage>(
       .filter((message) => message.cloudId)
       .map((message) => [String(message.cloudId), message]),
   );
+  const localByClientId = new Map(
+    current
+      .filter((message) => !message.cloudId && message.clientId)
+      .map((message) => [String(message.clientId), message]),
+  );
+  const claimedLocalMessages = new Set<T>();
   const mergedByCloudId = new Map<string, T>();
 
   for (const cloudMessage of incoming) {
@@ -100,7 +107,11 @@ export function mergeCloudMessages<T extends SyncMessage>(
       id: cloudId,
       cloudId,
     } as T;
-    const existing = currentByCloudId.get(cloudId);
+    const matchingLocal = cloudMessage.clientId
+      ? localByClientId.get(String(cloudMessage.clientId))
+      : undefined;
+    const existing = currentByCloudId.get(cloudId) || matchingLocal;
+    if (matchingLocal) claimedLocalMessages.add(matchingLocal);
     const merged = existing
       ? ({ ...existing, ...normalized, id: cloudId, cloudId } as T)
       : normalized;
@@ -111,7 +122,9 @@ export function mergeCloudMessages<T extends SyncMessage>(
     );
   }
 
-  const localOnly = current.filter((message) => !message.cloudId);
+  const localOnly = current.filter(
+    (message) => !message.cloudId && !claimedLocalMessages.has(message),
+  );
   const next = [...mergedByCloudId.values(), ...localOnly].sort(compareMessages);
   return preserveArrayWhenUnchanged(current, next);
 }

@@ -471,11 +471,16 @@ async function saveUserMessage(
   user_id,
   content,
   conversation_id,
+  clientMessageId = "",
   imageUrls = [],
   imageKinds = [],
   fileInfo = null
 ) {
   const metadata = {}
+
+  if (clientMessageId) {
+    metadata.clientMessageId = clientMessageId
+  }
 
   if (imageUrls.length > 0) {
     metadata.imageUrl = imageUrls[0]
@@ -1938,6 +1943,7 @@ export default async function handler(req, res) {
       imageUrl,
       imageUrls,
       imageKinds,
+      client_message_id,
       fileName,
       fileText,
       fileMimeType,
@@ -1956,6 +1962,10 @@ export default async function handler(req, res) {
       imageKinds,
       normalizedImageUrls.length
     )
+    const normalizedClientMessageId = trimText(
+      String(client_message_id || "").trim(),
+      160
+    )
     const normalizedFileName = trimText(String(fileName || "").trim(), 160)
     const normalizedFileText = trimText(String(fileText || "").trim(), 12000)
     const hasFileText = Boolean(normalizedFileName && normalizedFileText)
@@ -1965,6 +1975,7 @@ const userMessageId = await saveUserMessage(
   user_id,
   message,
   cid,
+  normalizedClientMessageId,
   normalizedImageUrls,
   normalizedImageKinds,
   normalizedFileName

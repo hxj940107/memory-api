@@ -71,6 +71,7 @@ import {
 type Message = {
   id: string;
   cloudId?: string;
+  clientId?: string;
   role: "user" | "assistant";
   text: string;
   fileName?: string;
@@ -90,6 +91,7 @@ type Message = {
     proactive?: boolean;
     proactiveType?: string;
     proactiveTaskId?: string;
+    clientMessageId?: string;
   };
 };
 
@@ -122,6 +124,7 @@ type HistoryItem = {
     proactive?: boolean;
     proactiveType?: string;
     proactiveTaskId?: string;
+    clientMessageId?: string;
   };
 };
 
@@ -1386,6 +1389,7 @@ export default function ChatScreen() {
           return {
             id: String(item.id),
             cloudId: String(item.id),
+            clientId: item.metadata?.clientMessageId,
             role: item.role,
             imageUris: item.metadata?.imageUrls || (
               item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
@@ -1534,6 +1538,7 @@ export default function ChatScreen() {
       const data = await postJson<ChatResponse>("/api/chat", {
         user_id: APP_USER_ID,
         message: userText,
+        client_message_id: messageToSend.clientId || messageToSend.id,
         conversation_id: conversationId,
         model: selectedModel.id,
         imageUrl: imageUrls[0],
@@ -1620,8 +1625,10 @@ export default function ChatScreen() {
   const sendMessage = async () => {
     if (isSendDisabled) return;
 
+    const localMessageId = createLocalMessageId();
     const newMessage: Message = {
-      id: createLocalMessageId(),
+      id: localMessageId,
+      clientId: localMessageId,
       role: "user",
       text: message.trim(),
       fileName: selectedFile?.name,

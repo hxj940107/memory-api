@@ -70,6 +70,7 @@ test("focus refresh with the same cloud batch does not replace state", () => {
 test("local user message reconciles with a copy already seen by polling", () => {
   const local = {
     id: "local-1",
+    clientId: "local-1",
     role: "user",
     text: "hello",
     createdAt: "2026-08-20T08:00:00.000Z",
@@ -79,9 +80,15 @@ test("local user message reconciles with a copy already seen by polling", () => 
     ...local,
     id: "user-1",
     cloudId: "user-1",
+    clientId: "local-1",
     status: "sent",
   }
   const afterPolling = mergeCloudMessages([local], [server])
+
+  assert.equal(afterPolling.length, 1)
+  assert.equal(afterPolling[0].id, "user-1")
+  assert.equal(afterPolling[0].cloudId, "user-1")
+
   const reconciled = reconcileLocalMessageCloudId(
     afterPolling,
     "local-1",
@@ -92,6 +99,34 @@ test("local user message reconciles with a copy already seen by polling", () => 
   assert.equal(reconciled.length, 1)
   assert.equal(reconciled[0].id, "user-1")
   assert.equal(reconciled[0].cloudId, "user-1")
+})
+
+test("identical user text with different client ids remains two messages", () => {
+  const first = {
+    id: "local-1",
+    clientId: "local-1",
+    role: "user",
+    text: "same text",
+    createdAt: "2026-08-20T08:00:00.000Z",
+    status: "sending",
+  }
+  const second = {
+    ...first,
+    id: "local-2",
+    clientId: "local-2",
+    createdAt: "2026-08-20T08:00:01.000Z",
+  }
+  const cloudFirst = {
+    ...first,
+    id: "user-1",
+    cloudId: "user-1",
+    status: "sent",
+  }
+
+  const state = mergeCloudMessages([first, second], [cloudFirst])
+
+  assert.equal(state.length, 2)
+  assert.deepEqual(state.map((message) => message.clientId), ["local-1", "local-2"])
 })
 
 test("equal timestamps use stable message id as the secondary order", () => {
@@ -106,6 +141,19 @@ test("chat rendering uses stable ids for messages and split bubbles", () => {
   assert.match(source, /setInterval\(refreshIfCloudHistoryChanged, 30_000\)/)
   assert.match(source, /silent\s*\? mergeCloudMessages\(current, restoredMessages\)/)
   assert.doesNotMatch(source, /id: createLocalMessageId\(\),\s*\n\s*cloudId: item\.id/)
+  assert.match(source, /client_message_id: messageToSend\.clientId \|\| messageToSend\.id/)
+})
+
+test("chat persists the client message identity before calling the model", () => {
+  const source = readFileSync("api/chat.js", "utf8")
+  const metadataWrite = source.indexOf("metadata.clientMessageId = clientMessageId")
+  const userSave = source.indexOf("const userMessageId = await saveUserMessage(")
+  const modelCall = source.indexOf("let llm = await callLLM(messages, selectedChatModel)")
+
+  assert.ok(metadataWrite >= 0)
+  assert.ok(userSave >= 0)
+  assert.ok(modelCall >= 0)
+  assert.ok(userSave < modelCall)
 })
 
 test("history API adds message id as a stable secondary order", () => {
