@@ -21,7 +21,11 @@ export default async function handler(req, res) {
     if (req.method === "DELETE") {
       const { error } = await supabase
         .from("conversation_summary")
-        .delete()
+        .update({
+          summary: null,
+          last_summarized_at: null,
+          updated_at: new Date().toISOString()
+        })
         .eq("conversation_id", conversation_id);
 
       if (error) {

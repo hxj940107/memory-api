@@ -29,6 +29,7 @@ import {
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
+import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
 import {
   MOMENT_IMAGE_LIBRARY,
   getMomentImagePromptCatalog,
@@ -671,7 +672,13 @@ function memoryUrl(pathname, query = {}) {
   return url.toString()
 }
 
-async function getMemorySmart(user_id, message, conversation_id, history = []) {
+async function getMemorySmart(
+  user_id,
+  message,
+  conversation_id,
+  history = [],
+  options = {}
+) {
   console.log("CONVERSATION ID:", conversation_id);
   console.log("CACHE KEYS:", [...memorySearchCache.keys()]);
 
@@ -692,8 +699,9 @@ async function getMemorySmart(user_id, message, conversation_id, history = []) {
   // 1. PIN memory cache
   // ==========================
 
-  const cachedPinMemory =
-    memoryCache.get(key);
+  if (options.includePinned !== false) {
+    const cachedPinMemory =
+      memoryCache.get(key);
 
   if (
     cachedPinMemory &&
@@ -764,6 +772,7 @@ async function getMemorySmart(user_id, message, conversation_id, history = []) {
 
     }
 
+    }
   }
 
 
@@ -936,6 +945,32 @@ async function saveLongTermMemory(user_id, content) {
   )
 
   return holdRes.ok
+}
+
+async function readCoreMemorySnapshot(conversationId) {
+  const { data, error } = await supabase
+    .from("conversation_summary")
+    .select(
+      "core_memory_snapshot,core_memory_snapshot_hash,core_memory_snapshot_created_at,core_memory_source_bucket_ids"
+    )
+    .eq("conversation_id", conversationId)
+    .maybeSingle()
+
+  if (error) throw new Error(`Core memory snapshot read failed: ${error.message}`)
+  return data
+}
+
+async function initializeCoreMemorySnapshot(candidate) {
+  const { data, error } = await supabase.rpc("initialize_core_memory_snapshot", {
+    p_conversation_id: candidate.conversationId,
+    p_snapshot: candidate.snapshot,
+    p_snapshot_hash: candidate.hash,
+    p_source_bucket_ids: candidate.sourceBucketIds,
+    p_created_at: candidate.createdAt,
+  })
+
+  if (error) throw new Error(`Core memory snapshot initialization failed: ${error.message}`)
+  return Array.isArray(data) ? data[0] : data
 }
 
 function isDiaryWritingRequest(message) {
@@ -2029,14 +2064,18 @@ if (shouldUpdateSummaryAfterReply) {
 
 // 3. memory (NEW SMART)
 
-const {
-  pinMemory,
-  dynamicMemory
-} = await getMemorySmart(
+const coreMemorySnapshot = await ensureCoreMemorySnapshot({
+  conversationId: cid,
+  readSnapshot: readCoreMemorySnapshot,
+  initializeSnapshot: initializeCoreMemorySnapshot,
+})
+
+const { dynamicMemory } = await getMemorySmart(
   user_id,
   message,
   cid,
-  history
+  history,
+  { includePinned: false }
 )
 
 const stableMemory = await getStableMemories(user_id)
@@ -2088,18 +2127,15 @@ if (forcedWebSearch || automaticWebSearch) {
 
 // 4. build context
 
-const injectedPinMemory = trimList(
-  pinMemory,
-  CONTEXT_BUDGET.pinMemoryChars
-).join("\n")
+const injectedPinMemory = coreMemorySnapshot.snapshot
 
 console.log("MEMORY LOAD CHECK:", history.length)
 
-console.log("PIN LENGTH:", JSON.stringify(pinMemory).length)
-console.log("INJECTED PIN:", {
+console.log("CORE MEMORY SNAPSHOT:", {
   length: injectedPinMemory.length,
-  start: injectedPinMemory.slice(0, 100),
-  end: injectedPinMemory.slice(-100)
+  hash: coreMemorySnapshot.hash,
+  sourceBucketCount: coreMemorySnapshot.sourceBucketIds.length,
+  createdAt: coreMemorySnapshot.createdAt,
 })
 console.log("STABLE MEMORY LENGTH:", JSON.stringify(stableMemory).length)
 console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
