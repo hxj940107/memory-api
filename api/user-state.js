@@ -1,4 +1,9 @@
 import { createClient } from "@supabase/supabase-js"
+import {
+  DEFAULT_INACTIVITY_REACH_OUT_MODE,
+  INACTIVITY_REACH_OUT_MODES,
+  normalizeInactivityReachOutMode,
+} from "../lib/aiConfig.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -68,7 +73,51 @@ export default async function handler(req, res) {
       }
     }
 
+    if (req.method === "GET" && req.query.action === "inactivity-reach-out-mode") {
+      const { data, error } = await supabase
+        .from("user_state")
+        .select("inactivity_reach_out_mode")
+        .eq("user_id", user_id)
+        .maybeSingle()
+
+      if (error && error.code !== "42703") {
+        return res.status(500).json({ error: error.message })
+      }
+
+      return res.status(200).json({
+        mode: error?.code === "42703"
+          ? DEFAULT_INACTIVITY_REACH_OUT_MODE
+          : normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode),
+      })
+    }
+
     if (req.method === "POST") {
+      if (req.body.action === "set-inactivity-reach-out-mode") {
+        const mode = String(req.body.mode || "")
+
+        if (!INACTIVITY_REACH_OUT_MODES.includes(mode)) {
+          return res.status(400).json({ error: "invalid inactivity reach-out mode" })
+        }
+
+        const { data, error } = await supabase
+          .from("user_state")
+          .upsert({
+            user_id,
+            inactivity_reach_out_mode: mode,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "user_id" })
+          .select("inactivity_reach_out_mode")
+          .single()
+
+        if (error) {
+          return res.status(500).json({ error: error.message })
+        }
+
+        return res.status(200).json({
+          mode: normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode),
+        })
+      }
+
       const { last_conversation = null } = req.body
       const payload = {
         user_id,

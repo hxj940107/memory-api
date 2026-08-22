@@ -1,6 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import {
   Alert,
   Pressable,
@@ -34,6 +34,12 @@ import {
   getSelectedChatModel,
   saveSelectedChatModel,
 } from "../lib/modelSettings";
+import {
+  DEFAULT_INACTIVITY_REACH_OUT_MODE,
+  InactivityReachOutMode,
+  getInactivityReachOutMode,
+  getInactivityReachOutModeLabel,
+} from "../lib/proactiveSettings";
 
 type CreditsResponse = {
   balance?: number | null;
@@ -194,6 +200,8 @@ export default function SettingsScreen() {
     userMomentAvatarUri: null,
     xiaocMomentAvatarUri: null,
   });
+  const [reachOutMode, setReachOutMode] =
+    useState<InactivityReachOutMode>(DEFAULT_INACTIVITY_REACH_OUT_MODE);
   const [expandedSections, setExpandedSections] = useState({
     model: false,
     cost: false,
@@ -205,7 +213,7 @@ export default function SettingsScreen() {
     setRefreshing(true);
 
     try {
-      const [model, costSummary, creditsData, accountSettings] = await Promise.all([
+      const [model, costSummary, creditsData, accountSettings, inactivityMode] = await Promise.all([
         getSelectedChatModel(),
         getCostSummary(),
         apiJson<CreditsResponse>("/api/user-state", {
@@ -219,12 +227,14 @@ export default function SettingsScreen() {
           error: error.message,
         })),
         getAccountSettings(),
+        getInactivityReachOutMode().catch(() => DEFAULT_INACTIVITY_REACH_OUT_MODE),
       ]);
 
       setSelectedModel(model);
       setSummary(costSummary);
       setCredits(creditsData);
       setAccount(accountSettings);
+      setReachOutMode(inactivityMode);
     } finally {
       setRefreshing(false);
     }
@@ -233,6 +243,22 @@ export default function SettingsScreen() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      getInactivityReachOutMode()
+        .then((mode) => {
+          if (active) setReachOutMode(mode);
+        })
+        .catch(() => {});
+
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
 
   const selectModel = async (modelId: string) => {
     const model = await saveSelectedChatModel(modelId);
@@ -513,6 +539,13 @@ export default function SettingsScreen() {
             label="Face ID"
             value={account.faceIdEnabled ? "已开启" : "未接入"}
             onPress={showFaceIdInfo}
+          />
+          <InfoRow
+            label="主动联系频率"
+            value={getInactivityReachOutModeLabel(reachOutMode)}
+            onPress={() =>
+              router.push("/settings/inactivity-reach-out" as never)
+            }
           />
           <InfoRow
             label="我的朋友圈头像"

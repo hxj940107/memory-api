@@ -6,7 +6,9 @@ import {
   AI_MODELS,
   APP_USER,
   CONTEXT_BUDGET,
+  DEFAULT_INACTIVITY_REACH_OUT_MODE,
   TREEHOLE_AUTONOMOUS_POLICY,
+  normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
@@ -1551,6 +1553,21 @@ async function executeAutonomousTreeholeUpdate(task) {
 async function validateInactivityReachOutTask(task) {
   const payload = task.payload || {}
   const scheduledAt = payload.scheduled_at || task.created_at || task.due_at
+  const { data: state, error: stateError } = await supabase
+    .from("user_state")
+    .select("inactivity_reach_out_mode")
+    .eq("user_id", task.user_id)
+    .maybeSingle()
+
+  if (stateError && stateError.code !== "42703") throw stateError
+
+  const reachOutMode = stateError?.code === "42703"
+    ? DEFAULT_INACTIVITY_REACH_OUT_MODE
+    : normalizeInactivityReachOutMode(state?.inactivity_reach_out_mode)
+
+  if (reachOutMode === "off") {
+    return { allowed: false, reason: "用户已关闭主动联系" }
+  }
 
   const { data: latestUserMessage, error: latestUserError } = await supabase
     .from("messages")

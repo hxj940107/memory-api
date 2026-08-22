@@ -13,10 +13,13 @@ import {
   APP_USER,
   CACHE_POLICY,
   CONTEXT_BUDGET,
+  DEFAULT_INACTIVITY_REACH_OUT_MODE,
   SUMMARY_POLICY,
   WEB_SEARCH_POLICY,
+  getInactivityReachOutDelayMinutes,
   normalizeChatModel,
   normalizeCacheText,
+  normalizeInactivityReachOutMode,
   shouldRunMemoryJudge,
   trimList,
   trimText
@@ -391,10 +394,25 @@ function getLastConversationState(message, reply) {
   return conversationEndPattern.test(text) ? "conversation_end" : "open"
 }
 
-function getInactivityReachOutDueAt(lastConversationState = "open") {
-  const delayMinutes = lastConversationState === "conversation_end"
-    ? 480 + Math.floor(Math.random() * 61)
-    : 150 + Math.floor(Math.random() * 91)
+async function getInactivityReachOutMode(user_id) {
+  const { data, error } = await supabase
+    .from("user_state")
+    .select("inactivity_reach_out_mode")
+    .eq("user_id", user_id)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === "42703") return DEFAULT_INACTIVITY_REACH_OUT_MODE
+    throw error
+  }
+
+  return normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode)
+}
+
+function getInactivityReachOutDueAt(lastConversationState = "open", mode = "normal") {
+  const delayMinutes = getInactivityReachOutDelayMinutes(mode, lastConversationState)
+
+  if (delayMinutes === null) return null
 
   return deferOutOfQuietHours(
     new Date(Date.now() + delayMinutes * 60 * 1000)
@@ -413,7 +431,7 @@ async function enqueueInactivityReachOutTask({
 
   const scheduledAt = new Date().toISOString()
   const lastConversationState = getLastConversationState(message, reply)
-  const dueAt = getInactivityReachOutDueAt(lastConversationState)
+  const reachOutMode = await getInactivityReachOutMode(user_id)
 
   await supabase
     .from("xiaoc_proactive_tasks")
@@ -425,6 +443,13 @@ async function enqueueInactivityReachOutTask({
     .eq("user_id", user_id)
     .eq("type", "inactivity_reach_out")
     .eq("status", "pending")
+
+  if (reachOutMode === "off") {
+    console.log("INACTIVITY REACH-OUT SKIPPED: disabled")
+    return null
+  }
+
+  const dueAt = getInactivityReachOutDueAt(lastConversationState, reachOutMode)
 
   const { data, error } = await supabase
     .from("xiaoc_proactive_tasks")
@@ -445,6 +470,7 @@ async function enqueueInactivityReachOutTask({
           user_message: trimText(message, 600),
           assistant_reply: trimText(reply, 500),
           last_conversation_state: lastConversationState,
+          reach_out_mode: reachOutMode,
         },
         completed_at: null,
         message_id: null,
