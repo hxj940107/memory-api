@@ -101,11 +101,11 @@ export default async function handler(req, res) {
 
         const { data, error } = await supabase
           .from("user_state")
-          .upsert({
-            user_id,
+          .update({
             inactivity_reach_out_mode: mode,
             updated_at: new Date().toISOString(),
-          }, { onConflict: "user_id" })
+          })
+          .eq("user_id", user_id)
           .select("inactivity_reach_out_mode")
           .single()
 
