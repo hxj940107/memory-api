@@ -1100,6 +1100,7 @@ ${diaryDate.display}
 
 function shouldConsiderMoment({
   message,
+  imageDescription,
   isManualMomentRequest,
   isDiaryRequest,
   attributionCorrectionContext,
@@ -1107,43 +1108,109 @@ function shouldConsiderMoment({
   hasFileText,
 }) {
   const text = String(message || "")
+  const normalizedImageDescription = String(imageDescription || "").trim()
+  const contextText = normalizedImageDescription
+    ? `${text}\n\n[图片背景信息]: ${normalizedImageDescription}`
+    : text
 
-  if (
-    isDiaryRequest ||
-    attributionCorrectionContext ||
-    normalizedImageUrls.length > 0 ||
-    hasFileText
-  ) {
-    return false
+  if (isDiaryRequest) return { eligible: false, reason: "diary_request", contextText }
+  if (attributionCorrectionContext) {
+    return { eligible: false, reason: "attribution_correction", contextText }
+  }
+  if (hasFileText) return { eligible: false, reason: "file_message", contextText }
+  if (normalizedImageUrls.length > 0 && !normalizedImageDescription) {
+    return { eligible: false, reason: "image_description_missing", contextText }
   }
 
-  if (isMomentTechnicalDiscussion(text) && !isManualMomentRequest) return false
+  if (isMomentTechnicalDiscussion(text) && !isManualMomentRequest) {
+    return { eligible: false, reason: "technical_context", contextText }
+  }
 
-  if (isManualMomentRequest) return true
+  if (isManualMomentRequest) return { eligible: true, reason: null, contextText }
 
   if (/diary|观察日记|树洞|小号|朋友圈|存入|保存|删除|修改|合并|置顶/.test(text)) {
-    return false
+    return { eligible: false, reason: "moment_meta_command", contextText }
   }
 
   if (/UI|界面|按钮|气泡|侧边栏|字体|图标|布局|留白|前端|后端|API|token|OpenRouter|Vercel|Railway|Expo|EAS|GitHub|push|pull|部署|日志|报错|bug|测试|代码/.test(text)) {
-    return false
+    return { eligible: false, reason: "technical_context", contextText }
   }
 
-  return text.trim().length >= 6
+  if (contextText.trim().length < 6) {
+    return { eligible: false, reason: "text_too_short", contextText }
+  }
+
+  return { eligible: true, reason: null, contextText }
 }
 
-async function getUserMessageCount(user_id, conversation_id) {
-  const { count } = await supabase
-    .from("messages")
-    .select("*", {
-      count: "exact",
-      head: true
-    })
-    .eq("user_id", user_id)
-    .eq("conversation_id", conversation_id)
-    .eq("role", "user")
+async function claimMomentCheck({
+  user_id,
+  conversation_id,
+  user_message_id,
+  assistant_message_id,
+}) {
+  const { data, error } = await supabase.rpc("claim_moment_check", {
+    p_user_id: user_id,
+    p_conversation_id: conversation_id,
+    p_source_user_message_id: user_message_id,
+    p_source_assistant_message_id: assistant_message_id,
+    p_min_interval_minutes: CONTEXT_BUDGET.momentCheckIntervalMinutes,
+  })
 
-  return count || 0
+  if (error) throw error
+
+  return data?.[0] || {
+    claimed: false,
+    audit_id: null,
+    reason: "claim_result_missing",
+    last_checked_at: null,
+  }
+}
+
+async function createManualMomentAudit({
+  user_id,
+  conversation_id,
+  user_message_id,
+  assistant_message_id,
+}) {
+  const { data, error } = await supabase
+    .from("moment_check_audit")
+    .insert({
+      user_id,
+      conversation_id,
+      source_user_message_id: user_message_id,
+      source_assistant_message_id: assistant_message_id,
+      trigger_type: "manual",
+    })
+    .select("id")
+    .single()
+
+  if (error) throw error
+  return data?.id || null
+}
+
+async function updateMomentAudit(auditId, updates) {
+  if (!auditId) throw new Error("Moment audit id is required")
+
+  const { error } = await supabase
+    .from("moment_check_audit")
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", auditId)
+
+  if (error) throw error
+}
+
+async function completeMomentAudit(auditId, updates) {
+  const completedAt = new Date().toISOString()
+
+  return updateMomentAudit(auditId, {
+    ...updates,
+    status: "completed",
+    completed_at: completedAt,
+  })
 }
 
 async function getRecentXiaoCMoments(user_id) {
@@ -1420,7 +1487,7 @@ async function saveMomentCandidate({
 
   if (isRecentMomentDuplicate(candidate.text, pendingCandidates || [])) {
     console.log("MOMENT CANDIDATE SKIPPED: duplicate pending", candidate.text)
-    return null
+    return { created: false, candidateId: null, reason: "duplicate_pending" }
   }
 
   if ((pendingCandidates?.length || 0) >= CONTEXT_BUDGET.momentCandidateMaxPending) {
@@ -1431,7 +1498,7 @@ async function saveMomentCandidate({
 
     if (candidate.priority <= Number(weakest?.priority || 1)) {
       console.log("MOMENT CANDIDATE SKIPPED: pool full", pendingCandidates.length)
-      return null
+      return { created: false, candidateId: null, reason: "pending_pool_full" }
     }
 
     const { error: replaceError } = await supabase
@@ -1496,46 +1563,87 @@ async function saveMomentCandidate({
       .eq("status", "pending")
 
     if (trimError) throw trimError
-    if (overflowIds.includes(data?.id)) return null
+    if (overflowIds.includes(data?.id)) {
+      return { created: false, candidateId: null, reason: "trimmed_from_pool" }
+    }
   }
 
   console.log("MOMENT CANDIDATE SAVED:", data?.id, data?.publish_after)
-  return data?.id || null
+  return {
+    created: Boolean(data?.id),
+    candidateId: data?.id || null,
+    reason: data?.id ? "candidate_created" : "candidate_id_missing",
+  }
 }
 
 async function maybeCreateMoment({
   user_id,
   conversation_id,
+  user_message_id,
   assistant_message_id,
   message,
   reply,
+  imageDescriptionPromise,
   isManualMomentRequest,
   isDiaryRequest,
   attributionCorrectionContext,
   normalizedImageUrls,
   hasFileText,
 }) {
-  if (!shouldConsiderMoment({
-    message,
-    isManualMomentRequest,
-    isDiaryRequest,
-    attributionCorrectionContext,
-    normalizedImageUrls,
-    hasFileText,
-  })) {
-    console.log("MOMENT CHECK SKIPPED: context")
-    return null
-  }
+  let auditId = null
 
-  const userMessageCount = await getUserMessageCount(user_id, conversation_id)
+  try {
+    if (isManualMomentRequest) {
+      auditId = await createManualMomentAudit({
+        user_id,
+        conversation_id,
+        user_message_id,
+        assistant_message_id,
+      })
+    } else {
+      const claim = await claimMomentCheck({
+        user_id,
+        conversation_id,
+        user_message_id,
+        assistant_message_id,
+      })
 
-  if (!isManualMomentRequest && (
-    userMessageCount < CONTEXT_BUDGET.momentCheckIntervalUserMessages ||
-    userMessageCount % CONTEXT_BUDGET.momentCheckIntervalUserMessages !== 0
-  )) {
-    console.log("MOMENT CHECK SKIPPED: interval", userMessageCount)
-    return null
-  }
+      if (!claim.claimed) {
+        console.log("MOMENT CHECK SKIPPED: gate", claim.reason, claim.last_checked_at)
+        return null
+      }
+
+      auditId = claim.audit_id
+    }
+
+    const imageDescription = normalizedImageUrls.length > 0
+      ? await imageDescriptionPromise
+      : ""
+    const eligibility = shouldConsiderMoment({
+      message,
+      imageDescription,
+      isManualMomentRequest,
+      isDiaryRequest,
+      attributionCorrectionContext,
+      normalizedImageUrls,
+      hasFileText,
+    })
+
+    if (!eligibility.eligible) {
+      console.log("MOMENT CHECK SKIPPED: eligibility", eligibility.reason)
+      await completeMomentAudit(auditId, {
+        eligibility_result: false,
+        skip_reason: eligibility.reason,
+        outcome: "eligibility_skipped",
+      })
+      return null
+    }
+
+    await updateMomentAudit(auditId, {
+      eligibility_result: true,
+    })
+
+    message = eligibility.contextText
 
   const recentMoments = await getRecentXiaoCMoments(user_id)
   const availableMomentImages = await getAvailableMomentImages(user_id)
@@ -1770,67 +1878,124 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     }
   ]
 
-  const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
-    max_tokens: 220,
-    temperature: 0.35,
-  })
-  const candidate = parseMomentCandidate(result.reply)
+    await updateMomentAudit(auditId, { model_called: true })
 
-  console.log("MOMENT CANDIDATE:", candidate)
-
-  if (!candidate.shouldPost || !candidate.text) return null
-
-  if (isInvalidMomentText(candidate.text)) {
-    console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
-    return null
-  }
-
-  if (!isManualMomentRequest && (!candidate.shareMode || !candidate.eventTime)) {
-    console.log("MOMENT CHECK SKIPPED: missing time model", {
-      shareMode: candidate.shareMode,
-      eventTime: candidate.eventTime,
+    const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
+      max_tokens: 220,
+      temperature: 0.35,
     })
-    return null
-  }
+    const candidate = parseMomentCandidate(result.reply)
+    const requestedImageId = candidate.image
 
-  const momentSourceText = `${context}\n${message}\n${reply}`
+    console.log("MOMENT CANDIDATE:", candidate)
 
-  if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
-    console.log("MOMENT CHECK SKIPPED: duplicate", candidate.text)
-    return null
-  }
+    if (!candidate.shouldPost || !candidate.text) {
+      await completeMomentAudit(auditId, {
+        model_should_post: false,
+        requested_image_id: requestedImageId,
+        image_validation_result: requestedImageId ? null : "not_requested",
+        image_resolution_result: "not_applicable",
+        skip_reason: "model_declined",
+        outcome: "model_declined",
+      })
+      return null
+    }
 
-  if (hasUnsupportedMomentWeather(candidate.text, momentSourceText)) {
-    console.log("MOMENT CHECK SKIPPED: unsupported weather", candidate.text)
-    return null
-  }
-
-  if (candidate.image && !isMomentImageCompatible(
-    candidate.image,
-    candidate.text,
-    localNow.hour,
-    availableMomentImages,
-    momentSourceText
-  )) {
-    console.log("MOMENT IMAGE SKIPPED: incompatible", candidate.image)
-    candidate.image = null
-  }
-
-  candidate.image = resolveMomentImage(
-    candidate.image,
-    process.env.BASE_URL,
-    availableMomentImages
-  )
-
-  if (!isManualMomentRequest) {
-    return saveMomentCandidate({
-      user_id,
-      conversation_id,
-      assistant_message_id,
-      candidate,
-      publishAfter: expectedPublishAfter,
+    await updateMomentAudit(auditId, {
+      model_should_post: true,
+      requested_image_id: requestedImageId,
     })
-  }
+
+    if (isInvalidMomentText(candidate.text)) {
+      console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
+      await completeMomentAudit(auditId, {
+        skip_reason: "invalid_text",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+
+    if (!isManualMomentRequest && (!candidate.shareMode || !candidate.eventTime)) {
+      console.log("MOMENT CHECK SKIPPED: missing time model", {
+        shareMode: candidate.shareMode,
+        eventTime: candidate.eventTime,
+      })
+      await completeMomentAudit(auditId, {
+        skip_reason: "missing_time_model",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+
+    const momentSourceText = `${context}\n${message}\n${reply}`
+
+    if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
+      console.log("MOMENT CHECK SKIPPED: duplicate", candidate.text)
+      await completeMomentAudit(auditId, {
+        skip_reason: "duplicate_recent",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+
+    if (hasUnsupportedMomentWeather(candidate.text, momentSourceText)) {
+      console.log("MOMENT CHECK SKIPPED: unsupported weather", candidate.text)
+      await completeMomentAudit(auditId, {
+        skip_reason: "unsupported_weather",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+
+    let imageValidationResult = requestedImageId ? "accepted" : "not_requested"
+
+    if (candidate.image && !isMomentImageCompatible(
+      candidate.image,
+      candidate.text,
+      localNow.hour,
+      availableMomentImages,
+      momentSourceText
+    )) {
+      console.log("MOMENT IMAGE SKIPPED: incompatible", candidate.image)
+      imageValidationResult = "rejected"
+      candidate.image = null
+    }
+
+    candidate.image = resolveMomentImage(
+      candidate.image,
+      process.env.BASE_URL,
+      availableMomentImages
+    )
+
+    const imageResolutionResult = !requestedImageId || imageValidationResult === "rejected"
+      ? "not_applicable"
+      : candidate.image
+        ? "resolved"
+        : "failed"
+
+    await updateMomentAudit(auditId, {
+      image_validation_result: imageValidationResult,
+      image_resolution_result: imageResolutionResult,
+      resolved_image_key: candidate.image,
+    })
+
+    if (!isManualMomentRequest) {
+      const saveResult = await saveMomentCandidate({
+        user_id,
+        conversation_id,
+        assistant_message_id,
+        candidate,
+        publishAfter: expectedPublishAfter,
+      })
+
+      await completeMomentAudit(auditId, {
+        candidate_id: saveResult.candidateId,
+        skip_reason: saveResult.created ? null : saveResult.reason,
+        outcome: saveResult.created ? "candidate_created" : "candidate_rejected",
+      })
+
+      return saveResult.candidateId
+    }
 
   const { data, error } = await supabase
     .from("moment_entries")
@@ -1846,15 +2011,32 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     .select("id")
     .single()
 
-  if (error) {
-    console.error("MOMENT SAVE FAILED:", error)
-    return null
+    if (error) throw error
+
+    await markMomentAlbumImageUsed(user_id, candidate.image)
+
+    await completeMomentAudit(auditId, {
+      outcome: "manual_moment_created",
+    })
+
+    console.log("MOMENT SAVED:", data?.id)
+    return data?.id || null
+  } catch (error) {
+    if (auditId) {
+      try {
+        await updateMomentAudit(auditId, {
+          status: "failed",
+          error_code: String(error?.code || error?.name || "moment_check_failed").slice(0, 120),
+          outcome: "failed",
+          completed_at: new Date().toISOString(),
+        })
+      } catch (auditError) {
+        console.error("MOMENT AUDIT UPDATE FAILED:", auditError)
+      }
+    }
+
+    throw error
   }
-
-  await markMomentAlbumImageUsed(user_id, candidate.image)
-
-  console.log("MOMENT SAVED:", data?.id)
-  return data?.id || null
 }
 
 // --------------------
@@ -2574,9 +2756,11 @@ console.log("======================================\n")
       maybeCreateMoment({
         user_id,
         conversation_id: cid,
+        user_message_id: userMessageId,
         assistant_message_id: assistantMessageId,
         message,
         reply,
+        imageDescriptionPromise,
         isManualMomentRequest,
         isDiaryRequest,
         attributionCorrectionContext,
