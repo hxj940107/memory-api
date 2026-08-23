@@ -13,6 +13,10 @@ import {
   trimText,
 } from "../lib/aiConfig.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import {
+  hasUserRepliedToInactivityTask,
+  shouldApplyProactiveCooldown,
+} from "../lib/inactivityReachOut.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 
@@ -1588,7 +1592,7 @@ async function validateInactivityReachOutTask(task) {
     .maybeSingle()
 
   if (latestUserError) throw latestUserError
-  if (!latestUserMessage || String(latestUserMessage.id) !== String(payload.user_message_id)) {
+  if (hasUserRepliedToInactivityTask(task, latestUserMessage)) {
     return { allowed: false, reason: "用户已经回来聊天" }
   }
 
@@ -1636,7 +1640,7 @@ async function getProactiveMessageCooldown(task) {
   const cutoff = new Date(Date.now() - 90 * 60 * 1000)
   const { data, error } = await supabase
     .from("messages")
-    .select("created_at,metadata")
+    .select("id,created_at,metadata")
     .eq("user_id", task.user_id)
     .eq("role", "assistant")
     .gte("created_at", cutoff.toISOString())
@@ -1646,8 +1650,7 @@ async function getProactiveMessageCooldown(task) {
   if (error) throw error
 
   const recent = (data || []).find((message) =>
-    message.metadata?.proactive &&
-    String(message.metadata?.proactiveTaskId || "") !== String(task.id)
+    shouldApplyProactiveCooldown(message, task)
   )
 
   if (!recent) return null
@@ -1912,8 +1915,7 @@ async function enqueueNextInactivityReachOutTask(task, result) {
     .maybeSingle()
 
   if (latestUserError) throw latestUserError
-  if (!latestUserMessage ||
-      String(latestUserMessage.id) !== String(task.payload?.user_message_id)) {
+  if (hasUserRepliedToInactivityTask(task, latestUserMessage)) {
     return null
   }
 

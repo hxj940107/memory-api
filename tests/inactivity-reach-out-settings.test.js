@@ -6,6 +6,10 @@ import {
   getInactivityReachOutDelayMinutes,
   normalizeInactivityReachOutMode,
 } from "../lib/aiConfig.js"
+import {
+  hasUserRepliedToInactivityTask,
+  shouldApplyProactiveCooldown,
+} from "../lib/inactivityReachOut.js"
 
 test("inactivity reach-out modes preserve the configured delay ranges", () => {
   const cases = [
@@ -43,13 +47,69 @@ test("task creation and execution both honor the user setting", () => {
 
 test("completed inactivity reach-outs schedule a guarded continuation", () => {
   const memorySource = readFileSync("api/memory.js", "utf8")
+  const inactivitySource = readFileSync("lib/inactivityReachOut.js", "utf8")
 
   assert.match(memorySource, /enqueueNextInactivityReachOutTask\(task, result\)/)
   assert.match(memorySource, /getInactivityReachOutDelayMinutes\(reachOutMode, "open"\)/)
   assert.match(memorySource, /continuation_of_task_id: task\.id/)
-  assert.match(memorySource, /task\.payload\?\.user_message_id/)
+  assert.match(inactivitySource, /task\.payload\?\.user_message_id/)
   assert.match(memorySource, /source_type: "proactive_message"/)
   assert.match(memorySource, /source_id: result\.messageId/)
+})
+
+test("frequent continuation is not blocked by the cooldown for its parent message", () => {
+  const parentMessageId = "assistant-442"
+  const task = {
+    id: 443,
+    type: "inactivity_reach_out",
+    source_type: "proactive_message",
+    source_id: parentMessageId,
+    payload: {
+      user_message_id: "user-100",
+      assistant_message_id: parentMessageId,
+      reach_out_mode: "frequent",
+      continuation_of_task_id: 442,
+    },
+  }
+  const parentMessage = {
+    id: parentMessageId,
+    metadata: {
+      proactive: true,
+      proactiveTaskId: 442,
+    },
+  }
+
+  const delay = getInactivityReachOutDelayMinutes("frequent", "open", () => 0)
+
+  assert.equal(delay, 60)
+  assert.equal(shouldApplyProactiveCooldown(parentMessage, task), false)
+  assert.equal(
+    shouldApplyProactiveCooldown(
+      {
+        id: "unrelated-proactive-message",
+        metadata: { proactive: true, proactiveTaskId: 441 },
+      },
+      task,
+    ),
+    true,
+  )
+})
+
+test("a user reply still stops the inactivity continuation", () => {
+  const task = {
+    payload: {
+      user_message_id: "user-before-first-reach-out",
+    },
+  }
+
+  assert.equal(
+    hasUserRepliedToInactivityTask(task, { id: "user-before-first-reach-out" }),
+    false,
+  )
+  assert.equal(
+    hasUserRepliedToInactivityTask(task, { id: "new-user-reply" }),
+    true,
+  )
 })
 
 test("inactivity task identities preserve history within one conversation", () => {
