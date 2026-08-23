@@ -457,8 +457,8 @@ async function enqueueInactivityReachOutTask({
       {
         user_id,
         type: "inactivity_reach_out",
-        source_type: "conversation",
-        source_id: conversation_id,
+        source_type: "message",
+        source_id: user_message_id,
         status: "pending",
         due_at: dueAt,
         conversation_id,

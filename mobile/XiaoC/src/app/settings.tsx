@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router, useFocusEffect } from "expo-router";
 import {
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -36,9 +37,11 @@ import {
 } from "../lib/modelSettings";
 import {
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
+  INACTIVITY_REACH_OUT_OPTIONS,
   InactivityReachOutMode,
   getInactivityReachOutMode,
   getInactivityReachOutModeLabel,
+  saveInactivityReachOutMode,
 } from "../lib/proactiveSettings";
 
 type CreditsResponse = {
@@ -206,8 +209,12 @@ export default function SettingsScreen() {
     model: false,
     cost: false,
     settings: false,
+    preferences: false,
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [reachOutSheetVisible, setReachOutSheetVisible] = useState(false);
+  const [savingReachOutMode, setSavingReachOutMode] =
+    useState<InactivityReachOutMode | null>(null);
 
   const loadSettings = useCallback(async () => {
     setRefreshing(true);
@@ -263,6 +270,27 @@ export default function SettingsScreen() {
   const selectModel = async (modelId: string) => {
     const model = await saveSelectedChatModel(modelId);
     setSelectedModel(model);
+  };
+
+  const selectReachOutMode = async (nextMode: InactivityReachOutMode) => {
+    if (savingReachOutMode) return;
+
+    if (nextMode === reachOutMode) {
+      setReachOutSheetVisible(false);
+      return;
+    }
+
+    setSavingReachOutMode(nextMode);
+
+    try {
+      const savedMode = await saveInactivityReachOutMode(nextMode);
+      setReachOutMode(savedMode);
+      setReachOutSheetVisible(false);
+    } catch {
+      Alert.alert("保存失败", "请稍后再试。");
+    } finally {
+      setSavingReachOutMode(null);
+    }
   };
 
   const toggleSection = (section: keyof typeof expandedSections) => {
@@ -541,13 +569,6 @@ export default function SettingsScreen() {
             onPress={showFaceIdInfo}
           />
           <InfoRow
-            label="主动联系频率"
-            value={getInactivityReachOutModeLabel(reachOutMode)}
-            onPress={() =>
-              router.push("/settings/inactivity-reach-out" as never)
-            }
-          />
-          <InfoRow
             label="我的朋友圈头像"
             value={account.userMomentAvatarUri ? "相册照片" : "未选择"}
             onPress={() => chooseMomentAvatar("user")}
@@ -559,7 +580,79 @@ export default function SettingsScreen() {
           />
           <InfoRow label="当前 API" value={getApiHost()} />
         </SectionCard>
+
+        <SectionCard
+          title="⭐ 偏好"
+          summary={getInactivityReachOutModeLabel(reachOutMode)}
+          expanded={expandedSections.preferences}
+          onToggle={() => toggleSection("preferences")}
+        >
+          <InfoRow
+            label="主动联系"
+            value={getInactivityReachOutModeLabel(reachOutMode)}
+            onPress={() => setReachOutSheetVisible(true)}
+          />
+        </SectionCard>
       </ScrollView>
+
+      <Modal
+        visible={reachOutSheetVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReachOutSheetVisible(false)}
+      >
+        <View style={styles.sheetOverlay}>
+          <Pressable
+            style={styles.sheetBackdrop}
+            onPress={() => setReachOutSheetVisible(false)}
+          />
+
+          <View style={styles.sheetContainer}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>主动联系</Text>
+
+            <View style={styles.sheetOptions}>
+              {INACTIVITY_REACH_OUT_OPTIONS.map((option, index) => {
+                const selected = option.mode === reachOutMode;
+                const saving = option.mode === savingReachOutMode;
+
+                return (
+                  <Pressable
+                    key={option.mode}
+                    style={({ pressed }) => [
+                      styles.sheetOption,
+                      index > 0 && styles.sheetOptionBorder,
+                      pressed && styles.sheetOptionPressed,
+                    ]}
+                    disabled={Boolean(savingReachOutMode)}
+                    onPress={() => selectReachOutMode(option.mode)}
+                  >
+                    <View style={styles.sheetRadio}>
+                      {selected && <View style={styles.sheetRadioSelected} />}
+                    </View>
+                    <View style={styles.sheetOptionText}>
+                      <Text style={styles.sheetOptionLabel}>{option.label}</Text>
+                      <Text style={styles.sheetOptionDetail}>{option.detail}</Text>
+                    </View>
+                    {saving && <Text style={styles.sheetSaving}>保存中…</Text>}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.sheetCancel,
+                pressed && styles.sheetOptionPressed,
+              ]}
+              disabled={Boolean(savingReachOutMode)}
+              onPress={() => setReachOutSheetVisible(false)}
+            >
+              <Text style={styles.sheetCancelText}>取消</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -679,6 +772,119 @@ const styles = StyleSheet.create({
   checkmark: {
     fontSize: 18,
     color: "#8D8793",
+  },
+
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.24)",
+  },
+
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+
+  sheetContainer: {
+    paddingTop: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 30,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: "#F2F2F7",
+  },
+
+  sheetHandle: {
+    width: 36,
+    height: 5,
+    borderRadius: 3,
+    alignSelf: "center",
+    marginBottom: 14,
+    backgroundColor: "#C7C7CC",
+  },
+
+  sheetTitle: {
+    marginBottom: 14,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#1C1C1E",
+  },
+
+  sheetOptions: {
+    overflow: "hidden",
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+  },
+
+  sheetOption: {
+    minHeight: 64,
+    marginLeft: 16,
+    paddingRight: 16,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  sheetOptionBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#D1D1D6",
+  },
+
+  sheetOptionPressed: {
+    opacity: 0.55,
+  },
+
+  sheetRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: "#8E8E93",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 13,
+  },
+
+  sheetRadioSelected: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#3578F6",
+  },
+
+  sheetOptionText: {
+    flex: 1,
+  },
+
+  sheetOptionLabel: {
+    fontSize: 16,
+    color: "#1C1C1E",
+  },
+
+  sheetOptionDetail: {
+    marginTop: 3,
+    fontSize: 13,
+    color: "#8E8E93",
+  },
+
+  sheetSaving: {
+    marginLeft: 10,
+    fontSize: 13,
+    color: "#8E8E93",
+  },
+
+  sheetCancel: {
+    height: 52,
+    borderRadius: 14,
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
+
+  sheetCancelText: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#3578F6",
   },
 
   infoRow: {

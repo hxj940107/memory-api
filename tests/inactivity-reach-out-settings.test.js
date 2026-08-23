@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
@@ -41,9 +41,38 @@ test("task creation and execution both honor the user setting", () => {
   assert.match(memorySource, /用户已关闭主动联系/)
 })
 
+test("completed inactivity reach-outs schedule a guarded continuation", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(memorySource, /enqueueNextInactivityReachOutTask\(task, result\)/)
+  assert.match(memorySource, /getInactivityReachOutDelayMinutes\(reachOutMode, "open"\)/)
+  assert.match(memorySource, /continuation_of_task_id: task\.id/)
+  assert.match(memorySource, /task\.payload\?\.user_message_id/)
+  assert.match(memorySource, /source_type: "proactive_message"/)
+  assert.match(memorySource, /source_id: result\.messageId/)
+})
+
+test("inactivity task identities preserve history within one conversation", () => {
+  const chatSource = readFileSync("api/chat.js", "utf8")
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(
+    chatSource,
+    /type: "inactivity_reach_out",\s+source_type: "message",\s+source_id: user_message_id/,
+  )
+  assert.match(
+    memorySource,
+    /\.from\("xiaoc_proactive_tasks"\)\s+\.insert\(\{[\s\S]*?source_type: "proactive_message",\s+source_id: result\.messageId/,
+  )
+  assert.doesNotMatch(
+    chatSource,
+    /type: "inactivity_reach_out",\s+source_type: "conversation",\s+source_id: conversation_id/,
+  )
+})
+
 test("settings UI exposes the four concise system-style choices", () => {
   const settingsSource = readFileSync(
-    "mobile/XiaoC/src/app/settings/inactivity-reach-out.tsx",
+    "mobile/XiaoC/src/app/settings.tsx",
     "utf8",
   )
   const optionsSource = readFileSync(
@@ -51,7 +80,15 @@ test("settings UI exposes the four concise system-style choices", () => {
     "utf8",
   )
 
-  assert.match(settingsSource, />主动联系频率</)
+  assert.match(settingsSource, /title="⭐ 偏好"/)
+  assert.match(settingsSource, /label="主动联系"/)
+  assert.match(settingsSource, /animationType="slide"/)
+  assert.match(settingsSource, /saveInactivityReachOutMode\(nextMode\)/)
+  assert.doesNotMatch(settingsSource, /settings\/inactivity-reach-out/)
+  assert.equal(
+    existsSync("mobile/XiaoC/src/app/settings/inactivity-reach-out.tsx"),
+    false,
+  )
   assert.match(optionsSource, /label: "经常", detail: "约1-2小时"/)
   assert.match(optionsSource, /label: "正常", detail: "约2\.5-4小时"/)
   assert.match(optionsSource, /label: "偶尔", detail: "约5-8小时"/)

@@ -8,6 +8,7 @@ import {
   CONTEXT_BUDGET,
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   TREEHOLE_AUTONOMOUS_POLICY,
+  getInactivityReachOutDelayMinutes,
   normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
@@ -1878,6 +1879,68 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
   return data?.read_at || nextReadAt
 }
 
+async function enqueueNextInactivityReachOutTask(task, result) {
+  const { data: state, error: stateError } = await supabase
+    .from("user_state")
+    .select("inactivity_reach_out_mode")
+    .eq("user_id", task.user_id)
+    .maybeSingle()
+
+  if (stateError && stateError.code !== "42703") throw stateError
+
+  const reachOutMode = stateError?.code === "42703"
+    ? DEFAULT_INACTIVITY_REACH_OUT_MODE
+    : normalizeInactivityReachOutMode(state?.inactivity_reach_out_mode)
+
+  if (reachOutMode === "off") return null
+
+  const { data: latestUserMessage, error: latestUserError } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("user_id", task.user_id)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (latestUserError) throw latestUserError
+  if (!latestUserMessage ||
+      String(latestUserMessage.id) !== String(task.payload?.user_message_id)) {
+    return null
+  }
+
+  const delayMinutes = getInactivityReachOutDelayMinutes(reachOutMode, "open")
+  if (delayMinutes === null) return null
+
+  const scheduledAt = new Date().toISOString()
+  const dueAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .insert({
+      user_id: task.user_id,
+      type: "inactivity_reach_out",
+      source_type: "proactive_message",
+      source_id: result.messageId,
+      status: "pending",
+      due_at: dueAt,
+      conversation_id: result.conversationId,
+      reason: "小C主动联系后她还没有回复，按当前频率再次自然靠近。",
+      payload: {
+        ...(task.payload || {}),
+        scheduled_at: scheduledAt,
+        assistant_message_id: result.messageId,
+        assistant_reply: trimText(result.content, 500),
+        reach_out_mode: reachOutMode,
+        continuation_of_task_id: task.id,
+      },
+    })
+    .select("id,due_at,status")
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 async function executeProactiveTask(task) {
   if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update"].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
@@ -1925,6 +1988,7 @@ async function executeProactiveTask(task) {
   return {
     messageId,
     conversationId,
+    content,
   }
 }
 
@@ -2026,6 +2090,17 @@ async function checkPendingProactiveTasks() {
 
       if (updateError) throw updateError
       completed += 1
+
+      if (task.type === "inactivity_reach_out") {
+        try {
+          const nextTask = await enqueueNextInactivityReachOutTask(task, result)
+          if (nextTask) {
+            console.log("INACTIVITY REACH-OUT CONTINUATION QUEUED:", nextTask)
+          }
+        } catch (continuationError) {
+          console.error("inactivity reach-out continuation enqueue failed:", continuationError)
+        }
+      }
     } catch (taskError) {
       failed += 1
       console.error("xiaoc proactive task failed:", taskError)
