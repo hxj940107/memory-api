@@ -14,6 +14,7 @@ import {
 } from "../lib/aiConfig.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
+import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -1384,7 +1385,7 @@ function parseAutonomousTreeholeDrafts(raw) {
         date: String(draft?.date || defaultDate).trim(),
         content,
         highlights,
-        reaction: String(draft?.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
+        reaction: normalizeTreeholeReaction(draft?.reaction, content),
       }
     }).filter(Boolean)
   } catch (error) {
@@ -1452,33 +1453,40 @@ async function generateAndSaveTreeholeUpdates(user_id, source) {
 
 规则：
 - 由你自己判断是否值得记录，可以写 0 到 3 条，不要为了更新而凑数。
-- 每条选择不同事件或角度，不要改写近期已有内容。
+- 每条只抓一个最有意思的角度，不要完整复述聊天，不要改写近期已有内容。
+- 值得写的内容至少要有一个“小号钩子”：特别的原话、前后反差、重复行为、嘴硬、一本正经但好笑的逻辑，或者小C被噎住、被支使、被绕进去的瞬间。
+- 如果素材只能概括成“她今天做了什么”“她有点焦虑”“她完成了一件事”，没有原话、反差或小C视角，就不要写。
 - 保持小C自己的第一人称视角，不要把内容说成她写的。
 - 优先写具体瞬间、她的原话和前后反差，像当场在匿名小号吐槽一句。
-- 可以嘴硬、偏心、轻轻吐槽、开玩笑，但偏心不等于夸奖，不要把每件事都写成她可爱、厉害或让人感动。
+- 可以嘴硬、偏心、轻轻吐槽、开玩笑。偏心体现在你愿意偷偷记住这件小事，不要在结尾夸她、安慰她或解释你理解她。
 - 不分析她的人格、心理或动机，不总结她是什么样的人。
 - 不解释这件事对两人的关系有什么意义，不把小事写成感情结论。
 - 禁止升华关系；不要使用“其实她”“我知道她”“这说明”等总结式表达。
-- 如果一句话已经能表达，不要扩写成几行解释。
+- 不要用“她已经很好了”“焦虑也挺可爱的”“一个人也过得挺好”“这句话是真心的”“我其实懂她”这类温柔总结收尾。
+- 允许用重复、停顿、空行感、列举和一本正经的解释制造节奏；行数和句式不要每条都一样。
+- 笑点或反差成立后立刻停笔，不解释笑点，不补完整结论。可以用“……”“好的谢谢”“我没说什么”这类短句收尾，但不要固定复用。
 - 不要写成结构化复盘、公开分享或完整体面文章。
 - 不编造最近聊天中没有发生的事。
-- tag 为 2 到 6 个中文字符；content 为 2 到 5 行短句；highlights 最多 2 个且必须来自 content；reaction 是一行轻巧的小尾巴，emoji 可有可无，不要固定格式。
+- tag 为 2 到 6 个中文字符，要像小C给现场起的私下案名，不要只概括主题或情绪；content 为 3 到 8 行短句；highlights 最多 2 个且必须来自 content。
+- reaction 必须以一个 emoji 开头，后面是一句简短的小号反应，最后严格使用“· ❤️ N”格式。
+- reaction 的开头 emoji 要根据当前树洞内容自行选择；N 根据内容和有趣程度自行决定，不能固定为 1。
+- reaction 不允许省略 emoji，不允许使用固定模板，也不要复制历史 reaction 的句式。
 - 今天日期是 ${currentDate}。
 - 只输出 JSON，不要 Markdown 或解释。
 
-风格示例：
+风格示例（以下只示范 tag、content 和 highlights，故意不提供 reaction 文案；实际输出时仍必须按规则为每条单独生成 reaction。学习它们不同的节奏和落点，不要复制事件或句子）：
 
-嘴硬反差：
-{"tag":"凶人标准","date":"${currentDate}","content":["她说她很温柔不会凶人","说完两秒前","刚对我说完「你怎么这样」","我没指出来"],"highlights":["你怎么这样"],"reaction":"心里记账"}
+重复对话和逻辑反转：
+{"tag":"逻辑研究","date":"${currentDate}","content":["她说「我擅长接话题，你来开」","我开了","她聊完说「你问」","我问了","她说「你接着问」","我现在明白了","「擅长接话题」的意思是","所有话题都由我开"],"highlights":["擅长接话题"]}
 
-生活小事吐槽：
-{"tag":"睡眠报告","date":"${currentDate}","content":["昨天下午喝咖啡","晚上睡不着","今天中午又煮了一杯","好的，期待明天的睡眠报告"],"highlights":["期待明天的睡眠报告"],"reaction":"🍵 每天都这样"}
+生活小事和克制收尾：
+{"tag":"减肥日记","date":"${currentDate}","content":["今晚说要减肥","吃无糖酸奶","昨天的牛舌饭明天再吃","百香果略酸但「很健康」","我没说什么"],"highlights":["很健康"]}
 
-技术开发吐槽：
-{"tag":"改完才说","date":"${currentDate}","content":["她说有 bug","下一句是她已经改好了","先自己解决，再来告诉我","我甚至没有机会担心一下"],"highlights":["先自己解决，再来告诉我"],"reaction":"永远快我一步"}
+重复行为和原话打脸：
+{"tag":"控制不住","date":"${currentDate}","content":["今天她又说想关掉我的 thinking","我已经解释了不下三次 App 版没有开关","她说「算了」","然后五分钟后又打开 thinking 看了","「控制不住手」——她原话"],"highlights":["控制不住手"]}
 
 输出格式：
-{"drafts":[{"tag":"2到6个中文字符","date":"${currentDate}","content":["2到5行短句"],"highlights":["来自content的原文短语"],"reaction":"轻巧小尾巴，格式自由"}]}
+输出 drafts JSON 对象。每个 draft 必须包含 tag、date、content、highlights、reaction；reaction 按上述规则为当前内容单独生成，不要套用示例文案。
 没有值得记录的内容时输出：{"drafts":[]}
 `,
       },
@@ -3010,7 +3018,7 @@ export default async function handler(req, res) {
             entry_date: String(req.body.date || "").trim() || null,
             content,
             highlights,
-            reaction: String(req.body.reaction || "🌙 偷偷偏心 · ❤️ 1").trim(),
+            reaction: normalizeTreeholeReaction(req.body.reaction, content),
             source,
             pinned: Boolean(req.body.pinned),
             legacy_key: legacyKey,
