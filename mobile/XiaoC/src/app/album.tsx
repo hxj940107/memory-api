@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiJson, APP_USER_ID } from "../config/api";
@@ -71,6 +71,7 @@ const normalizeRelations = (values: string[]) => [...new Set(
 )];
 
 export default function AlbumScreen() {
+  const { width: screenWidth } = useWindowDimensions();
   const [assets, setAssets] = useState<AlbumAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [editorVisible, setEditorVisible] = useState(false);
@@ -271,6 +272,8 @@ export default function AlbumScreen() {
   };
 
   const previewImage = pickedImage?.uri || editingAsset?.image || null;
+  const gridGap = 2;
+  const thumbnailSize = (screenWidth - gridGap * 4) / 5;
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -285,9 +288,8 @@ export default function AlbumScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.intro}>只有你主动放进来的照片。分类由你决定，小C只会从允许使用的照片里挑选朋友圈配图。</Text>
         {loading ? (
-          <Text style={styles.emptyText}>正在整理相册…</Text>
+          <Text style={styles.statusText}>正在整理相册…</Text>
         ) : assets.length === 0 ? (
           <Pressable style={styles.emptyCard} onPress={openNewAsset}>
             <SymbolView name="photo.on.rectangle" size={28} tintColor="#8E8E93" />
@@ -297,16 +299,12 @@ export default function AlbumScreen() {
         ) : (
           <View style={styles.grid}>
             {assets.map(asset => (
-              <Pressable key={asset.id} style={styles.gridItem} onPress={() => openAsset(asset)}>
+              <Pressable
+                key={asset.id}
+                style={{ width: thumbnailSize, height: thumbnailSize }}
+                onPress={() => openAsset(asset)}
+              >
                 <Image source={asset.image} style={styles.gridImage} contentFit="cover" />
-                <Text style={styles.assetLabel} numberOfLines={1}>
-                  {asset.categories.length
-                    ? asset.categories.join(" · ")
-                    : asset.category || "未分类"}
-                </Text>
-                <Text style={styles.assetScope}>
-                  {asset.accessScope === "shared" ? "小C可用于朋友圈" : "仅自己查看"}
-                </Text>
               </Pressable>
             ))}
           </View>
@@ -429,14 +427,11 @@ const styles = StyleSheet.create({
   header: { height: 48, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 17, fontWeight: "600", color: "#111111" },
-  content: { padding: 20, paddingBottom: 40 },
-  intro: { color: "#6E6E73", fontSize: 14, lineHeight: 21, marginBottom: 24 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
-  gridItem: { width: "47%", marginBottom: 8 },
-  gridImage: { width: "100%", aspectRatio: 1, borderRadius: 14, backgroundColor: "#E9E9ED" },
-  assetLabel: { fontSize: 14, color: "#222222", marginTop: 8 },
-  assetScope: { fontSize: 12, color: "#8E8E93", marginTop: 3 },
-  emptyCard: { minHeight: 220, borderRadius: 18, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", gap: 10 },
+  content: { paddingBottom: 40 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 2 },
+  gridImage: { width: "100%", height: "100%", backgroundColor: "#E9E9ED" },
+  statusText: { margin: 20, color: "#8E8E93", fontSize: 14 },
+  emptyCard: { minHeight: 220, margin: 20, borderRadius: 18, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", gap: 10 },
   emptyTitle: { color: "#222222", fontSize: 16, fontWeight: "500" },
   emptyText: { color: "#8E8E93", fontSize: 14 },
   editor: { flex: 1, backgroundColor: "#F7F7F8" },
