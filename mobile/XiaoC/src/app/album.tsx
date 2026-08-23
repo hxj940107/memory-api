@@ -3,7 +3,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -70,6 +70,11 @@ const normalizeRelations = (values: string[]) => [...new Set(
     .filter(value => RELATIONS.includes(value))
 )];
 
+const getAssetCategories = (asset: AlbumAsset) => [...new Set([
+  ...(asset.categories || []),
+  ...(asset.category ? [asset.category] : []),
+].map(item => LEGACY_CATEGORY_MAP[item] || item).filter(Boolean))];
+
 export default function AlbumScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const [assets, setAssets] = useState<AlbumAsset[]>([]);
@@ -84,6 +89,21 @@ export default function AlbumScreen() {
   const [weather, setWeather] = useState<string | null>(null);
   const [relations, setRelations] = useState<string[]>([]);
   const [accessScope, setAccessScope] = useState<"shared" | "private">("shared");
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+
+  const availableCategories = useMemo(
+    () => [...new Set(assets.flatMap(getAssetCategories))],
+    [assets],
+  );
+  const visibleAssets = useMemo(
+    () => selectedCategories.length
+      ? assets.filter(asset => {
+          const assetCategories = getAssetCategories(asset);
+          return selectedCategories.every(category => assetCategories.includes(category));
+        })
+      : assets,
+    [assets, selectedCategories],
+  );
 
   const loadAssets = async () => {
     const data = await apiJson<AlbumAsset[]>("/api/memory", {
@@ -98,6 +118,20 @@ export default function AlbumScreen() {
       .catch((error) => Alert.alert("加载失败", error instanceof Error ? error.message : "请稍后再试"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    setSelectedCategories(current =>
+      current.filter(category => availableCategories.includes(category))
+    );
+  }, [availableCategories]);
+
+  const toggleCategoryFilter = (category: string) => {
+    setSelectedCategories(current =>
+      current.includes(category)
+        ? current.filter(item => item !== category)
+        : [...current, category]
+    );
+  };
 
   const resetEditor = () => {
     setEditingAsset(null);
@@ -288,6 +322,30 @@ export default function AlbumScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.intro}>只有你主动放进来的照片。分类由你决定，小C只会从允许使用的照片里挑选朋友圈配图。</Text>
+        {assets.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filters}
+          >
+            <Pressable
+              style={[styles.filterChip, selectedCategories.length === 0 && styles.filterChipSelected]}
+              onPress={() => setSelectedCategories([])}
+            >
+              <Text style={[styles.filterChipText, selectedCategories.length === 0 && styles.filterChipTextSelected]}>全部</Text>
+            </Pressable>
+            {availableCategories.map(category => (
+              <Pressable
+                key={category}
+                style={[styles.filterChip, selectedCategories.includes(category) && styles.filterChipSelected]}
+                onPress={() => toggleCategoryFilter(category)}
+              >
+                <Text style={[styles.filterChipText, selectedCategories.includes(category) && styles.filterChipTextSelected]}>{category}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
         {loading ? (
           <Text style={styles.statusText}>正在整理相册…</Text>
         ) : assets.length === 0 ? (
@@ -298,7 +356,7 @@ export default function AlbumScreen() {
           </Pressable>
         ) : (
           <View style={styles.grid}>
-            {assets.map(asset => (
+            {visibleAssets.map(asset => (
               <Pressable
                 key={asset.id}
                 style={{ width: thumbnailSize, height: thumbnailSize }}
@@ -428,6 +486,12 @@ const styles = StyleSheet.create({
   headerButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 17, fontWeight: "600", color: "#111111" },
   content: { paddingBottom: 40 },
+  intro: { marginHorizontal: 20, marginTop: 12, marginBottom: 14, color: "#6E6E73", fontSize: 14, lineHeight: 21 },
+  filters: { paddingHorizontal: 20, paddingBottom: 16, gap: 8 },
+  filterChip: { height: 32, paddingHorizontal: 14, borderRadius: 16, backgroundColor: "#EAEAEE", alignItems: "center", justifyContent: "center" },
+  filterChipSelected: { backgroundColor: "#1C1C1E" },
+  filterChipText: { color: "#55555A", fontSize: 14 },
+  filterChipTextSelected: { color: "#FFFFFF", fontWeight: "500" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 2 },
   gridImage: { width: "100%", height: "100%", backgroundColor: "#E9E9ED" },
   statusText: { margin: 20, color: "#8E8E93", fontSize: 14 },
