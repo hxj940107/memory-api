@@ -14,7 +14,8 @@ export default async function handler(req, res) {
       .from("conversations")
       .select("conversation_id, title, created_at, is_pinned")
       .eq("user_id", user_id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(200);
 
     if (error) {
       return res.status(500).json({

@@ -36,7 +36,7 @@ export async function saveLastConversation(conversationId: string) {
       },
     );
   } catch (error) {
-    console.log("Cloud conversation save failed:", error);
+    console.log("Cloud conversation restore post user-state failed:", error);
   }
 }
 
@@ -45,29 +45,41 @@ export async function clearLastConversation() {
 }
 
 export async function getCloudLastConversation() {
-  const state = await apiJson<UserStateResponse>("/api/user-state", {
-    query: {
-      user_id: APP_USER_ID,
-    },
-  });
+  try {
+    const state = await apiJson<UserStateResponse>("/api/user-state", {
+      query: {
+        user_id: APP_USER_ID,
+      },
+    });
 
-  return state.last_conversation;
+    return state.last_conversation;
+  } catch (error) {
+    console.log("Cloud conversation restore get user-state failed:", error);
+    throw error;
+  }
 }
 
 async function getConversationList() {
-  return apiJson<ConversationListItem[]>("/api/conversations", {
-    query: {
-      user_id: APP_USER_ID,
-    },
-  });
+  try {
+    return await apiJson<ConversationListItem[]>("/api/conversations", {
+      query: {
+        user_id: APP_USER_ID,
+      },
+    });
+  } catch (error) {
+    console.log("Cloud conversation restore get conversations failed:", error);
+    throw error;
+  }
 }
 
 export async function getBestLastConversation() {
   const localId = await getLocalLastConversation();
 
   try {
-    const cloudId = await getCloudLastConversation();
-    const conversations = await getConversationList();
+    const [cloudId, conversations] = await Promise.all([
+      getCloudLastConversation(),
+      getConversationList(),
+    ]);
     const ids = new Set(conversations.map((item) => item.id));
 
     if (cloudId && ids.has(cloudId)) {
