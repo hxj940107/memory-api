@@ -32,6 +32,7 @@ import {
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
+import { getDiaryContextWindow } from "../lib/diaryContextWindow.js"
 import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
@@ -584,22 +585,21 @@ function shouldUpdateRollingSummary(messageCount, historySize) {
   )
 }
 
-async function getDiaryContextMessages(user_id, conversation_id) {
-  const since = new Date(
-    Date.now() - CONTEXT_BUDGET.diaryContextWindowHours * 60 * 60 * 1000
-  ).toISOString()
+async function getDiaryContextMessages(user_id, conversation_id, triggerAt) {
+  const window = getDiaryContextWindow(triggerAt, USER_TIMEZONE)
 
   const { data } = await supabase
     .from("messages")
     .select("role, content, created_at")
     .eq("user_id", user_id)
     .eq("conversation_id", conversation_id)
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(CONTEXT_BUDGET.diaryContextMessages)
+    .gte("created_at", window.start)
+    .lte("created_at", window.end)
+    .order("created_at", { ascending: true })
+    .limit(CONTEXT_BUDGET.diaryContextSafetyLimit)
 
   if (!data) return []
-  return data.reverse().map(item => ({
+  return data.map(item => ({
     ...item,
     content: normalizeAssistantOutput(item),
   }))
@@ -2284,6 +2284,7 @@ export default async function handler(req, res) {
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
+    const diaryTriggerAt = new Date()
     const selectedChatModel = normalizeChatModel(model)
     const normalizedImageUrls = Array.isArray(imageUrls)
       ? imageUrls.slice(0, 4).filter(Boolean)
@@ -2329,7 +2330,7 @@ const history = await getRecentMessages(
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isManualMomentRequest = isMomentWritingRequest(message)
 const diaryContextMessages = isDiaryRequest
-  ? await getDiaryContextMessages(user_id, cid)
+  ? await getDiaryContextMessages(user_id, cid, diaryTriggerAt)
   : []
 const diaryContext = isDiaryRequest
   ? formatMessagesForDiaryContext(diaryContextMessages)
@@ -2451,7 +2452,7 @@ console.log("DYNAMIC LENGTH:", JSON.stringify(dynamicMemory).length)
 console.log("HISTORY LENGTH:", JSON.stringify(history).length)
 console.log("SYSTEM LENGTH:", systemPrompt.length)
 console.log("DIARY STYLE ENABLED:", Boolean(diaryStyleContext))
-console.log("DIARY CONTEXT WINDOW HOURS:", CONTEXT_BUDGET.diaryContextWindowHours)
+console.log("DIARY CONTEXT WINDOW:", getDiaryContextWindow(diaryTriggerAt, USER_TIMEZONE))
 console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
 console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
 console.log("CHAT MODEL:", selectedChatModel)
