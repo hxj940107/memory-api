@@ -4,6 +4,7 @@ import {
   isInvalidMomentText,
   isMomentTechnicalDiscussion,
   isMomentWritingRequest,
+  parseMomentCandidate,
 } from "../lib/momentPublishing.js"
 import fs from "fs"
 import path from "path"
@@ -1606,44 +1607,6 @@ async function markMomentAlbumImageUsed(user_id, imageKey) {
   }
 }
 
-function parseMomentCandidate(raw) {
-  const text = String(raw || "").trim()
-  const jsonText = text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim()
-
-  try {
-    const data = JSON.parse(jsonText)
-    const shareMode = ["immediate", "delayed"].includes(data.share_mode)
-      ? data.share_mode
-      : null
-    const parsedEventTime = data.event_time ? new Date(data.event_time) : null
-
-    return {
-      shouldPost: Boolean(data.shouldPost),
-      text: String(data.text || "").trim().slice(0, 80),
-      image: String(data.image || "").trim() || null,
-      priority: Math.round(Math.max(1, Math.min(3, Number(data.priority) || 1))),
-      shareMode,
-      eventTime: parsedEventTime && Number.isFinite(parsedEventTime.getTime())
-        ? parsedEventTime.toISOString()
-        : null,
-    }
-  } catch (error) {
-    console.error("MOMENT JSON PARSE FAILED:", text)
-    return {
-      shouldPost: false,
-      text: "",
-      image: null,
-      priority: 1,
-      shareMode: null,
-      eventTime: null,
-    }
-  }
-}
-
 function getMomentCandidatePublishAfter() {
   const minDelay = CONTEXT_BUDGET.momentCandidateMinDelayMinutes
   const maxDelay = CONTEXT_BUDGET.momentCandidateMaxDelayMinutes
@@ -1882,6 +1845,9 @@ async function maybeCreateMoment({
     conversation_id,
     momentContextLimit + 2
   )
+  const triggerUserMessageCreatedAt = [...momentContextMessages]
+    .reverse()
+    .find(item => item.role === "user")?.created_at || null
   const historyContextMessages = momentContextMessages.slice(0, -2)
   const context = formatMessagesForMomentContext(
     historyContextMessages,
@@ -1926,12 +1892,13 @@ ${isManualMomentRequest ? `触发条件：
 - 对话里出现了一句有画面感、关系感、生活感的话。
 - 内容应来自最近的相处氛围或小C真实注意到的东西。
 ` : `触发条件：
-自动模式下默认 shouldPost: false。只有当前对话里刚出现以下明确生活瞬间，才考虑发：
-- 发生了某件值得顺手记下的小事，比如出行、吃饭、买东西、等待、计划、完成某件事。
-- 出现了明显但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
-- 对话里出现了一句有画面感、关系感、生活感的话。
+如果当前上下文存在具体、可复述的生活事件、原话、互动反差、明确情绪，或值得记录的小瞬间，应积极考虑生成候选：
+- 发生了某件具体的小事，比如出行、吃饭、做饭、买东西、等待、计划、完成某件事。
+- 出现了明确但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
+- 对话里出现了一句有画面感、关系感、生活感的原话或互动反差。
 - 内容必须紧扣刚才的对话瞬间，不要泛化，不要脱离当前话题。
-- 一般闲聊、问答、功能讨论、技术内容，必须返回 shouldPost: false。
+- 纯技术或开发讨论、一般问答、没有具体事实的内容，返回 shouldPost: false。
+- 不得为了生成候选而编造对话中没有发生的内容。
 - 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
 `}
 
@@ -1941,12 +1908,12 @@ ${isManualMomentRequest ? `触发条件：
 - immediate 表示即时记录：事件时间应接近预计发布时间，正文可以使用当前时段语气。
 - delayed 表示延迟分享：事件早于预计发布时间，正文必须自然说明是回忆或补发，例如“昨晚”“昨天”“前几天”“今天才想起来”“翻到这张”。
 - 如果昨晚的候选预计到第二天上午发布，不能写成仍在现场，也不能使用“刚刚”“这会儿”“现在才结束”等即时措辞。
-- 不确定事件时间，或无法让正文与预计发布时间自然对应时，返回 shouldPost false。
+- 触发这次判断的用户消息创建时间是：${triggerUserMessageCreatedAt || "未取得"}。优先把它作为 event_time 的时间依据，不要自行猜测更精确的时间。
+- 事件时间不够精确时，不要仅因此拒绝；使用触发消息时间，并通过 share_mode 和正文措辞保持自然。
 
 频率原则：
 - 不要每次聊天都发。
 - 不要为了发而发。
-- 连续几天没有动态完全正常，宁可不发，也不要为了保持活跃刷存在感。
 - 更像因为刚好有分享欲而发一条，而不是固定任务或每日打卡。
 - 如果最近已经发过类似内容，应跳过。
 
@@ -2064,6 +2031,9 @@ ${context}
 她刚刚说：
 ${trimText(message, 500)}
 
+这条用户消息的 created_at：
+${triggerUserMessageCreatedAt || "未取得"}
+
 小C刚刚回复：
 ${trimText(reply, 500)}
 
@@ -2085,6 +2055,22 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     const requestedImageId = candidate.image
 
     console.log("MOMENT CANDIDATE:", candidate)
+
+    if (candidate.parseFailed) {
+      console.error("MOMENT JSON PARSE FAILED:", candidate.errorSummary)
+      await updateMomentAudit(auditId, {
+        status: "failed",
+        model_should_post: null,
+        requested_image_id: null,
+        image_validation_result: null,
+        image_resolution_result: "not_applicable",
+        skip_reason: String(candidate.errorSummary || "Moment model output was not valid JSON").slice(0, 500),
+        error_code: "model_output_parse_failed",
+        outcome: "failed",
+        completed_at: new Date().toISOString(),
+      })
+      return null
+    }
 
     if (!candidate.shouldPost || !candidate.text) {
       await completeMomentAudit(auditId, {
