@@ -34,6 +34,11 @@ import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
 import { getDiaryContextWindow } from "../lib/diaryContextWindow.js"
 import {
+  formatActiveConversationContext,
+  normalizeActiveConversationContext,
+  resolveActiveConversationContext,
+} from "../lib/activeConversationContext.js"
+import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
 } from "../lib/coreMemorySnapshot.js"
@@ -289,22 +294,38 @@ function buildRuleBasedPlanFollowUp(message) {
   }
 }
 
-async function judgePlanFollowUp({ message, reply }) {
-  if (!message || message.length < 4) return null
+async function judgePlanFollowUp({
+  message,
+  reply,
+  previousActiveContext,
+  userMessageId,
+}) {
+  if (!message) {
+    return {
+      planDecision: null,
+      activeContext: resolveActiveConversationContext(previousActiveContext, null),
+    }
+  }
 
   const raw = await callLLM(
     [
       {
         role: "system",
         content: `
-你是 XiaoC 的轻量主动回访识别器。只判断她刚刚说的话里，是否有值得之后自然回问的近期计划。
+你是 XiaoC 的轻量对话连续性与主动回访判断器。同一次判断完成两个彼此独立的任务：
+A. 判断她刚刚说的话里是否有值得之后自然回问的近期计划。
+B. 更新当前 conversation 中仍然有效的短期上下文。
 
 只输出 JSON：
-{"should_follow_up":false}
-或
+{
+  "plan_follow_up":{"should_follow_up":false},
+  "active_context":{"items":[]}
+}
+
+plan_follow_up 也可以是：
 {"should_follow_up":true,"event":"做雾化","event_type":"health_care","event_time":"2026-08-14T15:30:00+08:00","natural_delay_minutes":45,"follow_up_style":"gentle_care","reason":"这是身体护理相关，做完后一会儿轻轻关心比较自然"}
 
-判断原则：
+Plan follow-up 判断原则（保持原有语义）：
 - 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、医疗护理、宠物、家人、重要任务。
 - 例子：等下去剪头发、三点半去做雾化、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿、晚上吃药。
 - 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
@@ -315,6 +336,16 @@ async function judgePlanFollowUp({ message, reply }) {
 - 医疗护理/身体相关通常可以短一点；剪头发、见朋友可以晚一点；面试考试不要刚结束就追问。
 - 不要为了准点而准点，宁可自然一点。
 - 当前时间按北京时间理解：${new Date().toISOString()}。
+
+Active context 更新原则：
+- active_context.items 必须是更新后的完整状态，不是增量；最多4项。
+- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active或waiting","source_message_id":"来源消息ID"}。
+- 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
+- “值得保留 active context”与“值得创建 plan follow-up”彼此独立；不需要主动追问的事项也可能仍应保留。
+- 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
+- 只有她明确说完成、取消、不再需要、事件已结束并得到结果、新信息明确覆盖旧信息，或事项已明显失去短期价值时，才能删除或替换。
+- 普通寒暄、一次性无后续话语、小C的泛化评价、长期人格/关系事实、稳定长期记忆、整段聊天总结和大段原话都不要加入。
+- 不要为了凑数量新增事项；没有 active item 时返回空数组。
 `,
       },
       {
@@ -322,15 +353,26 @@ async function judgePlanFollowUp({ message, reply }) {
         content: `她刚刚说：${trimText(message, 800)}
 
 小C刚刚回复：${trimText(reply, 600)}
+
+上一版 active context：
+${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { items: [] })}
+
+当前用户消息ID：${userMessageId || "unknown"}
 `,
       },
     ],
     AI_MODELS.memoryJudge,
-    { max_tokens: 160, temperature: 0.1 }
+    { max_tokens: 520, temperature: 0.1 }
   )
   const parsed = parseJsonObject(raw.reply)
 
-  return normalizePlanFollowUpDecision(parsed)
+  return {
+    planDecision: normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
+    activeContext: resolveActiveConversationContext(
+      previousActiveContext,
+      parsed?.active_context
+    ),
+  }
 }
 
 async function enqueuePlanFollowUpTask({
@@ -340,13 +382,34 @@ async function enqueuePlanFollowUpTask({
   assistant_message_id,
   message,
   reply,
+  previous_active_context,
+  persist_active_context = true,
 }) {
   let decision = null
+  let nextActiveContext = resolveActiveConversationContext(
+    previous_active_context,
+    null
+  )
 
   try {
-    decision = await judgePlanFollowUp({ message, reply })
+    const judged = await judgePlanFollowUp({
+      message,
+      reply,
+      previousActiveContext: previous_active_context,
+      userMessageId: user_message_id,
+    })
+    decision = judged.planDecision
+    nextActiveContext = judged.activeContext
   } catch (err) {
     console.error("plan follow-up judge failed:", err)
+  }
+
+  if (persist_active_context) {
+    try {
+      await saveActiveConversationContext(assistant_message_id, nextActiveContext)
+    } catch (err) {
+      console.error("active conversation context save failed:", err)
+    }
   }
 
   decision = decision || buildRuleBasedPlanFollowUp(message)
@@ -505,6 +568,59 @@ async function saveMessage(user_id, role, content, conversation_id) {
 
   const data = await res.json().catch(() => null)
   return data?.data?.[0]?.id || null
+}
+
+async function getLatestActiveConversationContext(user_id, conversation_id) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(20)
+
+  if (error) {
+    throw error
+  }
+
+  for (const message of data || []) {
+    const context = normalizeActiveConversationContext(
+      message.metadata?.activeConversationContext
+    )
+    if (context) return context
+  }
+
+  return { items: [] }
+}
+
+async function saveActiveConversationContext(messageId, context) {
+  if (!messageId) return false
+
+  const normalized = normalizeActiveConversationContext(context)
+  if (!normalized) return false
+
+  const { data: message, error: readError } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("id", messageId)
+    .maybeSingle()
+
+  if (readError) throw readError
+
+  const { error } = await supabase
+    .from("messages")
+    .update({
+      metadata: {
+        ...(message?.metadata || {}),
+        activeConversationContext: normalized,
+      },
+    })
+    .eq("id", messageId)
+
+  if (error) throw error
+  return true
 }
 
 async function saveUserMessage(
@@ -2326,6 +2442,17 @@ const history = await getRecentMessages(
   cid,
   CONTEXT_BUDGET.recentHistoryMessages + 1
 )
+let activeConversationContext = { items: [] }
+let canPersistActiveConversationContext = true
+try {
+  activeConversationContext = await getLatestActiveConversationContext(user_id, cid)
+} catch (err) {
+  canPersistActiveConversationContext = false
+  console.error("active conversation context read failed; using no context this turn:", err)
+}
+const activeConversationContextPrompt = formatActiveConversationContext(
+  activeConversationContext
+)
 
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isManualMomentRequest = isMomentWritingRequest(message)
@@ -2535,6 +2662,8 @@ ${summaryMemory}
 【Memory｜相关长期记忆】
 
 ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
+
+${activeConversationContextPrompt}
 
 ${diaryContext
   ? `【Diary Source｜本次写观察日记可参考的近期素材】
@@ -2862,6 +2991,8 @@ console.log("======================================\n")
         assistant_message_id: assistantMessageId,
         message,
         reply,
+        previous_active_context: activeConversationContext,
+        persist_active_context: canPersistActiveConversationContext,
       })
 
       if (planTask) {
