@@ -17,6 +17,10 @@ import {
   hasUserRepliedToInactivityTask,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
+import {
+  formatTimedInactivityMessages,
+  isTemporallyUnsupportedReachOut,
+} from "../lib/inactivityTemporalGrounding.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 
@@ -1288,10 +1292,22 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
   const localTime = getMomentLocalTime(now)
   const timeContext = getInactivityTimeContext(now)
   const contextMessages = recentContext.messages.length
-    ? recentContext.messages
-        .map(item => `${item.role === "user" ? "她" : "小C"}：${trimText(item.content, 300)}`)
-        .join("\n")
-    : `她：${trimText(payload.user_message, 600)}\n小C：${trimText(payload.assistant_reply, 500)}`
+    ? formatTimedInactivityMessages(recentContext.messages, trimText)
+    : formatTimedInactivityMessages(
+        [
+          {
+            role: "user",
+            content: trimText(payload.user_message, 600),
+            created_at: payload.scheduled_at || task.created_at || task.due_at,
+          },
+          {
+            role: "assistant",
+            content: trimText(payload.assistant_reply, 500),
+            created_at: payload.scheduled_at || task.created_at || task.due_at,
+          },
+        ],
+        trimText
+      )
   const raw = await callSmallLLM(
     [
       {
@@ -1306,6 +1322,16 @@ ${systemPrompt}
 【当前时间权威】
 下面提供的服务端当前时间、用户时区和当前时段，是这次生成唯一可信的当前时间。
 最近聊天只代表过去，禁止根据其中的“晚安、睡觉、晚上”等词推断现在仍是夜间。
+
+【事件阶段与时间定位】
+- 每条最近消息都带有其在 Asia/Shanghai 的真实发送时间。先把消息中的相对时间表达锚定到该消息的日期和时间，再与服务端当前时间比较。
+- 写消息前先判断相关事件在此刻属于：尚未发生的计划、已有证据表明正在发生、已有证据表明已经完成，或证据不足无法判断。
+- 未来意图不会因为时间流逝自动变成正在发生或已经完成。没有后续用户消息确认开始、进行、完成或结果时，禁止擅自推进事件阶段。
+- 只有最近上下文提供明确开始、进行、完成或状态报告的证据，才允许询问对应进展、结果或感受。
+- 对话结束、睡觉或跨日不会构成事件已经开始的证据；睡前提到的未来事项在次日仍必须按已有证据判断。
+- 可以自然承接仍有价值的未来计划，但表达必须保持计划阶段，只围绕计划本身、期待或关系上的惦记，不得伪装成进度追问。
+- 如果事件阶段不明确，放弃进度和结果型问题。没有合适具体话题时，回到关系本身的自然靠近，不要为了承接上下文而补全事实。
+- 当前时段只用于判断事件在此刻是否合理，不用于选择固定问候或固定问题。
 
 要求：
 - 只输出消息内容，不要解释。
@@ -1354,7 +1380,8 @@ ${contextMessages}
     !message ||
     isBadProactiveMessage(message) ||
     (message.match(/[？?]/g) || []).length > 1 ||
-    isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour)
+    isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour) ||
+    isTemporallyUnsupportedReachOut(message, recentContext.messages)
   ) {
     return "突然有点想你了，想来找你待一会儿"
   }
