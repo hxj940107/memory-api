@@ -119,9 +119,10 @@ export default function WeMemoryCategoryScreen() {
         ) : (
           items.map((memory) => {
             const date = formatDate(memory.lastActiveAt || memory.createdAt);
-            const chips = [...(memory.domains || []), ...(memory.tags || [])]
-              .filter(Boolean)
-              .slice(0, 2);
+            const chips = [...new Set([
+              ...(memory.domains || []),
+              ...(memory.tags || []),
+            ].filter(Boolean))].slice(0, 2);
 
             return (
               <Pressable
@@ -159,7 +160,7 @@ export default function WeMemoryCategoryScreen() {
                 {chips.length > 0 && (
                   <View style={styles.chipRow}>
                     {chips.map((chip) => (
-                      <Text key={`${memory.id}-${chip}`} style={styles.chip}>
+                      <Text key={`${memory.id}-chip-${chip}`} style={styles.chip}>
                         {chip}
                       </Text>
                     ))}

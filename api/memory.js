@@ -214,6 +214,12 @@ function categorizeMemory(memory) {
 }
 
 const WE_MEMORY_CATEGORIES = ["关于你", "我们之间", "一起经历过", "小小偏好"]
+const WE_MEMORY_CATEGORY_IDS = {
+  "关于你": "about-her",
+  "我们之间": "our-relationship",
+  "一起经历过": "shared-experiences",
+  "小小偏好": "small-preferences",
+}
 
 function getWeCategoryMemories(memories, name) {
   return memories
@@ -248,6 +254,7 @@ function buildWeMemoryResponse(memories, source = "ombre") {
     const items = getWeCategoryMemories(memories, name)
 
     return {
+      id: WE_MEMORY_CATEGORY_IDS[name],
       name,
       total: items.length,
       items: items.slice(0, 6),

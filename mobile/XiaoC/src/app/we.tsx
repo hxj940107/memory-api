@@ -26,6 +26,7 @@ type WeMemory = {
 };
 
 type WeCategory = {
+  id: string;
   name: string;
   total: number;
   items: WeMemory[];
@@ -91,12 +92,10 @@ function MemoryCard({
 }) {
   const date = formatDate(memory.lastActiveAt || memory.createdAt);
   const preview = trimContent(memory.content || memory.title, 42);
-  const chips = [
+  const chips = [...new Set([
     ...(memory.domains || []),
     ...(memory.tags || []),
-  ]
-    .filter(Boolean)
-    .slice(0, 2);
+  ].filter(Boolean))].slice(0, 2);
 
   return (
     <Pressable
@@ -136,7 +135,7 @@ function MemoryCard({
       {chips.length > 0 && (
         <View style={styles.chipRow}>
           {chips.map((chip) => (
-            <Text key={`${memory.id}-${chip}`} style={styles.chip}>
+            <Text key={`${memory.id}-chip-${chip}`} style={styles.chip}>
               {chip}
             </Text>
           ))}
@@ -289,7 +288,7 @@ export default function WeScreen() {
 
             {data.categories.map((category) => (
               <MemorySection
-                key={category.name}
+                key={category.id}
                 title={category.name}
                 items={category.items}
                 total={category.total}

@@ -74,7 +74,7 @@ export default function WeMemoryDetailScreen() {
   const [pinned, setPinned] = useState(normalizeText(params.pinned) === "1");
   const [saving, setSaving] = useState(false);
   const date = formatDate(params.lastActiveAt || params.createdAt);
-  const chips = [...domains, ...tags].filter(Boolean);
+  const chips = [...new Set([...domains, ...tags].filter(Boolean))];
 
   const copyMemory = async () => {
     await Clipboard.setStringAsync(content || title);
@@ -233,7 +233,7 @@ export default function WeMemoryDetailScreen() {
           {chips.length > 0 && (
             <View style={styles.chipRow}>
               {chips.map((chip) => (
-                <Text key={chip} style={styles.chip}>
+                <Text key={`${id}-chip-${chip}`} style={styles.chip}>
                   {chip}
                 </Text>
               ))}
