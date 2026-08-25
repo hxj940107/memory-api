@@ -68,6 +68,11 @@ const systemPrompt = fs.readFileSync(
   "utf-8"
 )
 
+const relationshipPrompt = fs.readFileSync(
+  path.join(process.cwd(), "prompt/relationship.md"),
+  "utf-8"
+)
+
 const USER_TIMEZONE = "Asia/Shanghai"
 
 function buildEnvironmentContext(timeZone = USER_TIMEZONE) {
@@ -2671,6 +2676,7 @@ const cachedPromptMessages = buildCachedPromptMessages({
   persona: `
 ${systemPrompt}
 `,
+  relationshipContract: relationshipPrompt,
   coreMemorySnapshot: `【Identity｜人格层】
 
 ${injectedPinMemory}`,

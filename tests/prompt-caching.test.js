@@ -8,6 +8,7 @@ import {
 {
   const messages = buildCachedPromptMessages({
     persona: "PERSONA-STABLE",
+    relationshipContract: "RELATIONSHIP-CONTRACT-STABLE",
     coreMemorySnapshot: "CORE-SNAPSHOT-STABLE",
     fixedRules: "FIXED-RULES-STABLE",
     dynamicContext: "CURRENT-TIME-2026-08-21 SUMMARY-DYNAMIC IMAGE-DYNAMIC",
@@ -16,6 +17,7 @@ import {
   const dynamic = JSON.stringify(messages[1])
 
   assert.match(stable, /PERSONA-STABLE/)
+  assert.match(stable, /RELATIONSHIP-CONTRACT-STABLE/)
   assert.match(stable, /CORE-SNAPSHOT-STABLE/)
   assert.match(stable, /FIXED-RULES-STABLE/)
   assert.doesNotMatch(stable, /CURRENT-TIME|SUMMARY-DYNAMIC|IMAGE-DYNAMIC/)
@@ -23,6 +25,17 @@ import {
   assert.equal(messages[0].content.at(-1).cache_control.type, "ephemeral")
   assert.equal(messages[0].content.at(-1).cache_control.ttl, "1h")
   assert.equal(messages[1].content.cache_control, undefined)
+  assert.deepEqual(
+    messages[0].content.map(({ text }) => text),
+    [
+      "PERSONA-STABLE",
+      "RELATIONSHIP-CONTRACT-STABLE",
+      "CORE-SNAPSHOT-STABLE",
+      "FIXED-RULES-STABLE",
+    ]
+  )
+  assert.equal(messages[0].content[1].cache_control, undefined)
+  assert.equal(messages[0].content[3].cache_control.type, "ephemeral")
 }
 
 {
@@ -75,6 +88,7 @@ import {
   assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /dynamicPromptContext = `\$\{environmentContext\}/)
   assert.match(chat, /buildCachedPromptMessages\(\{/)
+  assert.match(chat, /relationshipContract: relationshipPrompt/)
   assert.doesNotMatch(chat, /callLLM\([\s\S]{0,300}AI_MODELS\.imageDescription,[\s\S]{0,100}session_id/)
 }
 
