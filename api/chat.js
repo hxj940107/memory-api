@@ -43,6 +43,7 @@ import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
 } from "../lib/coreMemorySnapshot.js"
+import { isConversationalMeetingGoodbye } from "../lib/planFollowUpGuard.js"
 import {
   filterDynamicMemorySearchText,
   LEGACY_CORE_MEMORY_BUCKET_IDS,
@@ -333,6 +334,7 @@ plan_follow_up 也可以是：
 
 Plan follow-up 判断原则（保持原有语义）：
 - 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、医疗护理、宠物、家人、重要任务。
+- “时间表达 + 见”如果只是当前聊天的结束语，而且没有明确见面对象、地点、现实事件、出门动作或已经确认的见面安排，是告别，不是 meeting plan；不要创建 plan follow-up，也不要写入 meeting active context。
 - 例子：等下去剪头发、三点半去做雾化、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿、晚上吃药。
 - 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
 - 不要把“我们下一步做什么”“我需要你改代码”当作生活回访。
@@ -371,13 +373,21 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
     { max_tokens: 520, temperature: 0.1 }
   )
   const parsed = parseJsonObject(raw.reply)
+  const conversationalGoodbye = isConversationalMeetingGoodbye(
+    message,
+    previousActiveContext
+  )
 
   return {
-    planDecision: normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
-    activeContext: resolveActiveConversationContext(
-      previousActiveContext,
-      parsed?.active_context
-    ),
+    planDecision: conversationalGoodbye
+      ? null
+      : normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
+    activeContext: conversationalGoodbye
+      ? resolveActiveConversationContext(previousActiveContext, null)
+      : resolveActiveConversationContext(
+        previousActiveContext,
+        parsed?.active_context
+      ),
   }
 }
 

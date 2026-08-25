@@ -110,7 +110,12 @@ const exam = {
   assert.match(chat, /persist_active_context: canPersistActiveConversationContext/)
   assert.match(chat, /if \(persist_active_context\)/)
   assert.equal((judgeSource.match(/callLLM\(/g) || []).length, 1)
-  assert.match(judgeSource, /planDecision: normalizePlanFollowUpDecision/)
+  assert.match(judgeSource, /planDecision: conversationalGoodbye/)
+  assert.match(judgeSource, /normalizePlanFollowUpDecision\(parsed\?\.plan_follow_up \|\| parsed\)/)
+  assert.match(
+    judgeSource,
+    /activeContext: conversationalGoodbye[\s\S]*resolveActiveConversationContext\(previousActiveContext, null\)/
+  )
   assert.match(chat, /decision = decision \|\| buildRuleBasedPlanFollowUp\(message\)/)
   assert.match(chat, /\.from\("xiaoc_proactive_tasks"\)[\s\S]*\.upsert\(/)
 }
