@@ -83,7 +83,10 @@ import {
   assert.match(dynamicSource, /stableMemory/)
   assert.match(dynamicSource, /diaryContext/)
   assert.match(dynamicSource, /webSearch/)
-  assert.match(chat, /const mainChatOptions = \{ session_id: cid \}/)
+  assert.match(
+    chat,
+    /const mainChatOptions = buildGeneratedFileChatOptions\(generatedFileRequest, cid\)/
+  )
   assert.match(chat, /callLLM\(messages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /dynamicPromptContext = `\$\{environmentContext\}/)

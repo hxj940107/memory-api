@@ -3,8 +3,12 @@ import fs from "node:fs"
 import test from "node:test"
 
 import {
+  buildGeneratedFileChatOptions,
+  buildGeneratedFileInstruction,
   createGeneratedAttachment,
+  GENERATED_FILE_MAX_COMPLETION_TOKENS,
   generateFile,
+  isGeneratedFileOutputComplete,
   normalizeGeneratedAttachments,
   parseGeneratedFileRequest,
   signGeneratedAttachmentDownload,
@@ -12,6 +16,38 @@ import {
 import {
   normalizeGeneratedAttachments as normalizeAppAttachments,
 } from "../mobile/XiaoC/src/lib/generatedAttachments.ts"
+
+test("uses a high output budget only for generated files", () => {
+  assert.deepEqual(buildGeneratedFileChatOptions(null, "chat-1"), {
+    session_id: "chat-1",
+  })
+  assert.deepEqual(
+    buildGeneratedFileChatOptions({ type: "markdown" }, "chat-1"),
+    {
+      session_id: "chat-1",
+      max_completion_tokens: 8192,
+    },
+  )
+  assert.equal(GENERATED_FILE_MAX_COMPLETION_TOKENS, 8192)
+})
+
+test("generated file instruction overrides ordinary short-chat style", () => {
+  const instruction = buildGeneratedFileInstruction({
+    type: "markdown",
+    filename: "说明.md",
+  })
+
+  assert.match(instruction, /当前输出将直接作为文件正文/)
+  assert.match(instruction, /不受日常聊天中“简短”“一句即可”“不要写完整文章”等表达风格约束/)
+  assert.match(instruction, /完整覆盖她要求的内容/)
+  assert.match(instruction, /不要为了符合聊天人格而主动缩短文档/)
+})
+
+test("treats finish_reason length as incomplete", () => {
+  assert.equal(isGeneratedFileOutputComplete("length"), false)
+  assert.equal(isGeneratedFileOutputComplete("stop"), true)
+  assert.equal(isGeneratedFileOutputComplete(null), true)
+})
 
 test("generates markdown and text files as UTF-8 buffers", () => {
   const markdown = generateFile({
@@ -205,6 +241,8 @@ test("chat persistence, history restore, and signed download use attachment meta
 
   assert.match(chat, /attachments\.length \? \{ attachments \} : \{\}/)
   assert.match(chat, /GENERATED FILE CREATE FAILED:[\s\S]*整理好的内容我先放在这里/)
+  assert.match(chat, /if \(!isGeneratedFileOutputComplete\(llm\.finishReason\)\)[\s\S]*else try[\s\S]*createGeneratedAttachment/)
+  assert.match(chat, /没有把它当成完整文件交付/)
   assert.match(history, /metadata: item\.metadata \|\| \{\}/)
   assert.match(download, /signGeneratedAttachmentDownload/)
   assert.match(app, /normalizeGeneratedAttachments\(item\.metadata\)/)

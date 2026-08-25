@@ -59,8 +59,10 @@ import {
   resolveMomentImage
 } from "../lib/momentImageLibrary.js"
 import {
+  buildGeneratedFileChatOptions,
   buildGeneratedFileInstruction,
   createGeneratedAttachment,
+  isGeneratedFileOutputComplete,
   parseGeneratedFileRequest,
 } from "../lib/generatedFiles.js"
 
@@ -2378,6 +2380,7 @@ async function callLLM(messages, model = AI_MODELS.chat, options = {}) {
 
   return {
     reply: normalizeAssistantOutput(data?.choices?.[0]?.message) || "...",
+    finishReason: data?.choices?.[0]?.finish_reason || null,
     usage: data?.usage || {},
     raw: data
   }
@@ -2790,7 +2793,7 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-const mainChatOptions = { session_id: cid }
+const mainChatOptions = buildGeneratedFileChatOptions(generatedFileRequest, cid)
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 let reply = llm.reply
 const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
@@ -2831,7 +2834,10 @@ ${fallbackWebSearch}
     if (generatedFileRequest) {
       const generatedContent = reply
 
-      try {
+      if (!isGeneratedFileOutputComplete(llm.finishReason)) {
+        console.warn("GENERATED FILE OUTPUT TRUNCATED:", llm.finishReason)
+        reply = "文件内容达到输出长度上限，被截断了。这次我没有把它当成完整文件交付。"
+      } else try {
         const attachment = await createGeneratedAttachment({
           supabase,
           user_id,
