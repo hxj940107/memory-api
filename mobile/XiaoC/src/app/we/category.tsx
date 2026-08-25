@@ -1,5 +1,5 @@
-import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   Pressable,
   RefreshControl,
@@ -58,7 +58,7 @@ export default function WeMemoryCategoryScreen() {
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     if (!category) return;
 
     setLoading(true);
@@ -81,11 +81,13 @@ export default function WeMemoryCategoryScreen() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadMemories();
   }, [category]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMemories();
+    }, [loadMemories]),
+  );
 
   return (
     <View style={styles.screen}>

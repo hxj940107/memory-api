@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import {
   Pressable,
   RefreshControl,
@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { APP_USER_ID, apiJson } from "../config/api";
 
@@ -190,11 +190,7 @@ export default function WeScreen() {
   const [data, setData] = useState<WeMemoryResponse>(emptyData);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    loadMemories();
-  }, []);
-
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     setLoading(true);
 
     try {
@@ -212,7 +208,13 @@ export default function WeScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMemories();
+    }, [loadMemories]),
+  );
 
   const hasAnyMemory =
     data.pinned.length > 0 ||

@@ -37,6 +37,73 @@ function getMemoryUrl(pathname) {
   return new URL(pathname, AI_ENDPOINTS.memoryBaseUrl).toString()
 }
 
+const MAX_MEMORY_CONTENT_CHARS = 50_000
+let cachedOmbreAdminCookie = ""
+
+function getCookieHeader(response) {
+  if (typeof response.headers.getSetCookie === "function") {
+    return response.headers.getSetCookie()
+      .map(cookie => cookie.split(";", 1)[0])
+      .join("; ")
+  }
+
+  return String(response.headers.get("set-cookie") || "")
+    .split(/,(?=[^;,]+=)/)
+    .map(cookie => cookie.split(";", 1)[0])
+    .join("; ")
+}
+
+async function getOmbreAdminCookie(forceRefresh = false) {
+  if (process.env.OMBRE_SESSION_COOKIE) return process.env.OMBRE_SESSION_COOKIE
+  if (cachedOmbreAdminCookie && !forceRefresh) return cachedOmbreAdminCookie
+  if (!process.env.OMBRE_ADMIN_PASSWORD) {
+    throw new Error("OMBRE_ADMIN_PASSWORD is not configured")
+  }
+
+  const response = await fetch(getMemoryUrl("/auth/login"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: process.env.OMBRE_ADMIN_PASSWORD }),
+  })
+  const data = await response.json().catch(() => null)
+  const cookie = getCookieHeader(response)
+
+  if (!response.ok || !cookie) {
+    throw new Error(data?.error || `Ombre login failed: ${response.status}`)
+  }
+
+  cachedOmbreAdminCookie = cookie
+  return cookie
+}
+
+async function updateXiaoCMemoryContent(bucket_id, content) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const cookie = await getOmbreAdminCookie(attempt > 0)
+    const response = await fetch(getMemoryUrl("/api/update-content"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ bucket_id, content }),
+    })
+    const data = await response.json().catch(() => null)
+
+    if (response.status === 401 && attempt === 0 && !process.env.OMBRE_SESSION_COOKIE) {
+      cachedOmbreAdminCookie = ""
+      continue
+    }
+
+    if (!response.ok || data?.success !== true) {
+      throw new Error(data?.error || `Ombre update failed: ${response.status}`)
+    }
+
+    return data
+  }
+
+  throw new Error("Ombre update authentication failed")
+}
+
 async function fetchPinnedMemoryText(user_id) {
   const res = await fetch(
     `${getMemoryUrl(AI_ENDPOINTS.memoryBreathPath)}?user_id=${encodeURIComponent(user_id)}`
@@ -2689,6 +2756,25 @@ export default async function handler(req, res) {
         })
 
         return res.status(200).json(result)
+      }
+
+      if (action === "update") {
+        if (typeof req.body.content !== "string") {
+          return res.status(400).json({ error: "content must be a string" })
+        }
+
+        const content = req.body.content.trim()
+        if (!content) {
+          return res.status(400).json({ error: "content cannot be empty" })
+        }
+        if (content.length > MAX_MEMORY_CONTENT_CHARS) {
+          return res.status(400).json({
+            error: `content exceeds ${MAX_MEMORY_CONTENT_CHARS} characters`,
+          })
+        }
+
+        const result = await updateXiaoCMemoryContent(bucket_id, content)
+        return res.status(200).json({ ...result, bucket_id, content })
       }
 
       return res.status(400).json({

@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useState } from "react";
@@ -64,9 +65,12 @@ export default function WeMemoryDetailScreen() {
   const params = useLocalSearchParams();
   const id = normalizeText(params.id);
   const title = normalizeText(params.title) || "这条记忆";
-  const content = normalizeText(params.content);
+  const initialContent = normalizeText(params.content);
   const tags = parseList(params.tags);
   const domains = parseList(params.domains);
+  const [content, setContent] = useState(initialContent);
+  const [editing, setEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState(initialContent);
   const [pinned, setPinned] = useState(normalizeText(params.pinned) === "1");
   const [saving, setSaving] = useState(false);
   const date = formatDate(params.lastActiveAt || params.createdAt);
@@ -74,6 +78,52 @@ export default function WeMemoryDetailScreen() {
 
   const copyMemory = async () => {
     await Clipboard.setStringAsync(content || title);
+  };
+
+  const startEditing = () => {
+    if (saving) return;
+    setDraftContent(content);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    if (saving) return;
+    setDraftContent(content);
+    setEditing(false);
+  };
+
+  const saveEditing = async () => {
+    if (!id || saving) return;
+
+    const nextContent = draftContent.trim();
+    if (!nextContent) {
+      Alert.alert("还没有内容", "记忆正文不能为空。");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await apiJson("/api/memory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "we",
+          user_id: APP_USER_ID,
+          action: "update",
+          bucket_id: id,
+          content: nextContent,
+        }),
+      });
+
+      setContent(nextContent);
+      setDraftContent(nextContent);
+      setEditing(false);
+    } catch (error) {
+      console.log("Update memory failed:", error);
+      Alert.alert("保存失败", "这条记忆暂时没有改好，编辑内容还为你保留着。");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const togglePin = async () => {
@@ -192,47 +242,97 @@ export default function WeMemoryDetailScreen() {
 
           <View style={styles.divider} />
 
-          <Text style={styles.contentText}>
-            {content || "这条记忆暂时没有更多内容。"}
-          </Text>
+          {editing ? (
+            <TextInput
+              style={styles.contentInput}
+              value={draftContent}
+              onChangeText={setDraftContent}
+              multiline
+              autoFocus
+              maxLength={50000}
+              textAlignVertical="top"
+              editable={!saving}
+            />
+          ) : (
+            <Text style={styles.contentText}>
+              {content || "这条记忆暂时没有更多内容。"}
+            </Text>
+          )}
 
           <View style={styles.actionRow}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.actionButton,
-                pressed && styles.actionButtonPressed,
-              ]}
-              onPress={copyMemory}
-            >
-              <Text style={styles.actionText}>复制</Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.actionButton,
-                pressed && styles.actionButtonPressed,
-                saving && styles.actionButtonDisabled,
-              ]}
-              onPress={togglePin}
-              disabled={saving}
-            >
-              <Text style={styles.actionText}>
-                {pinned ? "取消钉选" : "钉选"}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.actionButton,
-                styles.deleteButton,
-                pressed && styles.deleteButtonPressed,
-                saving && styles.actionButtonDisabled,
-              ]}
-              onPress={confirmDelete}
-              disabled={saving}
-            >
-              <Text style={styles.deleteText}>删除</Text>
-            </Pressable>
+            {editing ? (
+              <>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.actionButtonPressed,
+                    saving && styles.actionButtonDisabled,
+                  ]}
+                  onPress={cancelEditing}
+                  disabled={saving}
+                >
+                  <Text style={styles.actionText}>取消</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    styles.saveButton,
+                    pressed && styles.saveButtonPressed,
+                    saving && styles.actionButtonDisabled,
+                  ]}
+                  onPress={saveEditing}
+                  disabled={saving}
+                >
+                  <Text style={styles.saveText}>{saving ? "保存中" : "完成"}</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={copyMemory}
+                >
+                  <Text style={styles.actionText}>复制</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={startEditing}
+                >
+                  <Text style={styles.actionText}>编辑</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.actionButtonPressed,
+                    saving && styles.actionButtonDisabled,
+                  ]}
+                  onPress={togglePin}
+                  disabled={saving}
+                >
+                  <Text style={styles.actionText}>
+                    {pinned ? "取消钉选" : "钉选"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    styles.deleteButton,
+                    pressed && styles.deleteButtonPressed,
+                    saving && styles.actionButtonDisabled,
+                  ]}
+                  onPress={confirmDelete}
+                  disabled={saving}
+                >
+                  <Text style={styles.deleteText}>删除</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -347,6 +447,19 @@ const styles = StyleSheet.create({
     color: "#4A4542",
   },
 
+  contentInput: {
+    minHeight: 180,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: "rgba(120,120,128,0.06)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(120,120,128,0.18)",
+    fontSize: 17,
+    lineHeight: 30,
+    color: "#4A4542",
+  },
+
   actionRow: {
     flexDirection: "row",
     gap: 10,
@@ -373,6 +486,20 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 15,
     color: "#5C5753",
+  },
+
+  saveButton: {
+    backgroundColor: "#4F7DF3",
+  },
+
+  saveButtonPressed: {
+    backgroundColor: "#416DDB",
+  },
+
+  saveText: {
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
 
   deleteButton: {
