@@ -34,7 +34,7 @@ test("generates markdown and text files as UTF-8 buffers", () => {
   assert.equal(text.buffer.toString("utf8"), "第一行\n第二行")
 })
 
-test("recognizes only explicit generated file requests", () => {
+test("recognizes explicit delivery intent and resolves its requested format", () => {
   assert.deepEqual(parseGeneratedFileRequest("生成一个 md 文件"), {
     type: "markdown",
     filename: "小C整理.md",
@@ -42,8 +42,29 @@ test("recognizes only explicit generated file requests", () => {
   })
   assert.equal(parseGeneratedFileRequest("导出成txt")?.type, "text")
   assert.equal(parseGeneratedFileRequest("把内容整理成 markdown 文件")?.type, "markdown")
-  assert.equal(parseGeneratedFileRequest("请用 Markdown 回复"), null)
-  assert.equal(parseGeneratedFileRequest("这段 Markdown 写得怎么样"), null)
+  assert.equal(parseGeneratedFileRequest("写一个文档")?.type, "markdown")
+  assert.equal(parseGeneratedFileRequest("整理成一份文档")?.type, "markdown")
+  assert.equal(parseGeneratedFileRequest("做成文件给我")?.type, "markdown")
+  assert.equal(parseGeneratedFileRequest("导出一份记录")?.type, "markdown")
+  assert.equal(parseGeneratedFileRequest("整理成一份文档，文件名叫旅行计划")?.filename, "旅行计划.md")
+  assert.equal(parseGeneratedFileRequest("生成一个叫说明书的文档")?.filename, "说明书.md")
+})
+
+test("does not confuse content writing or Markdown formatting with file delivery", () => {
+  const normalChatRequests = [
+    "写一段文字",
+    "帮我回复这句话",
+    "用 Markdown 格式回答",
+    "解释 Markdown",
+    "总结一下",
+    "帮我写一下这个",
+    "帮我改一下文案",
+    "写个标题",
+  ]
+
+  for (const request of normalChatRequests) {
+    assert.equal(parseGeneratedFileRequest(request), null, request)
+  }
 })
 
 test("uploads generated content and returns persistent attachment metadata", async () => {
