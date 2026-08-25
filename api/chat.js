@@ -58,6 +58,11 @@ import {
   isMomentImageCompatible,
   resolveMomentImage
 } from "../lib/momentImageLibrary.js"
+import {
+  buildGeneratedFileInstruction,
+  createGeneratedAttachment,
+  parseGeneratedFileRequest,
+} from "../lib/generatedFiles.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -570,7 +575,7 @@ async function enqueueInactivityReachOutTask({
 // --------------------
 // Save Message
 // --------------------
-async function saveMessage(user_id, role, content, conversation_id) {
+async function saveMessage(user_id, role, content, conversation_id, metadata = {}) {
   const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -578,7 +583,8 @@ async function saveMessage(user_id, role, content, conversation_id) {
       user_id,
       role,
       content,
-      conversation_id
+      conversation_id,
+      metadata,
     })
   })
 
@@ -2401,6 +2407,7 @@ export default async function handler(req, res) {
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
+    const generatedFileRequest = parseGeneratedFileRequest(message)
     const diaryTriggerAt = new Date()
     const selectedChatModel = normalizeChatModel(model)
     const normalizedImageUrls = Array.isArray(imageUrls)
@@ -2680,6 +2687,8 @@ ${attributionCorrectionContext}
 
 ${diaryStyleContext}
 
+${buildGeneratedFileInstruction(generatedFileRequest)}
+
 `
 
 const cachedPromptMessages = buildCachedPromptMessages({
@@ -2818,6 +2827,27 @@ ${fallbackWebSearch}
   }
 }
 
+    let attachments = []
+    if (generatedFileRequest) {
+      const generatedContent = reply
+
+      try {
+        const attachment = await createGeneratedAttachment({
+          supabase,
+          user_id,
+          conversation_id: cid,
+          type: generatedFileRequest.type,
+          content: generatedContent,
+          filename: generatedFileRequest.filename,
+        })
+        attachments = [attachment]
+        reply = `整理好了，文件在这里：${attachment.name}`
+      } catch (error) {
+        console.error("GENERATED FILE CREATE FAILED:", error)
+        reply = `文件这次没生成成功，整理好的内容我先放在这里。\n\n${generatedContent}`
+      }
+    }
+
 console.log("\n========== Prompt Inspector ==========")
 
 console.log("MAIN CHAT USAGE:", {
@@ -2830,7 +2860,13 @@ console.log("MAIN CHAT USAGE:", {
 console.log("======================================\n")
 
     // 6. save assistant
-    const assistantMessageId = await saveMessage(user_id, "assistant", reply, cid)
+    const assistantMessageId = await saveMessage(
+      user_id,
+      "assistant",
+      reply,
+      cid,
+      attachments.length ? { attachments } : {}
+    )
 
     if (userMessageId && normalizedImageUrls.length > 0) {
       void (async () => {
@@ -3023,7 +3059,8 @@ return res.status(200).json({
   user_message_id: userMessageId,
   assistant_message_id: assistantMessageId,
   model: selectedChatModel,
-  usage: llm.usage || {}
+  usage: llm.usage || {},
+  attachments,
 })
 
   } catch (e) {

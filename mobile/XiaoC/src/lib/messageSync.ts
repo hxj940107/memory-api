@@ -40,9 +40,10 @@ const sameMessageMetadata = (left?: object, right?: object) => {
     "proactiveType",
     "proactiveTaskId",
     "proactiveActivityId",
+    "attachments",
   ];
 
-  return keys.every((key) => leftValue[key] === rightValue[key]);
+  return keys.every((key) => sameJsonValue(leftValue[key], rightValue[key]));
 };
 
 const sameRenderableMessage = <T extends SyncMessage>(left: T, right: T) =>

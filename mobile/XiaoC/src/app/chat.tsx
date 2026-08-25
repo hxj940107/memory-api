@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 
@@ -67,6 +68,13 @@ import {
   saveTreeholeDraft,
   TreeholeDraft,
 } from "../lib/treeholeState";
+import {
+  formatAttachmentSize,
+  getAttachmentTypeLabel,
+  getSafeDownloadFilename,
+  normalizeGeneratedAttachments,
+  type GeneratedAttachment,
+} from "../lib/generatedAttachments";
 
 type Message = {
   id: string;
@@ -78,6 +86,7 @@ type Message = {
   fileText?: string;
   fileSize?: number | null;
   fileMimeType?: string | null;
+  attachments?: GeneratedAttachment[];
   imageUri?: string;
   imageUris?: string[];
   imageAsset?: ImagePicker.ImagePickerAsset;
@@ -92,6 +101,7 @@ type Message = {
     proactiveType?: string;
     proactiveTaskId?: string;
     clientMessageId?: string;
+    attachments?: GeneratedAttachment[];
   };
 };
 
@@ -125,6 +135,7 @@ type HistoryItem = {
     proactiveType?: string;
     proactiveTaskId?: string;
     clientMessageId?: string;
+    attachments?: GeneratedAttachment[];
   };
 };
 
@@ -135,6 +146,12 @@ type ChatResponse = {
   assistant_message_id?: string | null;
   model?: string;
   usage?: Record<string, unknown>;
+  attachments?: GeneratedAttachment[];
+};
+
+type SignedAttachmentResponse = {
+  url: string;
+  expires_in: number;
 };
 
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -1397,6 +1414,7 @@ export default function ChatScreen() {
             fileName: item.metadata?.fileName,
             fileMimeType: item.metadata?.fileMimeType,
             fileSize: item.metadata?.fileSize,
+            attachments: normalizeGeneratedAttachments(item.metadata),
             text: treeholeDraft || shouldHideImagePlaceholderText(
               item.content,
               item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
@@ -1593,6 +1611,7 @@ export default function ChatScreen() {
         cloudId: assistantCloudId || undefined,
         role: "assistant",
         text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
+        attachments: data.attachments || [],
         treeholeDraft: treeholeDraft || undefined,
         createdAt: new Date().toISOString(),
         status: "sent",
@@ -1619,6 +1638,44 @@ export default function ChatScreen() {
             : item,
         ),
       );
+    }
+  };
+
+  const openGeneratedAttachment = async (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    const messageId = message.cloudId || message.id;
+
+    try {
+      const signed = await postJson<SignedAttachmentResponse>(
+        "/api/generated-files",
+        {
+          action: "sign_download",
+          user_id: APP_USER_ID,
+          conversation_id: conversationIdRef.current,
+          message_id: messageId,
+          attachment_id: attachment.id,
+        },
+      );
+      const cacheDirectory = `${FileSystem.cacheDirectory || ""}generated-files/`;
+      await FileSystem.makeDirectoryAsync(cacheDirectory, { intermediates: true });
+      const localUri = `${cacheDirectory}${getSafeDownloadFilename(attachment.name)}`;
+      await FileSystem.deleteAsync(localUri, { idempotent: true });
+      const downloaded = await FileSystem.downloadAsync(signed.url, localUri);
+
+      if (!(await Sharing.isAvailableAsync())) {
+        Alert.alert("文件已下载", downloaded.uri);
+        return;
+      }
+
+      await Sharing.shareAsync(downloaded.uri, {
+        mimeType: attachment.mime_type,
+        dialogTitle: attachment.name,
+      });
+    } catch (error) {
+      console.log("Generated attachment open failed:", error);
+      Alert.alert("暂时打不开文件", "请稍后再试。");
     }
   };
 
@@ -2092,7 +2149,35 @@ export default function ChatScreen() {
 	                      onSave={() => saveDiaryFromMessage(item)}
 	                      onDismiss={() => dismissMessage(item.id)}
 	                    />
-	                  ) : hasBlockMarkdown(item.text) ? (
+	                  ) : (
+	                    <>
+	                      {!!item.attachments?.length && (
+	                        <View style={styles.generatedAttachmentList}>
+	                          {item.attachments.map((attachment) => (
+	                            <Pressable
+	                              key={attachment.id}
+	                              style={({ pressed }) => [
+	                                styles.generatedAttachmentCard,
+	                                pressed && styles.generatedAttachmentCardPressed,
+	                              ]}
+	                              onPress={() => openGeneratedAttachment(item, attachment)}
+	                            >
+	                              <View style={styles.generatedAttachmentIcon}>
+	                                <Text style={styles.generatedAttachmentIconText}>↧</Text>
+	                              </View>
+	                              <View style={styles.generatedAttachmentText}>
+	                                <Text style={styles.generatedAttachmentName} numberOfLines={1}>
+	                                  {attachment.name}
+	                                </Text>
+	                                <Text style={styles.generatedAttachmentMeta}>
+	                                  {getAttachmentTypeLabel(attachment.mime_type)} · {formatAttachmentSize(attachment.size)}
+	                                </Text>
+	                              </View>
+	                            </Pressable>
+	                          ))}
+	                        </View>
+	                      )}
+	                      {hasBlockMarkdown(item.text) ? (
 	                    <MarkdownMessage
 	                      text={item.text}
 	                      onLongPress={(event) =>
@@ -2104,7 +2189,7 @@ export default function ChatScreen() {
 	                        )
 	                      }
 	                    />
-	                  ) : (
+	                      ) : (
 	                    getChatBubbleSegments(item.text).map((segment, segmentIndex) => (
 	                      <Pressable
 	                        key={`${stableMessageId}_segment_${segmentIndex}`}
@@ -2126,6 +2211,8 @@ export default function ChatScreen() {
 	                        </Text>
 	                      </Pressable>
 	                    ))
+	                      )}
+	                    </>
 	                  )}
                 </View>
               </AnimatedMessage>
@@ -3305,6 +3392,60 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     color: "#7A8794",
+  },
+
+  generatedAttachmentList: {
+    gap: 8,
+    marginBottom: 8,
+  },
+
+  generatedAttachmentCard: {
+    minWidth: 238,
+    maxWidth: 310,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    borderRadius: 17,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(110,99,170,0.20)",
+    backgroundColor: "rgba(246,244,255,0.94)",
+  },
+
+  generatedAttachmentCardPressed: {
+    opacity: 0.72,
+  },
+
+  generatedAttachmentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(112,94,190,0.12)",
+  },
+
+  generatedAttachmentIconText: {
+    color: XiaoCColors.userBubble,
+    fontSize: 20,
+    fontWeight: "600",
+  },
+
+  generatedAttachmentText: {
+    flex: 1,
+    marginLeft: 11,
+  },
+
+  generatedAttachmentName: {
+    color: XiaoCColors.textPrimary,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+
+  generatedAttachmentMeta: {
+    marginTop: 3,
+    color: XiaoCColors.textSecondary,
+    fontSize: 12,
   },
 
   messageImageSending: {
