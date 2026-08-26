@@ -4,7 +4,7 @@
 
 ## 0. 当前交接状态
 
-截至本轮交接，Memory / Context 架构的 P0 与已排定的 P1 两批工作已经在当前工作区完成，但业务代码尚未 commit、尚未 push。下一台设备或新的 Codex 窗口应直接从当前未提交代码继续，不要重新实现本节列出的已完成能力。
+截至本轮交接，Memory / Context P0、P1、P1.5 Batch 1 与本轮 P1 / P1.5 reliability cleanup 均已完成；cleanup 已提交并推送为 `d955608`，当前 `main` 与 `origin/main` 同步。下一台设备或新的 Codex 窗口应先确认生产部署状态，再从该 commit 继续，不要重新实现本节列出的能力。
 
 ### 0.1 已完成
 
@@ -26,27 +26,56 @@ P1 当前已完成：
 - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
 - 旧 `plan_follow_up` 自动 task 创建已暂停；Active Conversation Context 更新与 `inactivity_reach_out` 保持，历史 task 及执行兼容不删除。
 - Memory eligibility diagnostics 已显式区分 `retrieved`、`relevant`、`eligible_for_prompt` 与 `eligible_for_proactive_attention`。当前 Memory 检索或 prompt 注入不会自动获得 proactive attention。
-- P1.5 Batch 1 已实现 Proactive Attention Shadow Mode：structured event candidate 只允许由当前 user message、已有 candidate、Active Context 和当前 temporal/event evidence 产生；event ID、source provenance、merge 和 terminal lifecycle 由代码控制。
-- Shadow Gate 只把 candidate snapshot 与 eligibility diagnostics 保存到 assistant message metadata。它不创建 task、不发送 event follow-up、不阻塞 inactivity，也不改变 cooldown、quiet hours 和 daily limit。
+- P1.5 Batch 1 Proactive Attention Shadow Mode 已完成：structured event candidate、代码生成且稳定的 `event_id`、真实 user message source provenance、同事件 merge、terminal lifecycle（completed / cancelled 不自动 reopen）均已实现。
+- deterministic Shadow Gate 已实现，并显式输出 `eligible_for_proactive_attention`、reason、confidence 与 hard rejection diagnostics。
+- 当前仍是严格 Shadow Mode：candidate snapshot、merge 与 Gate diagnostics 只写 assistant message metadata；不创建 `proactive_attention` task，不发送 event follow-up，不阻塞或改变 `inactivity_reach_out`，不恢复旧 `plan_follow_up` 自动创建，也不改变 cooldown、quiet hours 或 daily limit。
+- P1.5 Batch 2 candidate → scheduler wake-up 尚未实施。
+
+本轮 reliability cleanup 已完成、通过测试并 commit/push；下一步是确认或完成生产部署：
+
+- Active Context / P1.5 judge 仍只使用原有一次 Haiku 调用，没有增加每轮 LLM 调用次数；调用改为 JSON response mode，`max_tokens` 从 `520` 调整为 `800`，temperature 为 `0`。
+- judge output 改用 string-aware balanced-object parser，并对 Active Context 与 proactive event proposal 独立提取和验证。proposal 失败不再连带丢失已经完整的 Active Context，也不会伪装成正常 `action=none`。
+- Shadow metadata 新增 `parse_failed`、`judge_failed`、`output_truncated`、分区 error code、finish reason 与有限 `raw_output_summary` diagnostics；非法 action/state/window 等语义字段仍拒绝，不使用无限宽松 parser。
+- Dynamic Memory Core exclusion 允许单个 source bucket `404/not found` 作为 stale source 跳过详情读取；stale ID 仍保留在 exclusion ID 集合中，其他 source 正常加载，partial exclusion 后 Dynamic Memory retrieval 继续。
+- exclusion diagnostics 包含 `stale_core_source_ids` 与 `exclusion_load_partial`。认证、网络、非 404 服务错误和异常空正文仍 fail closed；不修改或重建已有 Core Snapshot。
+- Summary segment prompt 已收口为只记录历史事实、明确状态变化和必要连续性，不承担 Active Context 或 Proactive Attention，不再生成未来提问、追踪、提醒或主动回访安排。旧生产 Summary 不主动改写；新生成或自然压缩的 segment 使用新规则。
+
+生产 token audit 结论：
+
+- 最近普通聊天平均 input 约 `11.3k` tokens，其中 cache read 约 `9.3k`（约 `82%`），普通 uncached input 约 `2k`，output 很小。
+- stable prefix（Persona、Relationship Contract、Core Snapshot、fixed rules）是主要名义 token 来源且稳定命中 prompt cache；当前没有证据表明 Dynamic Context 膨胀。
+- P1.5 `proactiveAttentionCandidates`、`proactiveAttentionDiagnostics` 与 `proactiveAttentionShadow` 不进入主聊天 prompt；Recent 最终也只发送真实 `role/content`，不发送 assistant metadata。
+- 暂时不要为了名义 input 数字压缩 Persona、Relationship Contract、Core Snapshot 或 Recent。后续可单独完善 generation ID 与 cache read/write 的 usage observability，但它不是当前 blocker。
 
 ### 0.2 待继续
 
 以下项目尚未实施，不得与上述已完成状态混淆：
 
+- P1.5 Batch 2 candidate → scheduler wake-up；
+- execution-time Attention Gate 与 inactivity arbitration；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。
 
-Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。本轮没有改变 Persona、Relationship Contract、Core Memory Snapshot、PIN、Active Context attention 规则、proactive、Moment、Diary、generated files 或模型选择。
+旧 Shadow production 的 `0 candidate` 样本包含 judge parser failure，不能用于判断 candidate recall。reliability cleanup 部署后必须重新积累可信样本；进入 Batch 2 前至少希望看到：
+
+- `2–3` 个真实 candidate；
+- 至少一个现实事件多次更新仍保持同一 `event_id`；
+- 至少一个 completed 或 cancelled lifecycle；
+- 至少一个有用户证据的合理 `expected_window`；
+- 至少一个 Gate rejection / hard rejection；
+- `proactiveAttentionShadow.judge.status` 基本稳定为 `parsed`。
+
+Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。本轮没有改变 Persona、Relationship Contract、Core Memory Snapshot、PIN、Dynamic Context Budget、Recent budget、proactive scheduler、Moment、Diary、generated files 或模型选择。
 
 ### 0.3 继续开发约束
 
 - 当前 `api/*.js` 必须继续保持 12 个，不得新增 Vercel Function；
-- 当前业务代码未 commit、未 push，交接时必须保留并继续现有工作区；
-- 后续修改前先确认功能是否已经在当前未提交代码中完成，禁止重复施工 P0 或本节所列 P1 能力；
+- reliability cleanup 已位于 `d955608`；换设备后先核对生产部署状态，禁止重新施工 P0、P1、P1.5 Batch 1 或本轮 cleanup；
 - `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
 - Shadow Mode 观测稳定前，不得把 `eligible_for_proactive_attention=true` 接入 scheduler 或发送链路；Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
+- 当前顺序固定为：部署 reliability cleanup → 重新积累真实 Shadow production 样本 → 只读审计 candidate / merge / state / expected window / Gate → Shadow 验证通过 → P1.5 Batch 2 candidate → scheduler wake-up → execution-time Attention Gate / inactivity arbitration → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
 
 ## 1. 当前核心设计原则
 
@@ -94,7 +123,7 @@ Core Memory Snapshot 在 conversation 第一次需要 Core Memory 时，确定�
 
 ### 2.4 Recent raw messages
 
-Recent raw messages 保留真实 `role/content`，当前窗口为最近 10 条消息，并配合独立的 Recent Message Ledger 提供时间与来源元数据。
+Recent raw messages 保留真实 `role/content`。当前实现先预取 41 条，再由 token / character budget、最多 32 条消息与最多 16 个完整 turn 共同选择，并配合独立的 Recent Message Ledger 提供时间与来源元数据。
 
 Recent 是当前对话最直接的连续性证据。时间戳、主动消息来源等元数据必须放在独立 ledger 中，不能改写进 assistant history content，否则会污染说话内容、时间语境和模型对历史原话的判断。
 
@@ -132,7 +161,7 @@ Dynamic Memory 根据当前消息和近期用户消息做语义检索。当前�
 - 对 Dynamic Memory 内部去重；
 - 抑制已经存在于 Recent 或 Active Context 的内容；
 - 当用户当前消息明确重新提及时允许相关内容通过；
-- 在排除信息读取失败时宁可跳过注入，也不重复注入 Core 内容。
+- snapshot source bucket ID 始终直接进入 exclusion ID 集合；单个 source `404/not found` 只记录 stale diagnostics 并跳过该详情，其他 source 继续加载，Dynamic retrieval 继续；认证、网络或其他服务错误仍 fail closed。
 
 Dynamic Memory 只应在当前消息自然需要时作为背景使用。语义命中不等于当前话题仍活跃。
 
@@ -408,10 +437,17 @@ Main Chat Prompt
 - segment summary、covered message IDs 与旧摘要压缩；
 - dynamic context budget。
 
-### P1：待继续
+### P1.5：当前 Shadow 验证顺序
+
+- 部署已完成的 reliability cleanup；
+- 重新积累并只读审计真实 Shadow candidate lifecycle 与 Gate diagnostics；
+- 验证通过后再实施 Batch 2 candidate → scheduler wake-up；
+- scheduler 执行前必须再次运行 execution-time Attention Gate，并与 inactivity 做明确 arbitration，不得互相阻塞或重复发送。
+
+### P1：更后续
 
 - on-demand deep memory retrieval / memory tool loop；
-- long-term heat / cold / archive；这些能力仍应晚于 consolidation、provenance 和 observability 的线上稳定验证。
+- long-term heat / cold / archive；这些能力必须晚于 P1.5 Shadow 与 scheduler 边界验证，且 deep retrieval 仍只能提供事实证据，不能授予 proactive attention。
 
 ### P2：未来产品扩展
 

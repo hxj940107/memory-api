@@ -86,7 +86,8 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 当前 snapshot 的 6 个 source bucket 永远不再作为动态 Memory 注入。
   - 被新 Core 取代的旧 5 PIN bucket 也按明确 ID 排除，但不会删除 Ombre 数据。
   - 过滤只使用 bucket ID 对应的精确标题、正文或明确截断前缀，不做每轮 embedding/语义相似度去重。
-  - 工作、旅行、当天事件、榴莲等真正动态相关的普通 memory 继续保留；排除信息读取失败时，本轮宁可跳过动态 Memory，也不重复注入 Core 内容。
+  - 工作、旅行、当天事件、榴莲等真正动态相关的普通 memory 继续保留。
+  - Core source bucket 单个 `404/not found` 作为 stale source 跳过详情，但其 ID 仍留在 exclusion ID 集合，其他 source 与 Dynamic retrieval 继续；认证、网络及其他服务错误仍 fail closed。diagnostics 使用 `stale_core_source_ids` / `exclusion_load_partial`。
 
 - 滚动摘要与 token 安全已加固：
   - `update-summary` 从最早未摘要消息开始分批处理，不做尾部截断；成功保存后才推进 checkpoint。
@@ -94,15 +95,20 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 后台 AI 调用记录任务、模型、输入规模、usage、耗时和成功状态，不记录完整私人正文。
   - 异常历史 conversation summary 已通过只读 rebuild 和 final compression 生成本地 artifact；线上替换必须继续遵循先验证、后一次性 apply 的原则。
 
-- Memory / Context 架构 P0 与 P1 当前批次已完成，但业务代码仍处于未 commit、未 push 状态：
+- Memory / Context 架构 P0、P1、P1.5 Batch 1 与 reliability cleanup 已完成；cleanup 已 commit/push 为 `d955608`，`main` 与 `origin/main` 同步，下一步是确认/完成生产部署后重新观察 Shadow：
   - P0 已完成：novelty / duplicate penalty 正式化、Dynamic Memory 可观测性、“记得但不继续聊”回归测试，以及 Factual Memory 与 Conversational Attention 的代码边界。
   - P1 已完成：Memory / Context Gateway 渐进接入、Stable Memory consolidation、provenance / supersedes、Dynamic Context Budget、token-aware Recent、Summary Segments 和旧摘要压缩。
   - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；`conversation_summary.summary_segments jsonb not null default '[]'::jsonb` 已上线，不再是待执行 migration。
-  - 下一台设备或新的 Codex 窗口必须从当前未提交工作区继续，不得重新实现上述 P0 / P1 已完成部分；继续前先阅读 `docs/memory-context-architecture.md` 的交接状态。
-  - 尚未实施的后续项包括 long-term heat / cold / archive、deep memory tool loop；它们不得被误记为当前已完成能力。
+  - 下一台设备或新的 Codex 窗口必须先核对当前 git status、commit 与部署状态，不得重新实现上述 P0 / P1 / P1.5 Batch 1 或 reliability cleanup；继续前先阅读 `docs/memory-context-architecture.md`。
+  - 尚未实施的后续项包括 P1.5 Batch 2 scheduler、execution-time Attention Gate / inactivity arbitration、deep memory tool loop、long-term heat / cold / archive；它们不得被误记为当前已完成能力。
   - Eligibility diagnostics 明确区分 `retrieved`、`relevant`、`eligible_for_prompt` 和 `eligible_for_proactive_attention`；当前 Memory 候选默认不具备 proactive attention。
-  - P1.5 Batch 1 已进入 Proactive Attention Shadow Mode：当前 user message 可在既有 Active Context 轻量判断中生成 structured event proposal，代码负责 event ID、merge、provenance 和 deterministic Gate；candidate 与 diagnostics 只写 assistant message metadata。
-  - Shadow Mode 不创建 `proactive_attention` / `plan_follow_up` task，不发送事件回访，不参与或阻塞 inactivity scheduling，也不改变 cooldown、quiet hours 或 daily limit。
+  - P1.5 Batch 1 Proactive Attention Shadow Mode 已完成：structured candidate、代码生成且稳定的 event ID、user source provenance、merge、terminal lifecycle 和 deterministic Shadow Gate 已实现。
+  - Shadow Mode 不创建 `proactive_attention` / `plan_follow_up` task，不发送事件回访，不参与或阻塞 inactivity scheduling，也不改变 cooldown、quiet hours 或 daily limit；Batch 2 尚未实施。
+  - Active Context / P1.5 judge reliability cleanup：仍为同一次 Haiku 调用，JSON response mode、`max_tokens: 800`、temperature `0`；balanced-object parser 独立解析 Active Context 与 proposal，并记录 `parse_failed` / `judge_failed` / `output_truncated`，proposal 失败不再连带丢失 Active Context。
+  - Summary 只记录历史事实、明确状态变化与必要连续性，不承担 Active Context 或 Proactive Attention；旧生产 Summary 不主动修改，新生成/自然压缩 segment 不得生成未来追问或主动回访指令。
+  - 生产 token audit：普通聊天平均 input 约 `11.3k`，其中约 `9.3k`（`82%`）是 stable cache read，普通 uncached 约 `2k`；没有 Dynamic Context 膨胀证据，P1.5 Shadow metadata 不进入主聊天 prompt，暂不压缩 Persona、Relationship、Core Snapshot 或 Recent。
+  - 旧 `0 candidate` Shadow 样本受 judge parser failure 污染。部署 cleanup 后重新观察；进入 Batch 2 前至少取得 2–3 个 candidate、一次同 event ID merge、一个 completed/cancelled、一个合理 expected window、一个 Gate hard rejection，并确认 judge status 基本稳定为 parsed。
+  - 固定下一步：部署 cleanup → Shadow production observation → 只读 lifecycle/Gate 审计 → Batch 2 scheduler wake-up → execution-time Gate / inactivity arbitration → deep memory retrieval → 更晚的 heat / cold / archive。
 
 - 深夜树洞已完成主动更新、页面催更、未读红点、置顶和删除管理：
   - 小C每次可根据有限近期上下文决定写入 `0–3` 条，没有值得记录的内容时允许不更新。
