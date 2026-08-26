@@ -236,7 +236,7 @@ test("signs downloads only after resolving attachment metadata from its message"
 test("chat persistence, history restore, and signed download use attachment metadata", () => {
   const chat = fs.readFileSync(new URL("../api/chat.js", import.meta.url), "utf8")
   const history = fs.readFileSync(new URL("../api/history.js", import.meta.url), "utf8")
-  const download = fs.readFileSync(new URL("../api/generated-files.js", import.meta.url), "utf8")
+  const download = fs.readFileSync(new URL("../api/memory.js", import.meta.url), "utf8")
   const app = fs.readFileSync(new URL("../mobile/XiaoC/src/app/chat.tsx", import.meta.url), "utf8")
 
   assert.match(chat, /attachments\.length \? \{ attachments \} : \{\}/)
@@ -245,6 +245,8 @@ test("chat persistence, history restore, and signed download use attachment meta
   assert.match(chat, /没有把它当成完整文件交付/)
   assert.match(history, /metadata: item\.metadata \|\| \{\}/)
   assert.match(download, /signGeneratedAttachmentDownload/)
+  assert.match(download, /type === "generated_file"/)
+  assert.match(app, /"\/api\/memory"[\s\S]*type: "generated_file"[\s\S]*action: "sign_download"/)
   assert.match(app, /normalizeGeneratedAttachments\(item\.metadata\)/)
   assert.match(app, /FileSystem\.downloadAsync\(signed\.url, localUri\)/)
   assert.match(app, /Sharing\.shareAsync\(downloaded\.uri/)

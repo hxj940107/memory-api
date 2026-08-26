@@ -1649,8 +1649,9 @@ export default function ChatScreen() {
 
     try {
       const signed = await postJson<SignedAttachmentResponse>(
-        "/api/generated-files",
+        "/api/memory",
         {
+          type: "generated_file",
           action: "sign_download",
           user_id: APP_USER_ID,
           conversation_id: conversationIdRef.current,

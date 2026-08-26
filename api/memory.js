@@ -24,6 +24,7 @@ import {
 } from "../lib/inactivityTemporalGrounding.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
+import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2695,6 +2696,35 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (req.method === "POST" && type === "generated_file") {
+      if (req.body?.action !== "sign_download") {
+        return res.status(405).json({ error: "Unsupported action" })
+      }
+
+      const { conversation_id, message_id, attachment_id } = req.body
+      if (!conversation_id || !message_id || !attachment_id) {
+        return res.status(400).json({ error: "Missing attachment identity" })
+      }
+
+      try {
+        const result = await signGeneratedAttachmentDownload({
+          supabase,
+          user_id,
+          conversation_id,
+          message_id,
+          attachment_id,
+          expiresIn: 5 * 60,
+        })
+        return res.status(200).json(result)
+      } catch (error) {
+        if (error?.code === "ATTACHMENT_NOT_FOUND") {
+          return res.status(404).json({ error: "Attachment not found" })
+        }
+        console.error("GENERATED FILE SIGN FAILED:", error)
+        return res.status(500).json({ error: "文件暂时无法下载" })
+      }
+    }
 
     if (req.method === "GET" && type === "moment_xiaoc_check") {
       const authorization = String(req.headers.authorization || "")
