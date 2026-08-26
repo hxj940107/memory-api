@@ -132,6 +132,7 @@ XiaoC 应该拥有稳定人格、自我感（Sense of Self）、自然情绪表�
 
 ## 工程规则
 
+- 涉及 Memory / Context / Summary / Active Context / Dynamic Memory / Consolidation / Heat / Archive 的架构修改前，先阅读 `docs/memory-context-architecture.md`。
 - 修改前先理解现有设计。
 - 优先做小而可回退的改动。
 - 除非必要，不做大范围重写。
