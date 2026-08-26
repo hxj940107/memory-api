@@ -26,6 +26,8 @@ P1 当前已完成：
 - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
 - 旧 `plan_follow_up` 自动 task 创建已暂停；Active Conversation Context 更新与 `inactivity_reach_out` 保持，历史 task 及执行兼容不删除。
 - Memory eligibility diagnostics 已显式区分 `retrieved`、`relevant`、`eligible_for_prompt` 与 `eligible_for_proactive_attention`。当前 Memory 检索或 prompt 注入不会自动获得 proactive attention。
+- P1.5 Batch 1 已实现 Proactive Attention Shadow Mode：structured event candidate 只允许由当前 user message、已有 candidate、Active Context 和当前 temporal/event evidence 产生；event ID、source provenance、merge 和 terminal lifecycle 由代码控制。
+- Shadow Gate 只把 candidate snapshot 与 eligibility diagnostics 保存到 assistant message metadata。它不创建 task、不发送 event follow-up、不阻塞 inactivity，也不改变 cooldown、quiet hours 和 daily limit。
 
 ### 0.2 待继续
 
@@ -44,6 +46,7 @@ Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。�
 - 后续修改前先确认功能是否已经在当前未提交代码中完成，禁止重复施工 P0 或本节所列 P1 能力；
 - `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
+- Shadow Mode 观测稳定前，不得把 `eligible_for_proactive_attention=true` 接入 scheduler 或发送链路；Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
 
 ## 1. 当前核心设计原则
 

@@ -64,6 +64,11 @@ import {
   selectTokenAwareRecentHistory,
 } from "../lib/dynamicContextBudget.js"
 import {
+  applyProactiveEventProposal,
+  normalizeProactiveAttentionCandidates,
+} from "../lib/proactiveAttentionCandidates.js"
+import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
+import {
   normalizeSummarySegments,
   selectSummarySegmentsForPrompt,
 } from "../lib/summarySegments.js"
@@ -196,11 +201,13 @@ async function judgeActiveConversationContext({
   message,
   reply,
   previousActiveContext,
+  previousProactiveCandidates,
   userMessageId,
 }) {
   if (!message) {
     return {
       activeContext: resolveActiveConversationContext(previousActiveContext, null),
+      proactiveEventProposal: { action: "none" },
     }
   }
 
@@ -213,7 +220,14 @@ async function judgeActiveConversationContext({
 
 只输出 JSON：
 {
-  "active_context":{"items":[]}
+  "active_context":{"items":[]},
+  "proactive_event_proposal":{
+    "action":"none",
+    "matched_event_id":null,
+    "description":"",
+    "state":"unknown",
+    "expected_window":{"start":null,"end":null}
+  }
 }
 
 Active context 更新原则：
@@ -230,6 +244,16 @@ Active context 更新原则：
 - 不要为了凑数量新增事项；没有 active item 时返回空数组。
 - 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述，写入“小C以前说过/没说过、做过/没做过某事”这类事实。真实消息账本和她明确确认的事实优先；如果没有可靠证据，这类自我历史断言不进入 active context。
 - 小C的随口联想、玩笑、比喻、临时错误表达或主动消息自述，除非她明确确认或后续持续展开，否则不能升级为 active item。
+
+Proactive event shadow proposal 原则：
+- 这只是 shadow candidate proposal，不会创建任务或发送主动消息。
+- candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断。
+- Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
+- 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
+- 当前消息没有新增或更新现实事件时 action=none。
+- completed/cancelled 的既有事件不能因为普通后续消息重新打开。
+- description 描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
+- expected_window 使用 ISO 时间；证据不足时 start/end 为 null，不要猜精确时间。
 `,
       },
       {
@@ -240,6 +264,9 @@ Active context 更新原则：
 
 上一版 active context：
 ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { items: [] })}
+
+已有 structured proactive event candidates：
+${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates))}
 
 当前用户消息ID：${userMessageId || "unknown"}
 `,
@@ -255,6 +282,7 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
       parsed?.active_context,
       { currentUserMessageId: userMessageId }
     ),
+    proactiveEventProposal: parsed?.proactive_event_proposal || { action: "none" },
   }
 }
 
@@ -264,34 +292,92 @@ async function updateActiveConversationContext({
   message,
   reply,
   previous_active_context,
+  previous_proactive_candidates = [],
+  conversation_id,
   persist_active_context = true,
 }) {
   let nextActiveContext = resolveActiveConversationContext(
     previous_active_context,
     null
   )
+  let proactiveCandidates = normalizeProactiveAttentionCandidates(
+    previous_proactive_candidates
+  )
+  let proactiveMergeDiagnostics = {
+    event_id: null,
+    merge_action: "none",
+  }
 
   try {
     const judged = await judgeActiveConversationContext({
       message,
       reply,
       previousActiveContext: previous_active_context,
+      previousProactiveCandidates: proactiveCandidates,
       userMessageId: user_message_id,
     })
     nextActiveContext = judged.activeContext
+    const applied = applyProactiveEventProposal({
+      candidates: proactiveCandidates,
+      proposal: judged.proactiveEventProposal,
+      sourceMessage: {
+        id: user_message_id,
+        role: "user",
+        created_at: new Date().toISOString(),
+      },
+      conversationId: conversation_id,
+    })
+    proactiveCandidates = applied.candidates
+    proactiveMergeDiagnostics = applied.diagnostics
   } catch (err) {
     console.error("active conversation context judge failed:", err)
   }
 
   if (persist_active_context) {
     try {
-      await saveActiveConversationContext(assistant_message_id, nextActiveContext)
+      const evaluatedAt = new Date().toISOString()
+      const proactiveDiagnostics = proactiveCandidates.map(candidate => {
+        const gate = evaluateProactiveAttention(candidate, { now: evaluatedAt })
+        const isMergedEvent = candidate.event_id === proactiveMergeDiagnostics.event_id
+        return {
+          event_id: candidate.event_id,
+          event_state: candidate.state,
+          merge_action: isMergedEvent
+            ? proactiveMergeDiagnostics.merge_action
+            : "carried_forward",
+          matched_event_id: isMergedEvent
+            ? proactiveMergeDiagnostics.matched_event_id
+            : candidate.event_id,
+          source_message_ids: candidate.source_message_ids,
+          last_user_update_message_id: candidate.last_user_update.message_id,
+          expected_window: candidate.expected_window,
+          attention_status: candidate.attention_status,
+          eligible_for_proactive_attention: gate.eligible_for_proactive_attention,
+          gate_reason: gate.reason,
+          confidence: gate.confidence,
+          hard_rejection: gate.hard_rejection,
+          evaluated_at: gate.evaluated_at,
+        }
+      })
+      await saveActiveConversationContext(
+        assistant_message_id,
+        nextActiveContext,
+        {
+          candidates: proactiveCandidates,
+          diagnostics: proactiveDiagnostics,
+          mergeDiagnostics: proactiveMergeDiagnostics,
+        }
+      )
     } catch (err) {
       console.error("active conversation context save failed:", err)
     }
   }
 
-  return nextActiveContext
+  return {
+    activeContext: nextActiveContext,
+    proactiveCandidates,
+    proactiveMergeDiagnostics,
+  }
 }
 
 function getLastConversationState(message, reply) {
@@ -414,7 +500,7 @@ async function saveMessage(user_id, role, content, conversation_id, metadata = {
   return data?.data?.[0]?.id || null
 }
 
-async function getLatestActiveConversationContext(user_id, conversation_id) {
+async function getLatestConversationContinuity(user_id, conversation_id) {
   const { data, error } = await supabase
     .from("messages")
     .select("metadata")
@@ -429,17 +515,32 @@ async function getLatestActiveConversationContext(user_id, conversation_id) {
     throw error
   }
 
+  let activeContext = null
+  let proactiveCandidates = null
   for (const message of data || []) {
-    const context = normalizeActiveConversationContext(
-      message.metadata?.activeConversationContext
-    )
-    if (context) return context
+    if (!activeContext) {
+      activeContext = normalizeActiveConversationContext(
+        message.metadata?.activeConversationContext
+      )
+    }
+    if (
+      proactiveCandidates === null
+      && Array.isArray(message.metadata?.proactiveAttentionCandidates)
+    ) {
+      proactiveCandidates = normalizeProactiveAttentionCandidates(
+        message.metadata.proactiveAttentionCandidates
+      )
+    }
+    if (activeContext && proactiveCandidates !== null) break
   }
 
-  return { items: [] }
+  return {
+    activeContext: activeContext || { items: [] },
+    proactiveCandidates: proactiveCandidates || [],
+  }
 }
 
-async function saveActiveConversationContext(messageId, context) {
+async function saveActiveConversationContext(messageId, context, proactiveShadow = null) {
   if (!messageId) return false
 
   const normalized = normalizeActiveConversationContext(context)
@@ -459,6 +560,19 @@ async function saveActiveConversationContext(messageId, context) {
       metadata: {
         ...(message?.metadata || {}),
         activeConversationContext: normalized,
+        ...(proactiveShadow
+          ? {
+              proactiveAttentionCandidates: normalizeProactiveAttentionCandidates(
+                proactiveShadow.candidates
+              ),
+              proactiveAttentionDiagnostics: proactiveShadow.diagnostics || [],
+              proactiveAttentionShadow: {
+                mode: "shadow",
+                merge: proactiveShadow.mergeDiagnostics || null,
+                evaluated_at: new Date().toISOString(),
+              },
+            }
+          : {}),
       },
     })
     .eq("id", messageId)
@@ -2352,9 +2466,12 @@ const historyCandidates = await getRecentMessages(
   CONTEXT_BUDGET.recentHistoryFetchMessages
 )
 let activeConversationContext = { items: [] }
+let proactiveAttentionCandidates = []
 let canPersistActiveConversationContext = true
 try {
-  activeConversationContext = await getLatestActiveConversationContext(user_id, cid)
+  const continuity = await getLatestConversationContinuity(user_id, cid)
+  activeConversationContext = continuity.activeContext
+  proactiveAttentionCandidates = continuity.proactiveCandidates
 } catch (err) {
   canPersistActiveConversationContext = false
   console.error("active conversation context read failed; using no context this turn:", err)
@@ -3018,6 +3135,8 @@ console.log("======================================\n")
         message,
         reply,
         previous_active_context: activeConversationContext,
+        previous_proactive_candidates: proactiveAttentionCandidates,
+        conversation_id: cid,
         persist_active_context: canPersistActiveConversationContext,
       })
 

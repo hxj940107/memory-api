@@ -101,6 +101,8 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 下一台设备或新的 Codex 窗口必须从当前未提交工作区继续，不得重新实现上述 P0 / P1 已完成部分；继续前先阅读 `docs/memory-context-architecture.md` 的交接状态。
   - 尚未实施的后续项包括 long-term heat / cold / archive、deep memory tool loop；它们不得被误记为当前已完成能力。
   - Eligibility diagnostics 明确区分 `retrieved`、`relevant`、`eligible_for_prompt` 和 `eligible_for_proactive_attention`；当前 Memory 候选默认不具备 proactive attention。
+  - P1.5 Batch 1 已进入 Proactive Attention Shadow Mode：当前 user message 可在既有 Active Context 轻量判断中生成 structured event proposal，代码负责 event ID、merge、provenance 和 deterministic Gate；candidate 与 diagnostics 只写 assistant message metadata。
+  - Shadow Mode 不创建 `proactive_attention` / `plan_follow_up` task，不发送事件回访，不参与或阻塞 inactivity scheduling，也不改变 cooldown、quiet hours 或 daily limit。
 
 - 深夜树洞已完成主动更新、页面催更、未读红点、置顶和删除管理：
   - 小C每次可根据有限近期上下文决定写入 `0–3` 条，没有值得记录的内容时允许不更新。

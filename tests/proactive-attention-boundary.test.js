@@ -17,12 +17,15 @@ assert.ok(judgeStart >= 0)
 assert.ok(updateStart > judgeStart)
 assert.equal((judgeSource.match(/callLLM\(/g) || []).length, 1)
 assert.match(judgeSource, /active_context/)
+assert.match(judgeSource, /proactive_event_proposal/)
 assert.doesNotMatch(judgeSource, /plan_follow_up|should_follow_up/)
 
 // Explicit plans no longer have any automatic plan task creation path.
 assert.doesNotMatch(chat, /enqueuePlanFollowUpTask/)
 assert.doesNotMatch(chat, /type:\s*["']plan_follow_up["']/)
 assert.doesNotMatch(chat, /PLAN FOLLOW-UP QUEUED/)
+assert.doesNotMatch(chat, /type:\s*["']proactive_attention["']/)
+assert.doesNotMatch(chat, /PROACTIVE ATTENTION QUEUED/)
 
 // Inactivity scheduling is independent of Active Context success and is not
 // hidden behind a plan-task branch.
@@ -32,6 +35,9 @@ assert.match(schedulingSource, /active conversation context update failed/)
 assert.match(schedulingSource, /enqueueInactivityReachOutTask/)
 assert.match(schedulingSource, /inactivity reach-out enqueue failed/)
 assert.doesNotMatch(schedulingSource, /if \(planTask\)|else\s*\{[\s\S]*enqueueInactivityReachOutTask/)
+assert.match(chat, /proactiveAttentionCandidates/)
+assert.match(chat, /proactiveAttentionDiagnostics/)
+assert.match(chat, /mode: "shadow"/)
 
 // Removed compatibility helpers and aliases must not remain in production.
 assert.doesNotMatch(productionSources, /filterContextEntries/)
