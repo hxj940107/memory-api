@@ -68,7 +68,8 @@ test("automatic Moment prompt encourages concrete life moments without default d
   assert.doesNotMatch(source, /连续几天没有动态完全正常/)
   assert.match(source, /具体、可复述的生活事件、原话、互动反差、明确情绪/)
   assert.match(source, /事件时间不够精确时，不要仅因此拒绝/)
-  assert.match(source, /这条用户消息的 created_at/)
+  assert.match(source, /source_message_created_at_utc/)
+  assert.match(source, /source_message_created_at_shanghai/)
 })
 
 test("pending candidate worker validates text before publishing", () => {

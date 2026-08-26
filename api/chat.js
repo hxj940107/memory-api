@@ -60,6 +60,10 @@ import {
   resolveMomentImage
 } from "../lib/momentImageLibrary.js"
 import {
+  formatMomentSourceTimes,
+  normalizeMomentEventTime,
+} from "../lib/momentEventTime.js"
+import {
   buildGeneratedFileChatOptions,
   buildGeneratedFileInstruction,
   createGeneratedAttachment,
@@ -1878,6 +1882,7 @@ async function maybeCreateMoment({
   const triggerUserMessageCreatedAt = [...momentContextMessages]
     .reverse()
     .find(item => item.role === "user")?.created_at || null
+  const triggerMessageTimes = formatMomentSourceTimes(triggerUserMessageCreatedAt)
   const historyContextMessages = momentContextMessages.slice(0, -2)
   const context = formatMessagesForMomentContext(
     historyContextMessages,
@@ -1938,7 +1943,10 @@ ${isManualMomentRequest ? `触发条件：
 - immediate 表示即时记录：事件时间应接近预计发布时间，正文可以使用当前时段语气。
 - delayed 表示延迟分享：事件早于预计发布时间，正文必须自然说明是回忆或补发，例如“昨晚”“昨天”“前几天”“今天才想起来”“翻到这张”。
 - 如果昨晚的候选预计到第二天上午发布，不能写成仍在现场，也不能使用“刚刚”“这会儿”“现在才结束”等即时措辞。
-- 触发这次判断的用户消息创建时间是：${triggerUserMessageCreatedAt || "未取得"}。优先把它作为 event_time 的时间依据，不要自行猜测更精确的时间。
+- 触发这次判断的用户消息创建时间 UTC 是：${triggerMessageTimes.utc || "未取得"}。
+- 同一个绝对瞬间换算为 Asia/Shanghai 是：${triggerMessageTimes.shanghai || "未取得"}。
+- 上述 UTC 和 Asia/Shanghai 时间代表同一个瞬间。带 Z 的值是 UTC，带 +08:00 的值是上海时间；转换时必须换算钟点，禁止只替换 offset。
+- 如果正文描述的是当前触发消息里刚发生的即时生活事件，event_time 应对应这个绝对瞬间；系统会在保存 immediate candidate 前以源消息 created_at 为准。
 - 事件时间不够精确时，不要仅因此拒绝；使用触发消息时间，并通过 share_mode 和正文措辞保持自然。
 
 频率原则：
@@ -2061,8 +2069,13 @@ ${context}
 她刚刚说：
 ${trimText(message, 500)}
 
-这条用户消息的 created_at：
-${triggerUserMessageCreatedAt || "未取得"}
+source_message_created_at_utc：
+${triggerMessageTimes.utc || "未取得"}
+
+source_message_created_at_shanghai：
+${triggerMessageTimes.shanghai || "未取得"}
+
+这两个值代表同一个绝对瞬间。
 
 小C刚刚回复：
 ${trimText(reply, 500)}
@@ -2113,6 +2126,25 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       })
       return null
     }
+
+    const eventTimeGrounding = normalizeMomentEventTime({
+      shareMode: candidate.shareMode,
+      modelEventTime: candidate.eventTime,
+      sourceMessageCreatedAt: triggerUserMessageCreatedAt,
+    })
+    candidate.eventTime = eventTimeGrounding.eventTime
+
+    console.log("MOMENT EVENT TIME AUDIT:", {
+      auditId,
+      sourceCreatedAtUtc: eventTimeGrounding.sourceEventTime,
+      sourceCreatedAtShanghai: triggerMessageTimes.shanghai,
+      modelEventTime: eventTimeGrounding.modelEventTime,
+      normalizedEventTime: eventTimeGrounding.eventTime,
+      shareMode: candidate.shareMode,
+      differenceMs: eventTimeGrounding.differenceMs,
+      fallbackApplied: eventTimeGrounding.corrected,
+      correctionReason: eventTimeGrounding.correctionReason,
+    })
 
     await updateMomentAudit(auditId, {
       model_should_post: true,
