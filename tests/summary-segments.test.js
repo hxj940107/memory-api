@@ -8,6 +8,7 @@ import {
   selectUnsummarizedOutsideRecent,
   shouldCompressSummarySegments,
 } from "../lib/summarySegments.js"
+import { SUMMARY_SYSTEM_PROMPT } from "../lib/summaryPrompt.js"
 
 function message(id, role, content) {
   return { id: String(id), role, content, created_at: `2026-08-21T00:00:${String(id).padStart(2, "0")}.000Z` }
@@ -92,5 +93,11 @@ function message(id, role, content) {
   )
   assert.equal(compressed.covered_until, oldest.at(-1).covered_until)
 }
+
+assert.match(SUMMARY_SYSTEM_PROMPT, /Summary 不是 Active Context/)
+assert.match(SUMMARY_SYSTEM_PROMPT, /不得替当前对话决定注意力/)
+assert.match(SUMMARY_SYSTEM_PROMPT, /【仍在进行或等待的事实】/)
+assert.doesNotMatch(SUMMARY_SYSTEM_PROMPT, /【待接住】/)
+assert.match(SUMMARY_SYSTEM_PROMPT, /正在等结果.*可以记录她正在等待/)
 
 console.log("summary segment tests passed")

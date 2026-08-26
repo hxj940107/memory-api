@@ -146,8 +146,11 @@ const exam = {
   assert.equal((judgeSource.match(/callLLM\(/g) || []).length, 1)
   assert.match(
     judgeSource,
-    /activeContext: resolveActiveConversationContext\([\s\S]*parsed\?\.active_context/
+    /activeContext: resolveActiveConversationContext\([\s\S]*parsed\.activeContext/
   )
+  assert.match(judgeSource, /response_format: \{ type: "json_object" \}/)
+  assert.match(chat, /merge_action: "parse_failed"/)
+  assert.match(chat, /raw_output_summary/)
   assert.doesNotMatch(judgeSource, /plan_follow_up|should_follow_up/)
   assert.doesNotMatch(chat, /enqueuePlanFollowUpTask|buildRuleBasedPlanFollowUp/)
 }

@@ -4,6 +4,24 @@ import {
   evaluateDynamicMemorySearchText,
   LEGACY_CORE_MEMORY_BUCKET_IDS,
 } from "../lib/dynamicMemoryFilter.js"
+import {
+  buildCoreMemoryExclusionIds,
+  fetchAvailableMemoriesByIds,
+} from "../lib/coreMemorySnapshot.js"
+
+process.env.OMBRE_ADMIN_PASSWORD ||= "test-password"
+
+function response(status, data, cookie = "") {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      getSetCookie: () => cookie ? [`session=${cookie}; Path=/`] : [],
+      get: () => cookie ? `session=${cookie}; Path=/` : null,
+    },
+    json: async () => data,
+  }
+}
 
 {
   const result = evaluateDynamicMemorySearchText(
@@ -55,8 +73,65 @@ import {
   assert.equal(LEGACY_CORE_MEMORY_BUCKET_IDS.length, 5)
   const chat = fs.readFileSync("api/chat.js", "utf8")
   assert.match(chat, /coreMemorySnapshot\.sourceBucketIds/)
-  assert.match(chat, /fetchCompleteMemoriesByIds\(excludedBucketIds\)/)
+  assert.match(chat, /fetchAvailableMemoriesByIds\(excludedBucketIds\)/)
   assert.match(chat, /dynamic memory exclusion load failed; injection skipped/)
+  assert.match(chat, /stale_core_source_ids/)
+  assert.match(chat, /exclusion_load_partial/)
+}
+
+{
+  const requested = []
+  const fetchImpl = async url => {
+    const path = new URL(url).pathname
+    if (path === "/auth/login") return response(200, { success: true }, "ok")
+    const id = decodeURIComponent(path.split("/").at(-1))
+    requested.push(id)
+    if (id === "missing") return response(404, { error: "not found" })
+    return response(200, { title: id, content: `content-${id}` })
+  }
+  const result = await fetchAvailableMemoriesByIds(
+    ["existing-a", "missing", "existing-b"],
+    fetchImpl
+  )
+  assert.deepEqual(result.memories.map(item => item.id), ["existing-a", "existing-b"])
+  assert.deepEqual(result.staleSourceIds, ["missing"])
+  assert.equal(result.exclusionLoadPartial, true)
+  assert.deepEqual(requested.sort(), ["existing-a", "existing-b", "missing"])
+}
+
+{
+  const fetchImpl = async url => {
+    const path = new URL(url).pathname
+    if (path === "/auth/login") return response(200, { success: true }, "ok")
+    const id = decodeURIComponent(path.split("/").at(-1))
+    return response(200, { title: id, content: `content-${id}` })
+  }
+  const result = await fetchAvailableMemoriesByIds(["a", "b"], fetchImpl)
+  assert.deepEqual(result.memories.map(item => item.id), ["a", "b"])
+  assert.deepEqual(result.staleSourceIds, [])
+  assert.equal(result.exclusionLoadPartial, false)
+}
+
+{
+  await assert.rejects(
+    fetchAvailableMemoriesByIds(["a"], async () => response(401, { error: "unauthorized" })),
+    /unauthorized/
+  )
+}
+
+{
+  const fetchImpl = async url => {
+    if (new URL(url).pathname === "/auth/login") {
+      return response(200, { success: true }, "ok")
+    }
+    throw new Error("network unavailable")
+  }
+  await assert.rejects(fetchAvailableMemoriesByIds(["a"], fetchImpl), /network unavailable/)
+}
+
+{
+  const ids = buildCoreMemoryExclusionIds(["missing", "current"], ["legacy"])
+  assert.deepEqual(ids, ["current", "legacy", "missing"])
 }
 
 console.log("dynamic memory filter tests passed")

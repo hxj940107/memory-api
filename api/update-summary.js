@@ -294,7 +294,7 @@ export default async function handler(req, res) {
       if (oldest.length >= 2) {
         const compressedContent = await updateSummaryWithClaude(
           oldest.map(item => item.content).join("\n\n"),
-          "请把以上较早的摘要压缩为更粗粒度的长期连续性摘要；不要增加新事实。",
+          "请把以上较早的摘要压缩为更粗粒度的历史事实记录；不要增加新事实，不要生成未来聊天指令、追问建议、关注优先级或主动回访安排。",
           0,
           []
         )

@@ -44,8 +44,9 @@ import {
   buildRecentMessageLedger,
 } from "../lib/mainChatContext.js"
 import {
+  buildCoreMemoryExclusionIds,
   ensureCoreMemorySnapshot,
-  fetchCompleteMemoriesByIds,
+  fetchAvailableMemoriesByIds,
 } from "../lib/coreMemorySnapshot.js"
 import {
   LEGACY_CORE_MEMORY_BUCKET_IDS,
@@ -68,6 +69,7 @@ import {
   normalizeProactiveAttentionCandidates,
 } from "../lib/proactiveAttentionCandidates.js"
 import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
+import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
 import {
   normalizeSummarySegments,
   selectSummarySegmentsForPrompt,
@@ -189,14 +191,6 @@ function deferOutOfQuietHours(date = new Date()) {
   return nextDate.toISOString()
 }
 
-function parseJsonObject(raw) {
-  const match = String(raw || "").match(/\{[\s\S]*\}/)
-
-  if (!match) throw new Error("JSON object missing")
-
-  return JSON.parse(match[0])
-}
-
 async function judgeActiveConversationContext({
   message,
   reply,
@@ -207,7 +201,13 @@ async function judgeActiveConversationContext({
   if (!message) {
     return {
       activeContext: resolveActiveConversationContext(previousActiveContext, null),
-      proactiveEventProposal: { action: "none" },
+      proactiveEventProposal: null,
+      diagnostics: {
+        status: "skipped_no_message",
+        parse_failed: false,
+        error_code: null,
+        raw_output_summary: null,
+      },
     }
   }
 
@@ -273,16 +273,23 @@ ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidat
       },
     ],
     AI_MODELS.memoryJudge,
-    { max_tokens: 520, temperature: 0.1 }
+    {
+      max_tokens: 800,
+      temperature: 0,
+      response_format: { type: "json_object" },
+    }
   )
-  const parsed = parseJsonObject(raw.reply)
+  const parsed = parseActiveContextJudgeOutput(raw.reply, {
+    finishReason: raw.finishReason,
+  })
   return {
     activeContext: resolveActiveConversationContext(
       previousActiveContext,
-      parsed?.active_context,
+      parsed.activeContext,
       { currentUserMessageId: userMessageId }
     ),
-    proactiveEventProposal: parsed?.proactive_event_proposal || { action: "none" },
+    proactiveEventProposal: parsed.proactiveEventProposal,
+    diagnostics: parsed.diagnostics,
   }
 }
 
@@ -307,6 +314,12 @@ async function updateActiveConversationContext({
     event_id: null,
     merge_action: "none",
   }
+  let judgeDiagnostics = {
+    status: "not_evaluated",
+    parse_failed: false,
+    error_code: null,
+    raw_output_summary: null,
+  }
 
   try {
     const judged = await judgeActiveConversationContext({
@@ -317,20 +330,47 @@ async function updateActiveConversationContext({
       userMessageId: user_message_id,
     })
     nextActiveContext = judged.activeContext
-    const applied = applyProactiveEventProposal({
-      candidates: proactiveCandidates,
-      proposal: judged.proactiveEventProposal,
-      sourceMessage: {
-        id: user_message_id,
-        role: "user",
-        created_at: new Date().toISOString(),
-      },
-      conversationId: conversation_id,
-    })
-    proactiveCandidates = applied.candidates
-    proactiveMergeDiagnostics = applied.diagnostics
+    judgeDiagnostics = judged.diagnostics
+    if (judged.proactiveEventProposal) {
+      const applied = applyProactiveEventProposal({
+        candidates: proactiveCandidates,
+        proposal: judged.proactiveEventProposal,
+        sourceMessage: {
+          id: user_message_id,
+          role: "user",
+          created_at: new Date().toISOString(),
+        },
+        conversationId: conversation_id,
+      })
+      proactiveCandidates = applied.candidates
+      proactiveMergeDiagnostics = applied.diagnostics
+    } else {
+      proactiveMergeDiagnostics = {
+        event_id: null,
+        event_state: null,
+        merge_action: "parse_failed",
+        matched_event_id: null,
+        source_message_ids: [],
+        last_user_update_message_id: null,
+        expected_window: { start: null, end: null },
+        attention_status: null,
+        error_code: judgeDiagnostics.error_code,
+        raw_output_summary: judgeDiagnostics.raw_output_summary,
+      }
+    }
   } catch (err) {
     console.error("active conversation context judge failed:", err)
+    judgeDiagnostics = {
+      status: "judge_failed",
+      parse_failed: false,
+      error_code: "judge_request_failed",
+      raw_output_summary: String(err?.message || err || "").slice(0, 280),
+    }
+    proactiveMergeDiagnostics = {
+      event_id: null,
+      merge_action: "judge_failed",
+      error_code: judgeDiagnostics.error_code,
+    }
   }
 
   if (persist_active_context) {
@@ -366,6 +406,7 @@ async function updateActiveConversationContext({
           candidates: proactiveCandidates,
           diagnostics: proactiveDiagnostics,
           mergeDiagnostics: proactiveMergeDiagnostics,
+          judgeDiagnostics,
         }
       )
     } catch (err) {
@@ -569,6 +610,7 @@ async function saveActiveConversationContext(messageId, context, proactiveShadow
               proactiveAttentionShadow: {
                 mode: "shadow",
                 merge: proactiveShadow.mergeDiagnostics || null,
+                judge: proactiveShadow.judgeDiagnostics || null,
                 evaluated_at: new Date().toISOString(),
               },
             }
@@ -1138,23 +1180,34 @@ async function initializeCoreMemorySnapshot(candidate) {
 }
 
 async function getDynamicMemoryExclusions(sourceBucketIds) {
-  const excludedBucketIds = [...new Set([
-    ...(sourceBucketIds || []).map(String),
-    ...LEGACY_CORE_MEMORY_BUCKET_IDS,
-  ])].sort()
+  const excludedBucketIds = buildCoreMemoryExclusionIds(
+    sourceBucketIds,
+    LEGACY_CORE_MEMORY_BUCKET_IDS
+  )
   const cacheKey = excludedBucketIds.join(",")
   const cached = dynamicMemoryExclusionCache.get(cacheKey)
 
   if (cached && Date.now() - cached.createdAt < CACHE_POLICY.pinMemoryTtlMs) {
-    return { excludedBucketIds, excludedMemories: cached.value }
+    return { excludedBucketIds, ...cached.value }
   }
 
-  const excludedMemories = await fetchCompleteMemoriesByIds(excludedBucketIds)
+  const loaded = await fetchAvailableMemoriesByIds(excludedBucketIds)
+  const exclusionDiagnostics = {
+    stale_core_source_ids: loaded.staleSourceIds,
+    exclusion_load_partial: loaded.exclusionLoadPartial,
+  }
+  if (exclusionDiagnostics.exclusion_load_partial) {
+    console.warn("DYNAMIC MEMORY EXCLUSION PARTIAL:", exclusionDiagnostics)
+  }
+  const cachedValue = {
+    excludedMemories: loaded.memories,
+    exclusionDiagnostics,
+  }
   dynamicMemoryExclusionCache.set(cacheKey, {
-    value: excludedMemories,
+    value: cachedValue,
     createdAt: Date.now(),
   })
-  return { excludedBucketIds, excludedMemories }
+  return { excludedBucketIds, ...cachedValue }
 }
 
 function isDiaryWritingRequest(message) {
