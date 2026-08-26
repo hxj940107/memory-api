@@ -20,6 +20,10 @@ function memory(content, extra = {}) {
   )
   assert.equal(result.injected.length, 0)
   assert.equal(result.diagnostics[0].suppression_reason, "duplicate_recent")
+  assert.equal(result.diagnostics[0].retrieved, true)
+  assert.equal(result.diagnostics[0].relevant, true)
+  assert.equal(result.diagnostics[0].eligible_for_prompt, false)
+  assert.equal(result.diagnostics[0].eligible_for_proactive_attention, false)
 }
 
 // B. Topic switching does not turn a retained fact back into active attention.
@@ -44,6 +48,8 @@ function memory(content, extra = {}) {
     memory("她今天午饭吃了番茄鸡蛋面，还加了一颗煎蛋。"),
   ], { currentMessage: "我们换个话题，周末想看什么电影？" })
   assert.equal(retainedMemory.injected.length, 1)
+  assert.equal(retainedMemory.diagnostics[0].eligible_for_prompt, true)
+  assert.equal(retainedMemory.diagnostics[0].eligible_for_proactive_attention, false)
   assert.equal(next.items.length, 0)
 }
 

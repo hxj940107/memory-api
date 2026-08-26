@@ -47,7 +47,6 @@ import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
 } from "../lib/coreMemorySnapshot.js"
-import { isConversationalMeetingGoodbye } from "../lib/planFollowUpGuard.js"
 import {
   LEGACY_CORE_MEMORY_BUCKET_IDS,
 } from "../lib/dynamicMemoryFilter.js"
@@ -193,146 +192,7 @@ function parseJsonObject(raw) {
   return JSON.parse(match[0])
 }
 
-function normalizeFollowUpDueAt(value) {
-  const timestamp = new Date(value).getTime()
-
-  if (!Number.isFinite(timestamp)) return null
-
-  const minDueAt = Date.now() + 30 * 60 * 1000
-  const maxDueAt = Date.now() + 7 * 24 * 60 * 60 * 1000
-  const clamped = Math.min(Math.max(timestamp, minDueAt), maxDueAt)
-
-  return deferOutOfQuietHours(new Date(clamped))
-}
-
-function normalizeDelayMinutes(value, fallback = 90) {
-  const parsed = Number(value)
-
-  if (!Number.isFinite(parsed)) return fallback
-
-  return Math.min(Math.max(Math.round(parsed), 20), 24 * 60)
-}
-
-function normalizePlanFollowUpDecision(parsed) {
-  if (!parsed?.should_follow_up) return null
-
-  const event = trimText(parsed.event, 80)
-
-  if (!event || /代码|项目|需求|前端|后端|部署|push|pull|测试|Supabase|Codex/i.test(event)) {
-    return null
-  }
-
-  const eventTime = parsed.event_time || parsed.due_at
-  const eventTimestamp = eventTime ? new Date(eventTime).getTime() : null
-  const naturalDelayMinutes = normalizeDelayMinutes(
-    parsed.natural_delay_minutes ?? parsed.delay_minutes,
-    parsed.event_type === "health_care" ? 45 : 90
-  )
-  const dueAt = eventTimestamp && Number.isFinite(eventTimestamp)
-    ? normalizeFollowUpDueAt(
-        new Date(eventTimestamp + naturalDelayMinutes * 60 * 1000).toISOString()
-      )
-    : normalizeFollowUpDueAt(parsed.due_at)
-
-  if (!dueAt) return null
-
-  return {
-    event,
-    dueAt,
-    eventType: trimText(parsed.event_type, 60),
-    followUpStyle: trimText(parsed.follow_up_style, 80),
-    naturalDelayMinutes,
-    reason: trimText(parsed.reason, 240),
-  }
-}
-
-function getLocalDateForIso(date = new Date()) {
-  const local = getLocalDateTimeParts(date)
-
-  return `${local.year}-${local.month}-${local.day}`
-}
-
-function parseSimpleChinesePlanDueAt(message) {
-  const text = String(message || "")
-  const timeMatch = text.match(/([一二两三四五六七八九十\d]{1,3})点(?:半|([一二三四五六七八九十\d]{1,2})分?)?/)
-
-  if (!timeMatch) return null
-
-  const digitMap = {
-    一: 1,
-    二: 2,
-    两: 2,
-    三: 3,
-    四: 4,
-    五: 5,
-    六: 6,
-    七: 7,
-    八: 8,
-    九: 9,
-    十: 10,
-  }
-  const parseChineseNumber = value => {
-    if (/^\d+$/.test(value)) return Number(value)
-    if (value === "十") return 10
-    if (value.startsWith("十")) return 10 + (digitMap[value[1]] || 0)
-    if (value.endsWith("十")) return (digitMap[value[0]] || 0) * 10
-    if (value.includes("十")) {
-      const [tens, ones] = value.split("十")
-
-      return (digitMap[tens] || 1) * 10 + (digitMap[ones] || 0)
-    }
-
-    return digitMap[value]
-  }
-  let hour = parseChineseNumber(timeMatch[1])
-  const minute = timeMatch[0].includes("半")
-    ? 30
-    : timeMatch[2]
-      ? parseChineseNumber(timeMatch[2])
-      : 0
-
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
-  if (!/(要去|去|做|预约|复查|检查|面试|剪|雾化|吃药|医院|见)/.test(text)) return null
-
-  const localNow = getLocalDateTimeParts()
-  if (!/[上午|早上|凌晨]/.test(text) && hour < 8 && localNow.hour >= 8) {
-    hour += 12
-  }
-
-  const dueAfterEvent = new Date(`${getLocalDateForIso()}T00:00:00+08:00`)
-  dueAfterEvent.setUTCHours(dueAfterEvent.getUTCHours() + hour)
-  dueAfterEvent.setUTCMinutes(dueAfterEvent.getUTCMinutes() + minute + 90)
-
-  return normalizeFollowUpDueAt(dueAfterEvent.toISOString())
-}
-
-function buildRuleBasedPlanFollowUp(message) {
-  const text = String(message || "").trim()
-
-  if (!/(要去|等下|一会儿|下午|晚上|明天|三点|四点|五点|六点|七点|八点|九点|十点|\d+点)/.test(text)) {
-    return null
-  }
-
-  if (!/(雾化|医院|复查|检查|吃药|剪头发|理发|面试|考试|见朋友|见医生|带榴莲)/.test(text)) {
-    return null
-  }
-
-  const dueAt = parseSimpleChinesePlanDueAt(text)
-    || normalizeFollowUpDueAt(new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString())
-
-  if (!dueAt) return null
-
-  const eventMatch = text.match(/(?:要去|去|做|预约)?([^，。！？!?]{1,18}(?:雾化|医院|复查|检查|吃药|剪头发|理发|面试|考试|见朋友|见医生|带榴莲)[^，。！？!?]{0,12})/)
-  const event = trimText(eventMatch?.[1] || text, 80)
-
-  return {
-    event,
-    dueAt,
-    reason: `她提到近期要${event}，适合之后自然问一句。`,
-  }
-}
-
-async function judgePlanFollowUp({
+async function judgeActiveConversationContext({
   message,
   reply,
   previousActiveContext,
@@ -340,7 +200,6 @@ async function judgePlanFollowUp({
 }) {
   if (!message) {
     return {
-      planDecision: null,
       activeContext: resolveActiveConversationContext(previousActiveContext, null),
     }
   }
@@ -350,37 +209,18 @@ async function judgePlanFollowUp({
       {
         role: "system",
         content: `
-你是 XiaoC 的轻量对话连续性与主动回访判断器。同一次判断完成两个彼此独立的任务：
-A. 判断她刚刚说的话里是否有值得之后自然回问的近期计划。
-B. 更新当前 conversation 中仍然有效的短期上下文。
+你是 XiaoC 的轻量对话连续性判断器。更新当前 conversation 中仍然有效的短期上下文。
 
 只输出 JSON：
 {
-  "plan_follow_up":{"should_follow_up":false},
   "active_context":{"items":[]}
 }
-
-plan_follow_up 也可以是：
-{"should_follow_up":true,"event":"做雾化","event_type":"health_care","event_time":"2026-08-14T15:30:00+08:00","natural_delay_minutes":45,"follow_up_style":"gentle_care","reason":"这是身体护理相关，做完后一会儿轻轻关心比较自然"}
-
-Plan follow-up 判断原则（保持原有语义）：
-- 只抓明确的近期个人计划、预约、外出、见人、考试、面试、医院、医疗护理、宠物、家人、重要任务。
-- “时间表达 + 见”如果只是当前聊天的结束语，而且没有明确见面对象、地点、现实事件、出门动作或已经确认的见面安排，是告别，不是 meeting plan；不要创建 plan follow-up，也不要写入 meeting active context。
-- 例子：等下去剪头发、三点半去做雾化、下午去医院、晚上见朋友、明天面试、带榴莲复查、今晚交稿、晚上吃药。
-- 不要抓普通闲聊、情绪表达、开发计划、代码任务、产品需求、模糊愿望。
-- 不要把“我们下一步做什么”“我需要你改代码”当作生活回访。
-- 你自己判断什么时候回问最像一个真实伴侣，而不是提醒器。
-- event_time 是事情大概发生或结束的时间；如果不确定就按自然语言估计。
-- natural_delay_minutes 是 event_time 后多久回问更自然。
-- 医疗护理/身体相关通常可以短一点；剪头发、见朋友可以晚一点；面试考试不要刚结束就追问。
-- 不要为了准点而准点，宁可自然一点。
-- 当前时间按北京时间理解：${new Date().toISOString()}。
 
 Active context 更新原则：
 - active_context.items 必须是更新后的完整状态，不是增量；最多4项。
 - 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID"}。
 - 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
-- “值得保留 active context”与“值得创建 plan follow-up”彼此独立；不需要主动追问的事项也可能仍应保留。
+- “值得保留 active context”与“当前是否适合主动提及”彼此独立；不需要主动提及的事项也可能仍应保留。
 - 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
 - 只有她明确说完成、取消、不再需要、事件已结束并得到结果、新信息明确覆盖旧信息，或事项已明显失去短期价值时，才能删除或替换。
 - 普通生活碎片如果已经聊完、没有未完成动作、等待结果或未来计划，不要继续作为 active item；它可以成为事实记忆，但不应继续占据当前聊天注意力。
@@ -409,30 +249,16 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
     { max_tokens: 520, temperature: 0.1 }
   )
   const parsed = parseJsonObject(raw.reply)
-  const conversationalGoodbye = isConversationalMeetingGoodbye(
-    message,
-    previousActiveContext
-  )
-
   return {
-    planDecision: conversationalGoodbye
-      ? null
-      : normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
-    activeContext: conversationalGoodbye
-      ? resolveActiveConversationContext(previousActiveContext, previousActiveContext, {
-        currentUserMessageId: userMessageId,
-      })
-      : resolveActiveConversationContext(
-        previousActiveContext,
-        parsed?.active_context,
-        { currentUserMessageId: userMessageId }
-      ),
+    activeContext: resolveActiveConversationContext(
+      previousActiveContext,
+      parsed?.active_context,
+      { currentUserMessageId: userMessageId }
+    ),
   }
 }
 
-async function enqueuePlanFollowUpTask({
-  user_id,
-  conversation_id,
+async function updateActiveConversationContext({
   user_message_id,
   assistant_message_id,
   message,
@@ -440,23 +266,21 @@ async function enqueuePlanFollowUpTask({
   previous_active_context,
   persist_active_context = true,
 }) {
-  let decision = null
   let nextActiveContext = resolveActiveConversationContext(
     previous_active_context,
     null
   )
 
   try {
-    const judged = await judgePlanFollowUp({
+    const judged = await judgeActiveConversationContext({
       message,
       reply,
       previousActiveContext: previous_active_context,
       userMessageId: user_message_id,
     })
-    decision = judged.planDecision
     nextActiveContext = judged.activeContext
   } catch (err) {
-    console.error("plan follow-up judge failed:", err)
+    console.error("active conversation context judge failed:", err)
   }
 
   if (persist_active_context) {
@@ -467,43 +291,7 @@ async function enqueuePlanFollowUpTask({
     }
   }
 
-  decision = decision || buildRuleBasedPlanFollowUp(message)
-
-  if (!decision) return null
-
-  const sourceId = user_message_id || `${conversation_id}:${Date.now()}`
-  const { data, error } = await supabase
-    .from("xiaoc_proactive_tasks")
-    .upsert(
-      {
-        user_id,
-        type: "plan_follow_up",
-        source_type: "message",
-        source_id: sourceId,
-        status: "pending",
-        due_at: decision.dueAt,
-        conversation_id,
-        reason: decision.reason,
-        payload: {
-          event: decision.event,
-          event_type: decision.eventType || null,
-          follow_up_style: decision.followUpStyle || null,
-          natural_delay_minutes: decision.naturalDelayMinutes || null,
-          user_message: trimText(message, 800),
-          assistant_reply: trimText(reply, 600),
-          user_message_id,
-          assistant_message_id,
-        },
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,type,source_type,source_id" }
-    )
-    .select("id,due_at,status")
-    .single()
-
-  if (error) throw error
-
-  return data
+  return nextActiveContext
 }
 
 function getLastConversationState(message, reply) {
@@ -890,7 +678,7 @@ async function getMemorySmart(
     conversation_id,
     normalizeCacheText((options.excludedBucketIds || []).join(","), 220),
     normalizeCacheText([
-      ...(options.recentTexts || options.suppressionTexts || []),
+      ...(options.recentTexts || []),
       ...(options.activeTexts || []),
       ...(options.summaryTexts || []),
       ...(options.coreTexts || []),
@@ -1069,7 +857,7 @@ async function getMemorySmart(
           searchText: searchTxt,
           excludedMemories: options.excludedMemories || [],
           context: {
-            recentTexts: options.recentTexts || options.suppressionTexts || [],
+            recentTexts: options.recentTexts || [],
             activeTexts: options.activeTexts || [],
             summaryTexts: options.summaryTexts || [],
             coreTexts: options.coreTexts || [],
@@ -3224,9 +3012,7 @@ console.log("======================================\n")
     )
 
     try {
-      const planTask = await enqueuePlanFollowUpTask({
-        user_id,
-        conversation_id: cid,
+      await updateActiveConversationContext({
         user_message_id: userMessageId,
         assistant_message_id: assistantMessageId,
         message,
@@ -3235,24 +3021,25 @@ console.log("======================================\n")
         persist_active_context: canPersistActiveConversationContext,
       })
 
-      if (planTask) {
-        console.log("PLAN FOLLOW-UP QUEUED:", planTask)
-      } else {
-        const inactivityTask = await enqueueInactivityReachOutTask({
-          user_id,
-          conversation_id: cid,
-          user_message_id: userMessageId,
-          assistant_message_id: assistantMessageId,
-          message,
-          reply,
-        })
+    } catch (err) {
+      console.error("active conversation context update failed:", err)
+    }
 
-        if (inactivityTask) {
-          console.log("INACTIVITY REACH-OUT QUEUED:", inactivityTask)
-        }
+    try {
+      const inactivityTask = await enqueueInactivityReachOutTask({
+        user_id,
+        conversation_id: cid,
+        user_message_id: userMessageId,
+        assistant_message_id: assistantMessageId,
+        message,
+        reply,
+      })
+
+      if (inactivityTask) {
+        console.log("INACTIVITY REACH-OUT QUEUED:", inactivityTask)
       }
     } catch (err) {
-      console.error("plan follow-up enqueue failed:", err)
+      console.error("inactivity reach-out enqueue failed:", err)
     }
 
 return res.status(200).json({

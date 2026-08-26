@@ -30,7 +30,7 @@ test("main chat keeps raw history and uses a separate temporal ledger", () => {
   assert.match(source, /\.select\("id, role, content, created_at, metadata"\)/)
   assert.match(source, /content: historicalContent/)
   assert.doesNotMatch(source, /content: formatTimestampedConversationMessage/)
-  assert.match(source, /buildRecentMessageLedger\(history\.slice\(0, -1\)\)/)
+  assert.match(source, /buildRecentMessageLedger\(history\)/)
   assert.match(source, /过去事件语境不能自动变成当前行为状态/)
   assert.match(source, /主动消息中关于更早历史的自我叙述不自动成为事实/)
   assert.match(source, /只有她在当前消息中明确表达现在准备睡觉、补觉等新状态时/)

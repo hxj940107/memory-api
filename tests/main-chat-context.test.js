@@ -3,7 +3,6 @@ import fs from "node:fs"
 import {
   buildHistoricalSummaryView,
   buildRecentMessageLedger,
-  filterContextEntries,
 } from "../lib/mainChatContext.js"
 
 const recent = [
@@ -29,15 +28,6 @@ const recent = [
   assert.match(ledger, /proactive\/inactivity_reach_out/)
   assert.doesNotMatch(ledger, /早上好宝宝/)
   assert.doesNotMatch(ledger, /咖喱牛肉/)
-}
-
-{
-  const stable = filterContextEntries(
-    ["她今天中午做了咖喱牛肉", "她喜欢一个人旅行", "她喜欢一个人旅行"],
-    ["我做的咖喱牛肉特别好吃"],
-    "我准备午休了"
-  )
-  assert.deepEqual(stable, ["她喜欢一个人旅行"])
 }
 
 {

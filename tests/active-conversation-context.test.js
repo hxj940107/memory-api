@@ -133,9 +133,9 @@ const exam = {
 
 {
   const chat = fs.readFileSync("api/chat.js", "utf8")
-  const judgeStart = chat.indexOf("async function judgePlanFollowUp")
-  const enqueueStart = chat.indexOf("async function enqueuePlanFollowUpTask")
-  const judgeSource = chat.slice(judgeStart, enqueueStart)
+  const judgeStart = chat.indexOf("async function judgeActiveConversationContext")
+  const updateStart = chat.indexOf("async function updateActiveConversationContext")
+  const judgeSource = chat.slice(judgeStart, updateStart)
 
   assert.match(chat, /metadata\?\.activeConversationContext/)
   assert.match(chat, /activeConversationContext: normalized/)
@@ -144,14 +144,12 @@ const exam = {
   assert.match(chat, /persist_active_context: canPersistActiveConversationContext/)
   assert.match(chat, /if \(persist_active_context\)/)
   assert.equal((judgeSource.match(/callLLM\(/g) || []).length, 1)
-  assert.match(judgeSource, /planDecision: conversationalGoodbye/)
-  assert.match(judgeSource, /normalizePlanFollowUpDecision\(parsed\?\.plan_follow_up \|\| parsed\)/)
   assert.match(
     judgeSource,
-    /activeContext: conversationalGoodbye[\s\S]*resolveActiveConversationContext\(previousActiveContext, previousActiveContext/
+    /activeContext: resolveActiveConversationContext\([\s\S]*parsed\?\.active_context/
   )
-  assert.match(chat, /decision = decision \|\| buildRuleBasedPlanFollowUp\(message\)/)
-  assert.match(chat, /\.from\("xiaoc_proactive_tasks"\)[\s\S]*\.upsert\(/)
+  assert.doesNotMatch(judgeSource, /plan_follow_up|should_follow_up/)
+  assert.doesNotMatch(chat, /enqueuePlanFollowUpTask|buildRuleBasedPlanFollowUp/)
 }
 
 {

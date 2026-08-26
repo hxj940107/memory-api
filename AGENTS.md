@@ -50,8 +50,8 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 用户昵称、Feed 中小C点赞状态、评论和回复展示均已接入。
 
 - 主动私聊已形成独立任务链路：
-  - `plan_follow_up` 可以从聊天中的明确计划或预约生成，例如剪头发、医院、面试、带榴莲复查等。
-  - 回访时间不再只靠固定程序间隔；模型结合用户时区、计划时间和语境给出合理执行时间。
+  - 旧 `plan_follow_up` 自动 task 创建已在 Memory / Context P1 架构收口时暂停；历史 task 和执行兼容仍保留，但新聊天不会再创建该类 task。
+  - 后续主动计划回访必须建立在统一 Attention Eligibility 上，不得把 Memory retrieval 或 prompt eligibility 直接当作主动提及资格。
   - 久未聊天后的主动靠近已接入，并区分早晨、白天、晚间语境；静默时段为 `23:30–07:00`。
   - 朋友圈 `private_follow_up` 属于 Moments 当场动作，不走上述二阶段主动任务。
 
@@ -100,6 +100,7 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；`conversation_summary.summary_segments jsonb not null default '[]'::jsonb` 已上线，不再是待执行 migration。
   - 下一台设备或新的 Codex 窗口必须从当前未提交工作区继续，不得重新实现上述 P0 / P1 已完成部分；继续前先阅读 `docs/memory-context-architecture.md` 的交接状态。
   - 尚未实施的后续项包括 long-term heat / cold / archive、deep memory tool loop；它们不得被误记为当前已完成能力。
+  - Eligibility diagnostics 明确区分 `retrieved`、`relevant`、`eligible_for_prompt` 和 `eligible_for_proactive_attention`；当前 Memory 候选默认不具备 proactive attention。
 
 - 深夜树洞已完成主动更新、页面催更、未读红点、置顶和删除管理：
   - 小C每次可根据有限近期上下文决定写入 `0–3` 条，没有值得记录的内容时允许不更新。

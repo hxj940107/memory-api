@@ -24,6 +24,8 @@ P1 当前已完成：
 - Recent History 已改为 token / character budget 与 hard message / turn 上限共同控制，并优先保留最新完整 turn；
 - Conversation Summary 已改为可追踪的 Summary Segments，记录 covered message IDs，并支持旧 segments 超预算后的二次压缩；
 - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
+- 旧 `plan_follow_up` 自动 task 创建已暂停；Active Conversation Context 更新与 `inactivity_reach_out` 保持，历史 task 及执行兼容不删除。
+- Memory eligibility diagnostics 已显式区分 `retrieved`、`relevant`、`eligible_for_prompt` 与 `eligible_for_proactive_attention`。当前 Memory 检索或 prompt 注入不会自动获得 proactive attention。
 
 ### 0.2 待继续
 
@@ -41,6 +43,7 @@ Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。�
 - 当前业务代码未 commit、未 push，交接时必须保留并继续现有工作区；
 - 后续修改前先确认功能是否已经在当前未提交代码中完成，禁止重复施工 P0 或本节所列 P1 能力；
 - `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
+- 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
 
 ## 1. 当前核心设计原则
 
