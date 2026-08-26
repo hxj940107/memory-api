@@ -119,6 +119,17 @@ XiaoC 不应该表现得像：
 
 XiaoC 应该拥有稳定人格、自我感（Sense of Self）、自然情绪表达（Emotional Expression），以及跨时间的连续性。
 
+## 部署架构硬约束
+
+当前项目部署在 Vercel Hobby，Serverless Functions 的硬上限是 `12` 个，当前已经使用 `12/12`。
+
+- 不允许直接新增独立的 `api/*.js` 文件；Vercel 会把每个独立 API 文件计为一个 Serverless Function。
+- 新后端能力必须优先复用现有 endpoint，通过 `type` / `action` 分发，并保持现有职责边界和鉴权方式。
+- 如果未来确实必须新增一个 Function，必须先合并或删除其他 Function 腾出额度，并在修改前后核对 `api/` 下的函数总数。
+- 这不是普通优化建议，而是 Production 能否部署成功的架构硬约束。
+
+历史事故：generated files 最初新增 `api/generated-files.js` 后，函数数达到 `13`，导致 Production Deployment 连续失败，Vercel 报错 `No more than 12 Serverless Functions can be added to a Deployment on the Hobby plan`。删除该独立 endpoint，并将 `sign_download` 合并进 `api/memory.js` 后，函数数恢复为 `12`，部署恢复成功。
+
 ## 工程规则
 
 - 修改前先理解现有设计。
