@@ -20,6 +20,7 @@ import {
 import {
   formatTimedInactivityMessages,
   isTemporallyUnsupportedReachOut,
+  validateProactiveHistoricalClaims,
 } from "../lib/inactivityTemporalGrounding.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
@@ -1322,7 +1323,7 @@ function detectRecentConversationState(messages, fallback = "open") {
 async function getRecentInactivityContext(task) {
   const { data, error } = await supabase
     .from("messages")
-    .select("role,content,created_at")
+    .select("role,content,created_at,metadata")
     .eq("user_id", task.user_id)
     .eq("conversation_id", task.conversation_id)
     .in("role", ["user", "assistant"])
@@ -1407,6 +1408,12 @@ ${systemPrompt}
 - 如果事件阶段不明确，放弃进度和结果型问题。没有合适具体话题时，回到关系本身的自然靠近，不要为了承接上下文而补全事实。
 - 当前时段只用于判断事件在此刻是否合理，不用于选择固定问候或固定问题。
 
+【历史事实账本】
+- 最近聊天上下文是这个 conversation 中已经实际发生的消息行为记录。涉及我或她之前有没有说过、发过、问过或做过某个聊天行为时，必须以记录为准。
+- 不得为了营造关系感而否认、改写或补造可见历史。历史明确显示我说过或做过，就不能声称没有发生；历史没有证据时，也不要凭空声称过去发生过某个具体聊天行为。
+- 标记为“小C主动发送”的内容是我过去生成并实际发出的消息，但其中对更早历史的叙述不自动成为事实。若它与更早的真实消息行为或她的原话冲突，以真实消息行为和她的原话为准。
+- 不需要机械复述历史；只有产生明确历史断言时才应用这些约束。
+
 要求：
 - 只输出消息内容，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
@@ -1449,14 +1456,26 @@ ${contextMessages}
     { max_tokens: 80, temperature: 0.6 }
   )
   const message = cleanProactiveMessage(raw)
+  const factualGrounding = validateProactiveHistoricalClaims(
+    message,
+    recentContext.messages
+  )
 
   if (
     !message ||
     isBadProactiveMessage(message) ||
     (message.match(/[？?]/g) || []).length > 1 ||
     isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour) ||
-    isTemporallyUnsupportedReachOut(message, recentContext.messages)
+    isTemporallyUnsupportedReachOut(message, recentContext.messages) ||
+    !factualGrounding.valid
   ) {
+    if (!factualGrounding.valid) {
+      console.warn("PROACTIVE FACTUAL GROUNDING REJECTED:", {
+        taskId: task.id || null,
+        reason: factualGrounding.reason,
+        anchors: factualGrounding.anchors,
+      })
+    }
     return "突然有点想你了，想来找你待一会儿"
   }
 

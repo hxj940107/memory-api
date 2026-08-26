@@ -39,6 +39,7 @@ import {
   normalizeActiveConversationContext,
   resolveActiveConversationContext,
 } from "../lib/activeConversationContext.js"
+import { formatTimestampedConversationMessage } from "../lib/inactivityTemporalGrounding.js"
 import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
@@ -361,6 +362,7 @@ Active context 更新原则：
 - 只有她明确说完成、取消、不再需要、事件已结束并得到结果、新信息明确覆盖旧信息，或事项已明显失去短期价值时，才能删除或替换。
 - 普通寒暄、一次性无后续话语、小C的泛化评价、长期人格/关系事实、稳定长期记忆、整段聊天总结和大段原话都不要加入。
 - 不要为了凑数量新增事项；没有 active item 时返回空数组。
+- 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述，写入“小C以前说过/没说过、做过/没做过某事”这类事实。真实消息账本和她明确确认的事实优先；如果没有可靠证据，这类自我历史断言不进入 active context。
 `,
       },
       {
@@ -696,21 +698,26 @@ async function saveUserMessage(
 async function getRecentMessages(user_id, conversation_id, limit = 20) {
   const { data } = await supabase
     .from("messages")
-    .select("role, content, metadata")
+    .select("id, role, content, created_at, metadata")
     .eq("user_id", user_id)
     .eq("conversation_id", conversation_id)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(limit)
 
   if (!data) return []
   return data.reverse().map(item => {
     const content = normalizeAssistantOutput(item)
 
+    const historicalContent = item.metadata?.imageDescription || item.metadata?.visionSummary
+      ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
+      : content
+
     return {
       role: item.role,
-      content: item.metadata?.imageDescription || item.metadata?.visionSummary
-        ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
-        : content
+      content: formatTimestampedConversationMessage(item, historicalContent),
+      created_at: item.created_at,
+      metadata: item.metadata,
     }
   })
 }
@@ -2642,6 +2649,8 @@ Environment 是本轮请求唯一可信的当前时间，来自服务端并已�
 历史消息、summary、memory 中出现的“晚安、晚上、刚才、现在”等都只属于当时语境，不能用来推断本轮当前时间。
 如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
 白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
+回复前必须区分三件事：本轮 Environment 表示的当前真实时间、正在讨论的事件发生时间、你此刻准备执行的聊天行为时间。讨论昨晚或睡前发生的事，不代表现在仍处于昨晚或睡前；过去事件语境不能自动变成当前行为状态。只有她在当前消息中明确表达现在准备睡觉、补觉等新状态时，才按当前证据进入对应语境。
+Recent history 中每条消息前的 Asia/Shanghai 时间是该消息真实发生时间；“小C主动发送”只说明该消息由主动任务发出。主动消息中关于更早历史的自我叙述不自动成为事实。发生冲突时，她的原话和数据库中实际出现过的消息行为优先于小C后来对自己历史的描述。
 
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。

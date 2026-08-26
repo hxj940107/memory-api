@@ -3,8 +3,10 @@ import fs from "node:fs"
 import test from "node:test"
 import {
   formatTimedInactivityMessages,
+  formatTimestampedConversationMessage,
   getInactivityEventEvidence,
   isTemporallyUnsupportedReachOut,
+  validateProactiveHistoricalClaims,
 } from "../lib/inactivityTemporalGrounding.js"
 
 const message = (role, content, created_at) => ({ role, content, created_at })
@@ -67,13 +69,63 @@ test("recent message timestamps are rendered in Asia Shanghai local time", () =>
   assert.match(formatted, /\[2026-08-24 23:21 Asia\/Shanghai\] 小C：晚安/)
 })
 
+test("proactive history metadata is visible in timestamped context", () => {
+  const formatted = formatTimestampedConversationMessage({
+    ...message("assistant", "早上好", "2026-08-25T23:25:00.000Z"),
+    metadata: {
+      proactive: true,
+      proactiveType: "inactivity_reach_out",
+      proactiveTaskId: 555,
+    },
+  }, "早上好")
+
+  assert.match(formatted, /2026-08-26 07:25 Asia\/Shanghai/)
+  assert.match(formatted, /小C主动发送/)
+  assert.match(formatted, /inactivity_reach_out/)
+})
+
+test("a proactive message cannot deny a recorded assistant action", () => {
+  const messages = [
+    message("user", "你都不跟我说晚安了", "2026-08-25T15:59:14.000Z"),
+    message("assistant", "晚安老婆\n\n就是爱你才没走", "2026-08-25T15:59:17.000Z"),
+  ]
+  const result = validateProactiveHistoricalClaims(
+    "其实昨晚是想跟你说晚安的，后来怎么就没说呢",
+    messages
+  )
+
+  assert.equal(result.valid, false)
+  assert.equal(result.reason, "contradicts_recorded_assistant_action")
+})
+
+test("a proactive message cannot invent a specific unsupported self-history", () => {
+  const result = validateProactiveHistoricalClaims(
+    "我昨晚跟你说过明天给你寄戒指",
+    [message("user", "今天有点忙", "2026-08-25T15:00:00.000Z")]
+  )
+
+  assert.equal(result.valid, false)
+  assert.equal(result.reason, "unsupported_assistant_history_claim")
+})
+
+test("current explicit nap intent remains valid current-state evidence", () => {
+  const currentUserMessage = formatTimestampedConversationMessage(
+    message("user", "我现在要补觉", "2026-08-26T02:15:00.000Z"),
+    "我现在要补觉"
+  )
+
+  assert.match(currentUserMessage, /2026-08-26 10:15/)
+  assert.match(currentUserMessage, /我现在要补觉/)
+})
+
 test("the inactivity prompt uses timed context and temporal validation without changing scheduling", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
 
-  assert.match(source, /\.select\("role,content,created_at"\)/)
+  assert.match(source, /\.select\("role,content,created_at,metadata"\)/)
   assert.match(source, /formatTimedInactivityMessages\(recentContext\.messages, trimText\)/)
   assert.match(source, /【事件阶段与时间定位】/)
   assert.match(source, /isTemporallyUnsupportedReachOut\(message, recentContext\.messages\)/)
+  assert.match(source, /validateProactiveHistoricalClaims/)
   assert.match(source, /enqueueNextInactivityReachOutTask\(task, result\)/)
   assert.match(source, /isProactiveQuietHours\(now\)/)
 })
