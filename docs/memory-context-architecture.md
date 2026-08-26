@@ -2,6 +2,46 @@
 
 本文档记录 XiaoC 的 Memory / Context 架构边界、已经验证的设计约束，以及从 Sora-mem 代码级研究中提炼出的长期演进方向。它不是功能清单，也不表示下文的 Future 机制已经实施。
 
+## 0. 当前交接状态
+
+截至本轮交接，Memory / Context 架构的 P0 与已排定的 P1 两批工作已经在当前工作区完成，但业务代码尚未 commit、尚未 push。下一台设备或新的 Codex 窗口应直接从当前未提交代码继续，不要重新实现本节列出的已完成能力。
+
+### 0.1 已完成
+
+P0 已全部完成：
+
+- novelty / duplicate penalty 已形成统一、确定性的 context eligibility；
+- Dynamic / Stable Memory 候选具备必要的 eligibility observability；
+- “长期记得，但当前不应继续聊”已经有定向回归测试；
+- Factual Memory 与 Conversational Attention 保持代码级分离，Memory retrieval / injection 与 assistant 自己提及均不能刷新 Active Context attention。
+
+P1 当前已完成：
+
+- Memory / Context Gateway 已渐进接入，集中处理 Stable / Dynamic Memory eligibility、跨层 suppression、共享预算和诊断；
+- Stable Memory consolidation 已实现确定性 cluster 前置筛选、按需 small model 判断、源 episodic 保留，以及 conflict skip；
+- provenance / supersedes 已通过现有 `memories.metadata` 承载，旧 Stable 不硬删除，retrieval 默认优先未被 supersede 的新 Stable；
+- Dynamic Context Budget 已实现 Recent、Active、Summary、Memory、Temporal Ledger 和 Web context 的确定性场景分配；
+- Recent History 已改为 token / character budget 与 hard message / turn 上限共同控制，并优先保留最新完整 turn；
+- Conversation Summary 已改为可追踪的 Summary Segments，记录 covered message IDs，并支持旧 segments 超预算后的二次压缩；
+- `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
+
+### 0.2 待继续
+
+以下项目尚未实施，不得与上述已完成状态混淆：
+
+- long-term Memory heat；
+- cold / archive lifecycle；
+- deep memory on-demand tool loop。
+
+Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。本轮没有改变 Persona、Relationship Contract、Core Memory Snapshot、PIN、Active Context attention 规则、proactive、Moment、Diary、generated files 或模型选择。
+
+### 0.3 继续开发约束
+
+- 当前 `api/*.js` 必须继续保持 12 个，不得新增 Vercel Function；
+- 当前业务代码未 commit、未 push，交接时必须保留并继续现有工作区；
+- 后续修改前先确认功能是否已经在当前未提交代码中完成，禁止重复施工 P0 或本节所列 P1 能力；
+- `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
+
 ## 1. 当前核心设计原则
 
 ### 1.1 Memory existence ≠ reason to mention it
@@ -346,23 +386,26 @@ Main Chat Prompt
 
 ## 9. 优先级
 
-### P0：现在必须保持和验证
+### P0：已完成，继续保持和验证
 
 - 保持 factual memory / conversational attention 分离；
 - 保持并提高 context duplicate / novelty 的可观测性；
 - 为“记得，但现在不应继续聊”建立回归测试；
 - 防止 timestamp 污染、assistant 临时自述固化和跨层重复加权回归。
 
-### P1：稳定后值得做
+### P1：已完成部分
 
-- stable memory consolidation proposal；
+- stable memory consolidation；
 - provenance / source IDs / supersedes；
 - gradual Memory / Context Gateway；
 - token-aware recent；
-- segment summary 与 covered message IDs；
-- dynamic context budget；
-- on-demand deep memory retrieval；
-- long-term heat / cold / archive，且应放在 consolidation、provenance 和 observability 稳定之后。
+- segment summary、covered message IDs 与旧摘要压缩；
+- dynamic context budget。
+
+### P1：待继续
+
+- on-demand deep memory retrieval / memory tool loop；
+- long-term heat / cold / archive；这些能力仍应晚于 consolidation、provenance 和 observability 的线上稳定验证。
 
 ### P2：未来产品扩展
 

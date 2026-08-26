@@ -51,8 +51,9 @@ const recent = [
   const chat = fs.readFileSync("api/chat.js", "utf8")
   assert.match(chat, /content: historicalContent/)
   assert.doesNotMatch(chat, /content: formatTimestampedConversationMessage/)
-  assert.match(chat, /buildRecentMessageLedger\(history\.slice\(0, -1\)\)/)
-  assert.match(chat, /\.\.\.history\.slice\(0, -1\)\.map\(item => \(\{[\s\S]*role: item\.role,[\s\S]*content: item\.content/)
+  assert.match(chat, /buildRecentMessageLedger\(history\)/)
+  assert.match(chat, /\.\.\.history\.map\(item => \(\{[\s\S]*role: item\.role,[\s\S]*content: item\.content/)
+  assert.match(chat, /selectTokenAwareRecentHistory\(historyCandidates/)
 }
 
 console.log("main chat context tests passed")

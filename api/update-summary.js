@@ -1,10 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { AI_ENDPOINTS, AI_MODELS, APP_USER } from "../lib/aiConfig.js";
 import {
   SUMMARY_BATCH_MAX_MESSAGES,
   SUMMARY_BATCH_MAX_CHARS,
   SUMMARY_EXISTING_MAX_CHARS,
-  processSummaryBatch,
   selectSummaryBatch,
   splitOversizedSummaryMessage,
 } from "../lib/summaryBatch.js";
@@ -17,6 +17,16 @@ import {
   getSummaryTrust,
   validateSummarySemantics,
 } from "../lib/summaryPolicy.js";
+import { selectTokenAwareRecentHistory } from "../lib/dynamicContextBudget.js";
+import {
+  createSummarySegment,
+  mergeCompressedSummarySegments,
+  normalizeSummarySegments,
+  sanitizeSummaryEvidence,
+  selectOldestSegmentsForCompression,
+  selectUnsummarizedOutsideRecent,
+  shouldCompressSummarySegments,
+} from "../lib/summarySegments.js";
 
 const SUMMARY_QUERY_LIMIT = SUMMARY_BATCH_MAX_MESSAGES + 1
 
@@ -142,7 +152,7 @@ export default async function handler(req, res) {
 
     const { data: summaryRow, error: summaryError } = await supabase
       .from("conversation_summary")
-      .select("summary,last_summarized_at,updated_at")
+      .select("summary,summary_segments,last_summarized_at,updated_at")
       .eq("conversation_id", conversation_id)
       .maybeSingle();
 
@@ -151,6 +161,18 @@ export default async function handler(req, res) {
     }
 
     const oldSummary = summaryRow?.summary || "";
+    const storedSummarySegments = normalizeSummarySegments(summaryRow?.summary_segments)
+    let summarySegments = storedSummarySegments
+    if (!summarySegments.length && oldSummary) {
+      summarySegments = [{
+        id: "legacy-summary-v0",
+        version: 0,
+        content: oldSummary,
+        covered_message_ids: [],
+        covered_until: summaryRow?.last_summarized_at || null,
+        created_at: summaryRow?.updated_at || null,
+      }]
+    }
     const lastSummarizedAt = summaryRow?.last_summarized_at;
     const summaryTrust = getSummaryTrust(summaryRow)
 
@@ -168,7 +190,7 @@ export default async function handler(req, res) {
       })
     }
 
-    if (oldSummary.length > SUMMARY_EXISTING_MAX_CHARS) {
+    if (!storedSummarySegments.length && oldSummary.length > SUMMARY_EXISTING_MAX_CHARS) {
       console.error("SUMMARY SAFETY BLOCK:", {
         conversationId: conversation_id,
         existingSummaryChars: oldSummary.length,
@@ -208,7 +230,39 @@ export default async function handler(req, res) {
       ...message,
       content: normalizeAssistantOutput(message),
     }))
-    const batch = selectSummaryBatch(sanitizedMessages)
+    const { data: latestMessages, error: latestError } = await supabase
+      .from("messages")
+      .select("id,role,content,created_at")
+      .eq("conversation_id", conversation_id)
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
+      .limit(33)
+    if (latestError) {
+      return res.status(500).json({ error: latestError.message })
+    }
+    const recentSelection = selectTokenAwareRecentHistory(
+      (latestMessages || []).reverse().map(message => ({
+        ...message,
+        content: normalizeAssistantOutput(message),
+      })),
+      { tokenBudget: 2200, maxMessages: 32, maxTurns: 16 }
+    )
+    const unsummarized = selectUnsummarizedOutsideRecent(
+      sanitizedMessages,
+      summarySegments,
+      recentSelection.messages.map(item => item.id)
+    )
+    const summaryEvidence = sanitizeSummaryEvidence(unsummarized)
+
+    if (!summaryEvidence.length) {
+      return res.status(200).json({
+        success: true,
+        message: "No messages outside recent window require summary.",
+        recentMessages: recentSelection.selectedMessages,
+      })
+    }
+
+    const batch = selectSummaryBatch(summaryEvidence)
 
     if (!batch.messages.length) {
       throw new Error("Summary batch selection returned no messages")
@@ -225,32 +279,57 @@ export default async function handler(req, res) {
       hasMore: batch.hasMore
     })
 
-    const { summary, checkpoint: latestTime } = await processSummaryBatch({
-      oldSummary,
-      batch,
-      summarize: summarizeBatch,
-      save: async (nextSummary, checkpoint) => {
-        const result = await supabase
-          .from("conversation_summary")
-          .upsert(
-            {
-              conversation_id,
-              summary: nextSummary,
-              updated_at: new Date().toISOString(),
-              last_summarized_at: checkpoint
-            },
-            { onConflict: "conversation_id" }
-          );
-
-        if (result.error) {
-          throw new Error(result.error.message)
-        }
-      }
+    const now = new Date().toISOString()
+    const segmentContent = await summarizeBatch("", batch)
+    const nextSegment = createSummarySegment({
+      id: randomUUID(),
+      content: segmentContent,
+      messages: batch.messages,
+      createdAt: now,
     })
+    summarySegments.push(nextSegment)
+
+    if (shouldCompressSummarySegments(summarySegments)) {
+      const oldest = selectOldestSegmentsForCompression(summarySegments)
+      if (oldest.length >= 2) {
+        const compressedContent = await updateSummaryWithClaude(
+          oldest.map(item => item.content).join("\n\n"),
+          "请把以上较早的摘要压缩为更粗粒度的长期连续性摘要；不要增加新事实。",
+          0,
+          []
+        )
+        const compressed = mergeCompressedSummarySegments(oldest, compressedContent, {
+          id: randomUUID(),
+          createdAt: now,
+        })
+        const compressedIds = new Set(oldest.map(item => item.id))
+        summarySegments = [
+          compressed,
+          ...summarySegments.filter(item => !compressedIds.has(item.id)),
+        ]
+      }
+    }
+
+    const summary = summarySegments.map(item => item.content).join("\n\n")
+    const latestTime = nextSegment.covered_until
+    const saveResult = await supabase
+      .from("conversation_summary")
+      .upsert(
+        {
+          conversation_id,
+          summary,
+          summary_segments: summarySegments,
+          updated_at: now,
+          last_summarized_at: latestTime,
+        },
+        { onConflict: "conversation_id" }
+      )
+    if (saveResult.error) throw new Error(saveResult.error.message)
 
     return res.status(200).json({
       success: true,
       summary,
+      segment: nextSegment,
       batch: {
         processedMessages: batch.messages.length,
         processedThrough: latestTime,

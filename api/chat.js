@@ -42,7 +42,6 @@ import {
 import {
   buildHistoricalSummaryView,
   buildRecentMessageLedger,
-  filterContextEntries,
 } from "../lib/mainChatContext.js"
 import {
   ensureCoreMemorySnapshot,
@@ -50,9 +49,25 @@ import {
 } from "../lib/coreMemorySnapshot.js"
 import { isConversationalMeetingGoodbye } from "../lib/planFollowUpGuard.js"
 import {
-  filterDynamicMemorySearchText,
   LEGACY_CORE_MEMORY_BUCKET_IDS,
 } from "../lib/dynamicMemoryFilter.js"
+import {
+  consumeMemoryContextBudget,
+  createMemoryContextBudget,
+  logMemoryContextDiagnostics,
+  prepareStableMemoryCandidates,
+  selectDynamicMemoryContext,
+  selectStableMemoryContext,
+} from "../lib/memoryContextGateway.js"
+import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
+import {
+  allocateDynamicContextBudget,
+  selectTokenAwareRecentHistory,
+} from "../lib/dynamicContextBudget.js"
+import {
+  normalizeSummarySegments,
+  selectSummarySegmentsForPrompt,
+} from "../lib/summarySegments.js"
 import {
   buildCachedPromptMessages,
   buildPromptCacheUsageLog,
@@ -405,12 +420,12 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
       : normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
     activeContext: conversationalGoodbye
       ? resolveActiveConversationContext(previousActiveContext, previousActiveContext, {
-        currentMessageId: userMessageId,
+        currentUserMessageId: userMessageId,
       })
       : resolveActiveConversationContext(
         previousActiveContext,
         parsed?.active_context,
-        { currentMessageId: userMessageId }
+        { currentUserMessageId: userMessageId }
       ),
   }
 }
@@ -813,10 +828,10 @@ function formatMessagesForMomentContext(messages = [], charLimit = CONTEXT_BUDGE
 async function getStableMemories(user_id) {
   const { data, error } = await supabase
     .from("memories")
-    .select("content, metadata, created_at")
+    .select("id, content, metadata, created_at")
     .eq("user_id", user_id)
     .order("created_at", { ascending: false })
-    .limit(30)
+    .limit(80)
 
   if (error || !data) {
     if (error) {
@@ -826,21 +841,7 @@ async function getStableMemories(user_id) {
     return []
   }
 
-  const unique = []
-  const seen = new Set()
-
-  for (const item of data) {
-    const content = String(item.content || "").trim()
-
-    if (!content || seen.has(content)) {
-      continue
-    }
-
-    seen.add(content)
-    unique.push(content)
-  }
-
-  return trimList(unique, CONTEXT_BUDGET.stableMemoryChars)
+  return prepareStableMemoryCandidates(data)
 }
 
 // --------------------
@@ -888,7 +889,13 @@ async function getMemorySmart(
   const dynamicCacheKey = [
     conversation_id,
     normalizeCacheText((options.excludedBucketIds || []).join(","), 220),
-    normalizeCacheText((options.suppressionTexts || []).join("\n"), 220),
+    normalizeCacheText([
+      ...(options.recentTexts || options.suppressionTexts || []),
+      ...(options.activeTexts || []),
+      ...(options.summaryTexts || []),
+      ...(options.coreTexts || []),
+    ].join("\n"), 360),
+    options.memoryBudget?.remainingChars ?? "unbounded",
     normalizeCacheText(
       memorySearchQuery,
       CACHE_POLICY.dynamicMemoryKeyChars
@@ -897,6 +904,7 @@ async function getMemorySmart(
 
   let pinMemory = [];
   let dynamicMemory = [];
+  let dynamicMemoryDiagnostics = [];
 
   // ==========================
   // 1. PIN memory cache
@@ -994,7 +1002,17 @@ async function getMemorySmart(
 
     console.log("MEMORY SEARCH CACHE HIT");
 
-    dynamicMemory = cachedDynamicMemory.value;
+    dynamicMemory = cachedDynamicMemory.value.dynamicMemory || cachedDynamicMemory.value;
+    dynamicMemoryDiagnostics = cachedDynamicMemory.value.diagnostics || [];
+    consumeMemoryContextBudget(
+      options.memoryBudget,
+      cachedDynamicMemory.value.injectedContents || []
+    )
+    logMemoryContextDiagnostics(
+      "DYNAMIC",
+      conversation_id,
+      dynamicMemoryDiagnostics
+    )
 
   } else {
 
@@ -1047,19 +1065,22 @@ async function getMemorySmart(
         // Limit dynamic memory size
         // ==========================
 
-        const filteredSearchText = filterDynamicMemorySearchText(
-          searchTxt,
-          options.excludedMemories || [],
-          {
-            suppressionTexts: options.suppressionTexts || [],
+        const evaluatedSearch = selectDynamicMemoryContext({
+          searchText: searchTxt,
+          excludedMemories: options.excludedMemories || [],
+          context: {
+            recentTexts: options.recentTexts || options.suppressionTexts || [],
+            activeTexts: options.activeTexts || [],
+            summaryTexts: options.summaryTexts || [],
+            coreTexts: options.coreTexts || [],
             currentMessage: message,
-          }
-        )
-        const trimmedMemory =
-          trimText(
-            filteredSearchText,
-            CONTEXT_BUDGET.dynamicMemoryChars
-          );
+            currentConversationId: conversation_id,
+          },
+          maxChars: CONTEXT_BUDGET.dynamicMemoryChars,
+          budget: options.memoryBudget,
+        })
+        const trimmedMemory = evaluatedSearch.text;
+        dynamicMemoryDiagnostics = evaluatedSearch.diagnostics;
 
         dynamicMemory = trimmedMemory ? [trimmedMemory] : [];
 
@@ -1067,7 +1088,11 @@ async function getMemorySmart(
         memorySearchCache.set(
           dynamicCacheKey,
           {
-            value: dynamicMemory,
+            value: {
+              dynamicMemory,
+              diagnostics: dynamicMemoryDiagnostics,
+              injectedContents: evaluatedSearch.injected.map(item => item.content),
+            },
             createdAt: Date.now()
           }
         );
@@ -1117,7 +1142,8 @@ async function getMemorySmart(
 
   return {
     pinMemory,
-    dynamicMemory
+    dynamicMemory,
+    diagnostics: dynamicMemoryDiagnostics,
   };
 
 }
@@ -1153,6 +1179,34 @@ async function saveLongTermMemory(user_id, content) {
   )
 
   return holdRes.ok
+}
+
+async function saveEpisodicObservation({
+  userId,
+  content,
+  category,
+  sourceMessageId,
+  sourceConversationId,
+}) {
+  if (!sourceMessageId) return null
+  const { data, error } = await supabase
+    .from("memories")
+    .insert({
+      user_id: userId,
+      content,
+      metadata: {
+        type: "episodic",
+        source_role: "user",
+        source_message_id: sourceMessageId,
+        source_conversation_id: sourceConversationId,
+        category: category || null,
+        consolidation: false,
+      },
+    })
+    .select("id,content,metadata,created_at")
+    .single()
+  if (error) throw error
+  return data
 }
 
 async function readCoreMemorySnapshot(conversationId) {
@@ -2504,10 +2558,10 @@ const userMessageId = await saveUserMessage(
 )
 
 // 2. history
-const history = await getRecentMessages(
+const historyCandidates = await getRecentMessages(
   user_id,
   cid,
-  CONTEXT_BUDGET.recentHistoryMessages + 1
+  CONTEXT_BUDGET.recentHistoryFetchMessages
 )
 let activeConversationContext = { items: [] }
 let canPersistActiveConversationContext = true
@@ -2517,13 +2571,43 @@ try {
   canPersistActiveConversationContext = false
   console.error("active conversation context read failed; using no context this turn:", err)
 }
-const activeConversationContextPrompt = formatActiveConversationContext(
-  activeConversationContext,
-  {
-    recentMessageIds: history.slice(0, -1).map(item => item.id),
-  }
+const expectsWebContext = /^\/搜(?:\s|$)/i.test(message)
+  || shouldAutomaticallySearchWeb(message)
+const dynamicContextBudget = allocateDynamicContextBudget({
+  currentMessage: message,
+  activeItems: activeConversationContext.items,
+  hasMemoryHit: false,
+  expectsWebContext,
+  totalChars: CONTEXT_BUDGET.dynamicContextChars,
+})
+const recentSelection = selectTokenAwareRecentHistory(historyCandidates, {
+  excludeMessageIds: [userMessageId],
+  tokenBudget: CONTEXT_BUDGET.recentHistoryTokens,
+  charBudget: dynamicContextBudget.recent,
+  maxMessages: CONTEXT_BUDGET.recentHistoryMessages,
+  maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
+})
+const history = recentSelection.messages
+console.log("RECENT HISTORY BUDGET:", {
+  tokenBudget: recentSelection.tokenBudget,
+  estimatedTokens: recentSelection.estimatedTokens,
+  charBudget: recentSelection.charBudget,
+  usedChars: recentSelection.usedChars,
+  hardMaxMessages: recentSelection.maxMessages,
+  hardMaxTurns: recentSelection.maxTurns,
+  selectedMessages: recentSelection.selectedMessages,
+  selectedTurns: recentSelection.selectedTurns,
+})
+const activeConversationContextPrompt = trimText(
+  formatActiveConversationContext(activeConversationContext, {
+    recentMessageIds: history.map(item => item.id),
+  }),
+  dynamicContextBudget.active
 )
-const recentMessageLedger = buildRecentMessageLedger(history.slice(0, -1))
+const recentMessageLedger = trimText(
+  buildRecentMessageLedger(history),
+  dynamicContextBudget.ledger
+)
 
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isManualMomentRequest = isMomentWritingRequest(message)
@@ -2566,7 +2650,56 @@ const coreMemorySnapshot = await ensureCoreMemorySnapshot({
   initializeSnapshot: initializeCoreMemorySnapshot,
 })
 
+const attributionCorrectionContext = isAttributionCorrection(message)
+  ? `【Attribution Correction｜说话人纠正】
+用户正在纠正小C的说话人归因。当前这条纠正必须优先于旧 summary 和旧记忆。
+如果用户说“不是我写/不是我说，是你写/你说”，要立刻承认具体主语关系，并按用户纠正后的事实继续。
+不要因为用户纠正你就泛泛道歉；简短承认，然后自然接住。
+`
+  : "";
+
+let summaryMemory = "";
+try {
+  const { data } = await supabase
+    .from("conversation_summary")
+    .select("summary,summary_segments,updated_at,last_summarized_at")
+    .eq("conversation_id", cid)
+    .maybeSingle();
+  const summaryTrust = getSummaryTrust(data)
+
+  if (summaryTrust.trusted) {
+    const segments = normalizeSummarySegments(data?.summary_segments)
+    if (segments.length) {
+      summaryMemory = selectSummarySegmentsForPrompt(
+        segments,
+        history.map(item => item.id),
+        dynamicContextBudget.summary
+      ).content
+    } else {
+      const rawSummary = normalizeAssistantOutput({
+        role: "assistant",
+        content: data?.summary || "",
+      })
+      summaryMemory = trimText(
+        buildHistoricalSummaryView(rawSummary, history),
+        dynamicContextBudget.summary
+      );
+    }
+  } else if (data?.summary) {
+    console.warn("SUMMARY INJECTION SKIPPED:", {
+      conversationId: cid,
+      reason: summaryTrust.reason,
+      updatedAt: data.updated_at || null,
+    })
+  }
+
+  if (attributionCorrectionContext) summaryMemory = "";
+} catch (err) {
+  console.error("summary load failed:", err);
+}
+
 let dynamicMemory = []
+const memoryContextBudget = createMemoryContextBudget(dynamicContextBudget.memory)
 try {
   const dynamicMemoryExclusions = await getDynamicMemoryExclusions(
     coreMemorySnapshot.sourceBucketIds
@@ -2578,10 +2711,12 @@ try {
     history,
     {
       includePinned: false,
-      suppressionTexts: [
-        ...history.slice(0, -1).map(item => item.content),
-        ...activeConversationContext.items.map(item => `${item.topic} ${item.context}`),
-      ],
+      recentTexts: history.map(item => item.content),
+      activeTexts: activeConversationContext.items
+        .map(item => `${item.topic} ${item.context}`),
+      summaryTexts: summaryMemory ? [summaryMemory] : [],
+      coreTexts: [coreMemorySnapshot.snapshot],
+      memoryBudget: memoryContextBudget,
       ...dynamicMemoryExclusions,
     }
   )
@@ -2590,16 +2725,21 @@ try {
   console.error("dynamic memory exclusion load failed; injection skipped:", err)
 }
 
-let stableMemory = await getStableMemories(user_id)
-stableMemory = filterContextEntries(
-  stableMemory,
-  [
-    coreMemorySnapshot.snapshot,
-    ...history.slice(0, -1).map(item => item.content),
-    ...activeConversationContext.items.map(item => `${item.topic} ${item.context}`),
-  ],
-  message
-)
+const stableMemorySelection = selectStableMemoryContext({
+  candidates: await getStableMemories(user_id),
+  context: {
+    coreTexts: [coreMemorySnapshot.snapshot],
+    recentTexts: history.map(item => item.content),
+    activeTexts: activeConversationContext.items
+      .map(item => `${item.topic} ${item.context}`),
+    summaryTexts: summaryMemory ? [summaryMemory] : [],
+    currentMessage: message,
+    currentConversationId: cid,
+  },
+  maxChars: memoryContextBudget.remainingChars,
+  budget: memoryContextBudget,
+})
+const stableMemory = stableMemorySelection.memories
 
 let webSearch = "";
 let userMessage = message;
@@ -2619,16 +2759,9 @@ ${normalizedFileText}
 const diaryStyleContext = isDiaryRequest
   ? buildDiaryWritingStylePrompt()
   : "";
-const attributionCorrectionContext = isAttributionCorrection(message)
-  ? `【Attribution Correction｜说话人纠正】
-用户正在纠正小C的说话人归因。当前这条纠正必须优先于旧 summary 和旧记忆。
-如果用户说“不是我写/不是我说，是你写/你说”，要立刻承认具体主语关系，并按用户纠正后的事实继续。
-不要因为用户纠正你就泛泛道歉；简短承认，然后自然接住。
-`
-  : "";
 
 const forcedWebSearch = /^\/搜(?:\s|$)/i.test(message)
-const automaticWebSearch = !forcedWebSearch && shouldAutomaticallySearchWeb(message)
+const automaticWebSearch = !forcedWebSearch && expectsWebContext
 
 if (forcedWebSearch || automaticWebSearch) {
   const query = normalizeWebSearchQuery(message)
@@ -2640,7 +2773,7 @@ if (forcedWebSearch || automaticWebSearch) {
 
   webSearch = trimText(
     await searchWeb(query, { automatic: automaticWebSearch }),
-    CONTEXT_BUDGET.webSearchChars
+    Math.min(CONTEXT_BUDGET.webSearchChars, dynamicContextBudget.web)
   )
 
   if (forcedWebSearch) userMessage = query
@@ -2667,49 +2800,6 @@ console.log("DIARY CONTEXT WINDOW:", getDiaryContextWindow(diaryTriggerAt, USER_
 console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
 console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
 console.log("CHAT MODEL:", selectedChatModel)
-
-// ==========================
-// Future Summary Layer
-// ==========================
-
-let summaryMemory = "";
-
-try {
-
-  const { data } = await supabase
-    .from("conversation_summary")
-    .select("summary,updated_at,last_summarized_at")
-    .eq("conversation_id", cid)
-    .maybeSingle();
-
-  const summaryTrust = getSummaryTrust(data)
-
-  if (summaryTrust.trusted) {
-    const rawSummary = normalizeAssistantOutput({
-      role: "assistant",
-      content: data?.summary || "",
-    })
-    summaryMemory = trimText(
-      buildHistoricalSummaryView(rawSummary, history.slice(0, -1)),
-      CONTEXT_BUDGET.summaryChars
-    );
-  } else if (data?.summary) {
-    console.warn("SUMMARY INJECTION SKIPPED:", {
-      conversationId: cid,
-      reason: summaryTrust.reason,
-      updatedAt: data.updated_at || null,
-    })
-  }
-
-  if (attributionCorrectionContext) {
-    summaryMemory = "";
-  }
-
-} catch (err) {
-
-  console.error("summary load failed:", err);
-
-}
 
 const environmentContext = buildEnvironmentContext()
 const imageUnderstandingContext = buildImageUnderstandingContext(normalizedImageKinds)
@@ -2796,7 +2886,7 @@ const messages = [
 
   // 保留历史，但去掉最后一条用户消息
   // 因为最后一条要重新加入（可能带图片）
-  ...history.slice(0, -1).map(item => ({
+  ...history.map(item => ({
     role: item.role,
     content: item.content,
   })),
@@ -2818,10 +2908,7 @@ ${webSearch}`
       ? [
           {
             type: "text",
-            text: trimText(
-              userMessage,
-              CONTEXT_BUDGET.userMessageChars
-            ) + fileContext
+            text: userMessage + fileContext
           },
           ...normalizedImageUrls.map(url => ({
             type: "image_url",
@@ -2830,10 +2917,7 @@ ${webSearch}`
             }
           }))
         ]
-    : trimText(
-          userMessage,
-          CONTEXT_BUDGET.userMessageChars
-        ) + fileContext
+    : userMessage + fileContext
   }
 
 ]
@@ -2894,7 +2978,7 @@ if (fallbackSearchQuery) {
 
   const fallbackWebSearch = trimText(
     await searchWeb(fallbackSearchQuery, { automatic: true }),
-    CONTEXT_BUDGET.webSearchChars
+    Math.min(CONTEXT_BUDGET.webSearchChars, dynamicContextBudget.web)
   )
 
   if (fallbackWebSearch) {
@@ -3051,10 +3135,9 @@ console.log("======================================\n")
 
     const lastUserMessage = [...history]
       .reverse()
-      .filter(m => m.role === "user")
-      .slice(1)[0]
+      .find(m => m.role === "user")
 
-    void (async () => {
+    waitUntil((async () => {
       try {
         const judgeResult = (
           !diaryStyleContext &&
@@ -3085,6 +3168,31 @@ console.log("======================================\n")
               clearUserMemoryCache(user_id)
               clearConversationMemorySearchCache(cid)
               console.log("Saved memory:", judgeResult.content)
+
+              try {
+                const episodic = await saveEpisodicObservation({
+                  userId: user_id,
+                  content: judgeResult.content,
+                  category: judgeResult.category,
+                  sourceMessageId: userMessageId,
+                  sourceConversationId: cid,
+                })
+
+                if (episodic?.id) {
+                  await consolidateStableMemory({
+                    supabase,
+                    userId: user_id,
+                    newMemoryId: episodic.id,
+                    callSmallModel: async prompt => callLLM(
+                      [{ role: "user", content: prompt }],
+                      AI_MODELS.memoryJudge,
+                      { max_tokens: 420, temperature: 0 }
+                    ),
+                  })
+                }
+              } catch (consolidationError) {
+                console.error("stable memory consolidation failed:", consolidationError)
+              }
             }
           } catch (err) {
             console.error("hold-hook failed:", err)
@@ -3093,7 +3201,7 @@ console.log("======================================\n")
       } catch (err) {
         console.error("memory judge task failed:", err)
       }
-    })()
+    })())
 
     waitUntil(
       maybeCreateMoment({

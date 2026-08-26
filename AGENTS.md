@@ -94,6 +94,13 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 后台 AI 调用记录任务、模型、输入规模、usage、耗时和成功状态，不记录完整私人正文。
   - 异常历史 conversation summary 已通过只读 rebuild 和 final compression 生成本地 artifact；线上替换必须继续遵循先验证、后一次性 apply 的原则。
 
+- Memory / Context 架构 P0 与 P1 当前批次已完成，但业务代码仍处于未 commit、未 push 状态：
+  - P0 已完成：novelty / duplicate penalty 正式化、Dynamic Memory 可观测性、“记得但不继续聊”回归测试，以及 Factual Memory 与 Conversational Attention 的代码边界。
+  - P1 已完成：Memory / Context Gateway 渐进接入、Stable Memory consolidation、provenance / supersedes、Dynamic Context Budget、token-aware Recent、Summary Segments 和旧摘要压缩。
+  - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；`conversation_summary.summary_segments jsonb not null default '[]'::jsonb` 已上线，不再是待执行 migration。
+  - 下一台设备或新的 Codex 窗口必须从当前未提交工作区继续，不得重新实现上述 P0 / P1 已完成部分；继续前先阅读 `docs/memory-context-architecture.md` 的交接状态。
+  - 尚未实施的后续项包括 long-term heat / cold / archive、deep memory tool loop；它们不得被误记为当前已完成能力。
+
 - 深夜树洞已完成主动更新、页面催更、未读红点、置顶和删除管理：
   - 小C每次可根据有限近期上下文决定写入 `0–3` 条，没有值得记录的内容时允许不更新。
   - 页面“催更”由小C自行判断，不依赖聊天中的固定口令；生成内容直接进入树洞，不在聊天页输出正文。

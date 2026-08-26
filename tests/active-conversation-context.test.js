@@ -79,7 +79,7 @@ const exam = {
   const result = resolveActiveConversationContext(
     { items: [transient, exam] },
     { items: [transient, exam] },
-    { currentMessageId: "message-new-topic" }
+    { currentUserMessageId: "message-new-topic" }
   )
   assert.doesNotMatch(JSON.stringify(result), /午餐咖喱/)
   assert.match(JSON.stringify(result), /周五公司内部考试/)
@@ -156,7 +156,8 @@ const exam = {
 
 {
   const config = fs.readFileSync("lib/aiConfig.js", "utf8")
-  assert.match(config, /recentHistoryMessages: 10/)
+  assert.match(config, /recentHistoryMessages: 32/)
+  assert.match(config, /recentHistoryTokens: 2200/)
 }
 
 console.log("active conversation context tests passed")
