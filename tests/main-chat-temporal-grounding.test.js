@@ -24,11 +24,13 @@ test("normal chat history preserves Shanghai time and proactive source", () => {
   assert.match(proactive, /^\[2026-08-26 09:15 Asia\/Shanghai\] 小C（小C主动发送，来源 inactivity_reach_out）：/)
 })
 
-test("main chat uses timestamped history and explicit past-event current-action rules", () => {
+test("main chat keeps raw history and uses a separate temporal ledger", () => {
   const source = fs.readFileSync("api/chat.js", "utf8")
 
   assert.match(source, /\.select\("id, role, content, created_at, metadata"\)/)
-  assert.match(source, /formatTimestampedConversationMessage\(item, historicalContent\)/)
+  assert.match(source, /content: historicalContent/)
+  assert.doesNotMatch(source, /content: formatTimestampedConversationMessage/)
+  assert.match(source, /buildRecentMessageLedger\(history\.slice\(0, -1\)\)/)
   assert.match(source, /过去事件语境不能自动变成当前行为状态/)
   assert.match(source, /主动消息中关于更早历史的自我叙述不自动成为事实/)
   assert.match(source, /只有她在当前消息中明确表达现在准备睡觉、补觉等新状态时/)

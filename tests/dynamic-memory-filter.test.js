@@ -32,7 +32,23 @@ import {
     `[Ombre Brain - 相关记忆]\n工作: 今天工作很忙\n---\n工作: 今天工作很忙`,
     []
   )
-  assert.equal((result.match(/今天工作很忙/g) || []).length, 2)
+  assert.equal((result.match(/今天工作很忙/g) || []).length, 1)
+}
+
+{
+  const search = `[Ombre Brain - 相关记忆]\n午餐: 她今天中午吃了咖喱牛肉\n---\n旅行: 她去年独自去了日本旅行`
+  const suppressed = filterDynamicMemorySearchText(search, [], {
+    suppressionTexts: ["她今天中午吃了咖喱牛肉，味道很好"],
+    currentMessage: "我准备午休了",
+  })
+  assert.doesNotMatch(suppressed, /咖喱牛肉/)
+  assert.match(suppressed, /日本旅行/)
+
+  const restored = filterDynamicMemorySearchText(search, [], {
+    suppressionTexts: ["她今天中午吃了咖喱牛肉，味道很好"],
+    currentMessage: "我又想起今天中午的咖喱牛肉了",
+  })
+  assert.match(restored, /咖喱牛肉/)
 }
 
 {

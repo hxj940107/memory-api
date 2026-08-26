@@ -12,7 +12,10 @@ const exam = {
   topic: "周五公司内部考试",
   context: "她今天才开始刷题，考试内容与公司和产品有关",
   status: "active",
+  kind: "plan",
   source_message_id: "message-exam",
+  last_referenced_message_id: "message-exam",
+  missed_turns: 0,
 }
 
 {
@@ -25,7 +28,8 @@ const exam = {
   const afterTopicSwitch = resolveActiveConversationContext(previous, {
     items: [exam],
   })
-  assert.deepEqual(afterTopicSwitch, previous)
+  assert.equal(afterTopicSwitch.items[0].topic, exam.topic)
+  assert.equal(afterTopicSwitch.items[0].missed_turns, 1)
 }
 
 {
@@ -33,7 +37,10 @@ const exam = {
     topic: "近期旅行",
     context: "她正在确认出发安排",
     status: "waiting",
+    kind: "waiting",
     source_message_id: "message-trip",
+    last_referenced_message_id: "message-trip",
+    missed_turns: 0,
   }
   const result = resolveActiveConversationContext({ items: [exam] }, {
     items: [exam, trip],
@@ -57,6 +64,25 @@ const exam = {
   })
   assert.equal(result.items.length, 1)
   assert.equal(result.items[0].context, updatedExam.context)
+}
+
+{
+  const transient = {
+    topic: "午餐咖喱",
+    context: "她今天中午吃了咖喱牛肉，已经聊完",
+    status: "active",
+    kind: "transient",
+    source_message_id: "message-curry",
+    last_referenced_message_id: "message-curry",
+    missed_turns: 2,
+  }
+  const result = resolveActiveConversationContext(
+    { items: [transient, exam] },
+    { items: [transient, exam] },
+    { currentMessageId: "message-new-topic" }
+  )
+  assert.doesNotMatch(JSON.stringify(result), /午餐咖喱/)
+  assert.match(JSON.stringify(result), /周五公司内部考试/)
 }
 
 {
@@ -98,6 +124,14 @@ const exam = {
 }
 
 {
+  const prompt = formatActiveConversationContext(
+    { items: [exam] },
+    { recentMessageIds: ["message-exam"] }
+  )
+  assert.equal(prompt, "")
+}
+
+{
   const chat = fs.readFileSync("api/chat.js", "utf8")
   const judgeStart = chat.indexOf("async function judgePlanFollowUp")
   const enqueueStart = chat.indexOf("async function enqueuePlanFollowUpTask")
@@ -114,7 +148,7 @@ const exam = {
   assert.match(judgeSource, /normalizePlanFollowUpDecision\(parsed\?\.plan_follow_up \|\| parsed\)/)
   assert.match(
     judgeSource,
-    /activeContext: conversationalGoodbye[\s\S]*resolveActiveConversationContext\(previousActiveContext, null\)/
+    /activeContext: conversationalGoodbye[\s\S]*resolveActiveConversationContext\(previousActiveContext, previousActiveContext/
   )
   assert.match(chat, /decision = decision \|\| buildRuleBasedPlanFollowUp\(message\)/)
   assert.match(chat, /\.from\("xiaoc_proactive_tasks"\)[\s\S]*\.upsert\(/)

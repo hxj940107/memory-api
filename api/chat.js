@@ -39,7 +39,11 @@ import {
   normalizeActiveConversationContext,
   resolveActiveConversationContext,
 } from "../lib/activeConversationContext.js"
-import { formatTimestampedConversationMessage } from "../lib/inactivityTemporalGrounding.js"
+import {
+  buildHistoricalSummaryView,
+  buildRecentMessageLedger,
+  filterContextEntries,
+} from "../lib/mainChatContext.js"
 import {
   ensureCoreMemorySnapshot,
   fetchCompleteMemoriesByIds,
@@ -359,14 +363,18 @@ Plan follow-up 判断原则（保持原有语义）：
 
 Active context 更新原则：
 - active_context.items 必须是更新后的完整状态，不是增量；最多4项。
-- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active或waiting","source_message_id":"来源消息ID"}。
+- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID"}。
 - 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
 - “值得保留 active context”与“值得创建 plan follow-up”彼此独立；不需要主动追问的事项也可能仍应保留。
 - 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
 - 只有她明确说完成、取消、不再需要、事件已结束并得到结果、新信息明确覆盖旧信息，或事项已明显失去短期价值时，才能删除或替换。
+- 普通生活碎片如果已经聊完、没有未完成动作、等待结果或未来计划，不要继续作为 active item；它可以成为事实记忆，但不应继续占据当前聊天注意力。
+- 只有她当前这条消息确实再次提到某事项时，才把 last_referenced_message_id 更新为当前用户消息ID。不要因为小C回复里顺带提到就刷新它。
+- resolved 项用于明确表示本轮已结束的旧事项；它不会继续注入下一轮。
 - 普通寒暄、一次性无后续话语、小C的泛化评价、长期人格/关系事实、稳定长期记忆、整段聊天总结和大段原话都不要加入。
 - 不要为了凑数量新增事项；没有 active item 时返回空数组。
 - 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述，写入“小C以前说过/没说过、做过/没做过某事”这类事实。真实消息账本和她明确确认的事实优先；如果没有可靠证据，这类自我历史断言不进入 active context。
+- 小C的随口联想、玩笑、比喻、临时错误表达或主动消息自述，除非她明确确认或后续持续展开，否则不能升级为 active item。
 `,
       },
       {
@@ -396,10 +404,13 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
       ? null
       : normalizePlanFollowUpDecision(parsed?.plan_follow_up || parsed),
     activeContext: conversationalGoodbye
-      ? resolveActiveConversationContext(previousActiveContext, null)
+      ? resolveActiveConversationContext(previousActiveContext, previousActiveContext, {
+        currentMessageId: userMessageId,
+      })
       : resolveActiveConversationContext(
         previousActiveContext,
-        parsed?.active_context
+        parsed?.active_context,
+        { currentMessageId: userMessageId }
       ),
   }
 }
@@ -718,8 +729,9 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
       : content
 
     return {
+      id: item.id,
       role: item.role,
-      content: formatTimestampedConversationMessage(item, historicalContent),
+      content: historicalContent,
       created_at: item.created_at,
       metadata: item.metadata,
     }
@@ -876,6 +888,7 @@ async function getMemorySmart(
   const dynamicCacheKey = [
     conversation_id,
     normalizeCacheText((options.excludedBucketIds || []).join(","), 220),
+    normalizeCacheText((options.suppressionTexts || []).join("\n"), 220),
     normalizeCacheText(
       memorySearchQuery,
       CACHE_POLICY.dynamicMemoryKeyChars
@@ -1036,7 +1049,11 @@ async function getMemorySmart(
 
         const filteredSearchText = filterDynamicMemorySearchText(
           searchTxt,
-          options.excludedMemories || []
+          options.excludedMemories || [],
+          {
+            suppressionTexts: options.suppressionTexts || [],
+            currentMessage: message,
+          }
         )
         const trimmedMemory =
           trimText(
@@ -2501,8 +2518,12 @@ try {
   console.error("active conversation context read failed; using no context this turn:", err)
 }
 const activeConversationContextPrompt = formatActiveConversationContext(
-  activeConversationContext
+  activeConversationContext,
+  {
+    recentMessageIds: history.slice(0, -1).map(item => item.id),
+  }
 )
+const recentMessageLedger = buildRecentMessageLedger(history.slice(0, -1))
 
 const isDiaryRequest = isDiaryWritingRequest(message)
 const isManualMomentRequest = isMomentWritingRequest(message)
@@ -2557,6 +2578,10 @@ try {
     history,
     {
       includePinned: false,
+      suppressionTexts: [
+        ...history.slice(0, -1).map(item => item.content),
+        ...activeConversationContext.items.map(item => `${item.topic} ${item.context}`),
+      ],
       ...dynamicMemoryExclusions,
     }
   )
@@ -2565,7 +2590,16 @@ try {
   console.error("dynamic memory exclusion load failed; injection skipped:", err)
 }
 
-const stableMemory = await getStableMemories(user_id)
+let stableMemory = await getStableMemories(user_id)
+stableMemory = filterContextEntries(
+  stableMemory,
+  [
+    coreMemorySnapshot.snapshot,
+    ...history.slice(0, -1).map(item => item.content),
+    ...activeConversationContext.items.map(item => `${item.topic} ${item.context}`),
+  ],
+  message
+)
 
 let webSearch = "";
 let userMessage = message;
@@ -2644,15 +2678,19 @@ try {
 
   const { data } = await supabase
     .from("conversation_summary")
-    .select("summary,updated_at")
+    .select("summary,updated_at,last_summarized_at")
     .eq("conversation_id", cid)
     .maybeSingle();
 
   const summaryTrust = getSummaryTrust(data)
 
   if (summaryTrust.trusted) {
+    const rawSummary = normalizeAssistantOutput({
+      role: "assistant",
+      content: data?.summary || "",
+    })
     summaryMemory = trimText(
-      normalizeAssistantOutput({ role: "assistant", content: data?.summary || "" }),
+      buildHistoricalSummaryView(rawSummary, history.slice(0, -1)),
       CONTEXT_BUDGET.summaryChars
     );
   } else if (data?.summary) {
@@ -2682,7 +2720,7 @@ Environment 是本轮请求唯一可信的当前时间，来自服务端并已�
 如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
 白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
 回复前必须区分三件事：本轮 Environment 表示的当前真实时间、正在讨论的事件发生时间、你此刻准备执行的聊天行为时间。讨论昨晚或睡前发生的事，不代表现在仍处于昨晚或睡前；过去事件语境不能自动变成当前行为状态。只有她在当前消息中明确表达现在准备睡觉、补觉等新状态时，才按当前证据进入对应语境。
-Recent history 中每条消息前的 Asia/Shanghai 时间是该消息真实发生时间；“小C主动发送”只说明该消息由主动任务发出。主动消息中关于更早历史的自我叙述不自动成为事实。发生冲突时，她的原话和数据库中实际出现过的消息行为优先于小C后来对自己历史的描述。
+Recent Message Ledger 只提供真实消息时间与来源；Recent Messages 的 role/content 保持当时原文。主动消息中关于更早历史的自我叙述不自动成为事实。发生冲突时，她的原话和数据库中实际出现过的消息行为优先于小C后来对自己历史的描述。
 
 【Project Context｜项目上下文】
 当前 XiaoC 使用 Claude Sonnet 4.6 作为主聊天模型，Haiku 4.5 用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
@@ -2692,6 +2730,8 @@ Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私
 const dynamicPromptContext = `${environmentContext}
 
 ${imageUnderstandingContext}
+
+${recentMessageLedger}
 
 【Web Search Policy｜联网边界】
 ${webSearch
@@ -2710,10 +2750,14 @@ ${stableMemory.join("\n")}
 
 ${summaryMemory}
 
+这是 recent raw window 之前的历史连续性背景，不是当前注意力列表；与 Recent Messages 仍有重叠的内容不能因此获得额外重要性。
+
 
 【Memory｜相关长期记忆】
 
 ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
+
+Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。
 
 ${activeConversationContextPrompt}
 
@@ -2752,7 +2796,10 @@ const messages = [
 
   // 保留历史，但去掉最后一条用户消息
   // 因为最后一条要重新加入（可能带图片）
-  ...history.slice(0, -1),
+  ...history.slice(0, -1).map(item => ({
+    role: item.role,
+    content: item.content,
+  })),
 
   ...(webSearch
     ? [

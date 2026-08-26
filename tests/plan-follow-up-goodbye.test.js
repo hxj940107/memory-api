@@ -40,7 +40,7 @@ assert.match(chat, /const conversationalGoodbye = isConversationalMeetingGoodbye
 assert.match(chat, /planDecision: conversationalGoodbye\s*\? null/)
 assert.match(
   chat,
-  /activeContext: conversationalGoodbye\s*\? resolveActiveConversationContext\(previousActiveContext, null\)/
+  /activeContext: conversationalGoodbye\s*\? resolveActiveConversationContext\(previousActiveContext, previousActiveContext/
 )
 assert.match(chat, /if \(planTask\)[\s\S]*?else \{[\s\S]*?enqueueInactivityReachOutTask/)
 
