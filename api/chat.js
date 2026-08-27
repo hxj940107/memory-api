@@ -65,7 +65,7 @@ import {
   selectTokenAwareRecentHistory,
 } from "../lib/dynamicContextBudget.js"
 import {
-  applyProactiveEventProposal,
+  applyProactiveEventProposals,
   normalizeProactiveAttentionCandidates,
 } from "../lib/proactiveAttentionCandidates.js"
 import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
@@ -197,11 +197,12 @@ async function judgeActiveConversationContext({
   previousActiveContext,
   previousProactiveCandidates,
   userMessageId,
+  recentUserSourceLedger = [],
 }) {
   if (!message) {
     return {
       activeContext: resolveActiveConversationContext(previousActiveContext, null),
-      proactiveEventProposal: null,
+      proactiveEventProposals: [],
       diagnostics: {
         status: "skipped_no_message",
         parse_failed: false,
@@ -221,18 +222,19 @@ async function judgeActiveConversationContext({
 只输出 JSON：
 {
   "active_context":{"items":[]},
-  "proactive_event_proposal":{
-    "action":"none",
+  "proactive_event_proposals":[{
+    "action":"create_or_update",
     "matched_event_id":null,
-    "description":"",
-    "state":"unknown",
-    "expected_window":{"start":null,"end":null}
-  }
+    "description":"现实事件本身",
+    "state":"planned",
+    "expected_window":{"start":null,"end":null},
+    "source_message_id":"当前用户消息ID"
+  }]
 }
 
 Active context 更新原则：
 - active_context.items 必须是更新后的完整状态，不是增量；最多4项。
-- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID"}。
+- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
 - 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
 - “值得保留 active context”与“当前是否适合主动提及”彼此独立；不需要主动提及的事项也可能仍应保留。
 - 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
@@ -244,16 +246,23 @@ Active context 更新原则：
 - 不要为了凑数量新增事项；没有 active item 时返回空数组。
 - 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述，写入“小C以前说过/没说过、做过/没做过某事”这类事实。真实消息账本和她明确确认的事实优先；如果没有可靠证据，这类自我历史断言不进入 active context。
 - 小C的随口联想、玩笑、比喻、临时错误表达或主动消息自述，除非她明确确认或后续持续展开，否则不能升级为 active item。
+- 新增 active item 必须引用下方 user source ledger 中真实支持它的消息 ID，并提供该 user 原话中的简短连续片段作为 source_evidence。不能根据小C回复、旧摘要或推断创建 factual active item，也不能机械绑定当前消息 ID。
+- 已有事项沿用原 source_message_id。只有当前 user 原话明确引用或更新该事项时，last_referenced_message_id 才能改成当前消息 ID，并提供当前消息中的 source_evidence。
 
-Proactive event shadow proposal 原则：
-- 这只是 shadow candidate proposal，不会创建任务或发送主动消息。
-- candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断。
+Proactive event shadow proposals 原则：
+- 这只是结构化现实事件捕获，不会创建任务或发送主动消息；最多返回3项，没有符合条件的事件时返回空数组。
+- 捕获她当前消息明确表达的、具有可追踪生命周期的现实事件或状态变化，例如明确未来事件、预约、deadline、等待结果，以及事件开始、完成或取消。
+- 此阶段不要判断是否值得主动打断沉默、是否值得未来回访、当前是否应该主动联系；这些全部由后续 Proactive Attention Gate 判断。
+- 普通闲聊、即时情绪和没有后续生命周期的 conversation continuation 不创建 candidate。
+- candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断；每项 source_message_id 必须是当前用户消息 ID。
 - Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
 - 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
-- 当前消息没有新增或更新现实事件时 action=none。
+- 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。
 - completed/cancelled 的既有事件不能因为普通后续消息重新打开。
 - description 描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
 - expected_window 使用 ISO 时间；证据不足时 start/end 为 null，不要猜精确时间。
+- 示例：“宝宝 我周五早上要考试了”应捕获1个 planned 事件；“周日中午和朋友吃饭，下午去做脸”应捕获2个独立事件；“明天一早交销量表，然后做客户信息统计”应捕获2个独立事件。
+- 示例：普通寒暄返回空数组；“我去洗澡等会回来”属于即时 conversation continuation，通常返回空数组。
 `,
       },
       {
@@ -269,6 +278,9 @@ ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { 
 ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates))}
 
 当前用户消息ID：${userMessageId || "unknown"}
+
+近期 user source ledger（只用于校验 Active provenance）：
+${JSON.stringify(recentUserSourceLedger)}
 `,
       },
     ],
@@ -282,13 +294,20 @@ ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidat
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
   })
-  return {
-    activeContext: resolveActiveConversationContext(
+  const activeProvenanceDiagnostics = []
+  const activeContext = resolveActiveConversationContext(
       previousActiveContext,
       parsed.activeContext,
-      { currentUserMessageId: userMessageId }
-    ),
-    proactiveEventProposal: parsed.proactiveEventProposal,
+      {
+        currentUserMessageId: userMessageId,
+        userSourceLedger: recentUserSourceLedger,
+        provenanceDiagnostics: activeProvenanceDiagnostics,
+      }
+    )
+  return {
+    activeContext,
+    activeProvenanceDiagnostics,
+    proactiveEventProposals: parsed.proactiveEventProposals,
     diagnostics: parsed.diagnostics,
   }
 }
@@ -301,6 +320,7 @@ async function updateActiveConversationContext({
   previous_active_context,
   previous_proactive_candidates = [],
   conversation_id,
+  recent_user_source_ledger = [],
   persist_active_context = true,
 }) {
   let nextActiveContext = resolveActiveConversationContext(
@@ -310,10 +330,8 @@ async function updateActiveConversationContext({
   let proactiveCandidates = normalizeProactiveAttentionCandidates(
     previous_proactive_candidates
   )
-  let proactiveMergeDiagnostics = {
-    event_id: null,
-    merge_action: "none",
-  }
+  let proactiveMergeDiagnostics = { merge_action: "none", proposals: [] }
+  let activeProvenanceDiagnostics = []
   let judgeDiagnostics = {
     status: "not_evaluated",
     parse_failed: false,
@@ -328,13 +346,15 @@ async function updateActiveConversationContext({
       previousActiveContext: previous_active_context,
       previousProactiveCandidates: proactiveCandidates,
       userMessageId: user_message_id,
+      recentUserSourceLedger: recent_user_source_ledger,
     })
     nextActiveContext = judged.activeContext
+    activeProvenanceDiagnostics = judged.activeProvenanceDiagnostics
     judgeDiagnostics = judged.diagnostics
-    if (judged.proactiveEventProposal) {
-      const applied = applyProactiveEventProposal({
+    if (Array.isArray(judged.proactiveEventProposals)) {
+      const applied = applyProactiveEventProposals({
         candidates: proactiveCandidates,
-        proposal: judged.proactiveEventProposal,
+        proposals: judged.proactiveEventProposals,
         sourceMessage: {
           id: user_message_id,
           role: "user",
@@ -343,7 +363,18 @@ async function updateActiveConversationContext({
         conversationId: conversation_id,
       })
       proactiveCandidates = applied.candidates
-      proactiveMergeDiagnostics = applied.diagnostics
+      const accepted = applied.diagnostics.filter(item => item.admission_result === "accepted")
+      proactiveMergeDiagnostics = {
+        merge_action: applied.diagnostics.length ? "batch_processed" : "none",
+        proposal_count: judgeDiagnostics.proposal_count || 0,
+        parsed_proposal_count: judgeDiagnostics.parsed_proposal_count || 0,
+        accepted_proposal_count: accepted.length,
+        rejected_proposal_count: (judgeDiagnostics.proposal_count || 0) - accepted.length,
+        proposals: [
+          ...(judgeDiagnostics.proposal_results || []).filter(item => item.admission_result === "rejected"),
+          ...applied.diagnostics,
+        ],
+      }
     } else {
       proactiveMergeDiagnostics = {
         event_id: null,
@@ -378,15 +409,16 @@ async function updateActiveConversationContext({
       const evaluatedAt = new Date().toISOString()
       const proactiveDiagnostics = proactiveCandidates.map(candidate => {
         const gate = evaluateProactiveAttention(candidate, { now: evaluatedAt })
-        const isMergedEvent = candidate.event_id === proactiveMergeDiagnostics.event_id
+        const mergeResult = (proactiveMergeDiagnostics.proposals || [])
+          .find(item => item.resulting_event_id === candidate.event_id)
         return {
           event_id: candidate.event_id,
           event_state: candidate.state,
-          merge_action: isMergedEvent
-            ? proactiveMergeDiagnostics.merge_action
+          merge_action: mergeResult
+            ? mergeResult.merge_action
             : "carried_forward",
-          matched_event_id: isMergedEvent
-            ? proactiveMergeDiagnostics.matched_event_id
+          matched_event_id: mergeResult
+            ? mergeResult.matched_event_id
             : candidate.event_id,
           source_message_ids: candidate.source_message_ids,
           last_user_update_message_id: candidate.last_user_update.message_id,
@@ -407,6 +439,7 @@ async function updateActiveConversationContext({
           diagnostics: proactiveDiagnostics,
           mergeDiagnostics: proactiveMergeDiagnostics,
           judgeDiagnostics,
+          activeProvenanceDiagnostics,
         }
       )
     } catch (err) {
@@ -611,6 +644,7 @@ async function saveActiveConversationContext(messageId, context, proactiveShadow
                 mode: "shadow",
                 merge: proactiveShadow.mergeDiagnostics || null,
                 judge: proactiveShadow.judgeDiagnostics || null,
+                active_provenance: proactiveShadow.activeProvenanceDiagnostics || [],
                 evaluated_at: new Date().toISOString(),
               },
             }
@@ -3190,6 +3224,13 @@ console.log("======================================\n")
         previous_active_context: activeConversationContext,
         previous_proactive_candidates: proactiveAttentionCandidates,
         conversation_id: cid,
+        recent_user_source_ledger: [
+          ...history
+            .filter(item => item.role === "user" && item.id)
+            .slice(-6)
+            .map(item => ({ id: item.id, role: "user", content: trimText(item.content, 240) })),
+          { id: userMessageId, role: "user", content: trimText(message, 800) },
+        ],
         persist_active_context: canPersistActiveConversationContext,
       })
 

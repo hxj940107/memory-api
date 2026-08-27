@@ -41,9 +41,16 @@ const exam = {
     source_message_id: "message-trip",
     last_referenced_message_id: "message-trip",
     missed_turns: 0,
+    source_evidence: "正在确认出发安排",
   }
   const result = resolveActiveConversationContext({ items: [exam] }, {
     items: [exam, trip],
+  }, {
+    userSourceLedger: [{
+      id: "message-trip",
+      role: "user",
+      content: "我正在确认出发安排",
+    }],
   })
   assert.equal(result.items.length, 2)
   assert.equal(result.items[1].topic, "近期旅行")
@@ -159,6 +166,69 @@ const exam = {
   const config = fs.readFileSync("lib/aiConfig.js", "utf8")
   assert.match(config, /recentHistoryMessages: 32/)
   assert.match(config, /recentHistoryTokens: 2200/)
+}
+
+{
+  const provenanceDiagnostics = []
+  const result = resolveActiveConversationContext({ items: [] }, {
+    items: [{
+      topic: "月末工作堆积，睡眠不足",
+      context: "她月末工作很多而且没睡饱",
+      status: "active",
+      kind: "transient",
+      source_message_id: "message-angry",
+      last_referenced_message_id: "message-angry",
+      source_evidence: "月末工作很多",
+    }],
+  }, {
+    currentUserMessageId: "message-angry",
+    userSourceLedger: [{ id: "message-angry", role: "user", content: "好端端的我凶你干嘛" }],
+    provenanceDiagnostics,
+  })
+  assert.deepEqual(result.items, [])
+  assert.equal(provenanceDiagnostics[0].rejection_reason, "invalid_source_provenance")
+  assert.equal(provenanceDiagnostics[0].validated_source_id, null)
+}
+
+{
+  const result = resolveActiveConversationContext({ items: [] }, {
+    items: [{
+      topic: "周五早上考试",
+      context: "她周五早上要考试",
+      status: "active",
+      kind: "plan",
+      source_message_id: "message-exam-new",
+      last_referenced_message_id: "message-exam-new",
+      source_evidence: "周五早上要考试",
+    }],
+  }, {
+    currentUserMessageId: "message-exam-new",
+    userSourceLedger: [{ id: "message-exam-new", role: "user", content: "宝宝 我周五早上要考试了" }],
+  })
+  assert.equal(result.items[0].source_message_id, "message-exam-new")
+  assert.equal(result.items[0].missed_turns, 0)
+  assert.equal(Object.hasOwn(result.items[0], "source_evidence"), false)
+}
+
+{
+  const result = resolveActiveConversationContext({ items: [exam] }, {
+    items: [{
+      ...exam,
+      last_referenced_message_id: "message-exam-remention",
+      source_evidence: "周五考试准备得怎么样",
+      missed_turns: 2,
+    }],
+  }, {
+    currentUserMessageId: "message-exam-remention",
+    userSourceLedger: [{
+      id: "message-exam-remention",
+      role: "user",
+      content: "我又想起周五考试准备得怎么样了",
+    }],
+  })
+  assert.equal(result.items[0].source_message_id, "message-exam")
+  assert.equal(result.items[0].last_referenced_message_id, "message-exam-remention")
+  assert.equal(result.items[0].missed_turns, 0)
 }
 
 console.log("active conversation context tests passed")

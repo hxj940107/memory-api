@@ -18,17 +18,18 @@ const validProposal = {
   description: "周五早上的公司知识考试",
   state: "planned",
   expected_window: { start: null, end: null },
+  source_message_id: "message-exam",
 }
 const validOutput = JSON.stringify({
   active_context: activeContext,
-  proactive_event_proposal: validProposal,
+  proactive_event_proposals: [validProposal],
 })
 
 {
   const parsed = parseActiveContextJudgeOutput(validOutput)
   assert.equal(parsed.diagnostics.status, "parsed")
   assert.equal(parsed.activeContext.items[0].topic, "周五考试")
-  assert.equal(parsed.proactiveEventProposal.state, "planned")
+  assert.equal(parsed.proactiveEventProposals[0].state, "planned")
 }
 
 {
@@ -59,7 +60,7 @@ const validOutput = JSON.stringify({
   assert.match(parsed.diagnostics.error_code, /proactive_event_proposal/)
   assert.match(parsed.diagnostics.raw_output_summary, /active_context/)
   assert.equal(parsed.activeContext.items[0].topic, "周五考试")
-  assert.equal(parsed.proactiveEventProposal, null)
+  assert.deepEqual(parsed.proactiveEventProposals, [])
 }
 
 {
@@ -74,35 +75,74 @@ const validOutput = JSON.stringify({
   const parsed = parseActiveContextJudgeOutput("不是 JSON")
   assert.equal(parsed.diagnostics.status, "parse_failed")
   assert.equal(parsed.activeContext, null)
-  assert.equal(parsed.proactiveEventProposal, null)
+  assert.deepEqual(parsed.proactiveEventProposals, [])
 }
 
 {
   const parsed = parseActiveContextJudgeOutput(JSON.stringify({
     active_context: activeContext,
-    proactive_event_proposal: { ...validProposal, state: "future_done" },
+    proactive_event_proposals: [{ ...validProposal, state: "future_done" }],
   }))
   assert.equal(parsed.activeContext.items[0].topic, "周五考试")
-  assert.equal(parsed.proactiveEventProposal, null)
-  assert.equal(
-    parsed.diagnostics.proactive_event_proposal_error_code,
-    "event_proposal_invalid_state"
-  )
+  assert.deepEqual(parsed.proactiveEventProposals, [])
+  assert.equal(parsed.diagnostics.proposal_results[0].rejection_reason, "event_proposal_invalid_state")
 }
 
 {
   const parsed = parseActiveContextJudgeOutput(JSON.stringify({
     active_context: activeContext,
-    proactive_event_proposal: { ...validProposal, matched_event_id: "invented-id" },
+    proactive_event_proposals: [{ ...validProposal, matched_event_id: "invented-id" }],
   }))
   const applied = applyProactiveEventProposal({
     candidates: [],
-    proposal: parsed.proactiveEventProposal,
-    sourceMessage: { id: "message-current", role: "user" },
+    proposal: parsed.proactiveEventProposals[0],
+    sourceMessage: { id: "message-exam", role: "user" },
     createEventId: () => "must-not-be-created",
   })
   assert.equal(applied.diagnostics.merge_action, "rejected_invalid_match")
   assert.deepEqual(applied.candidates, [])
+}
+
+{
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [
+      { ...validProposal, state: "not-a-state" },
+      { ...validProposal, description: "周日中午和朋友吃饭" },
+    ],
+  }))
+  assert.equal(parsed.diagnostics.status, "parsed")
+  assert.equal(parsed.diagnostics.proposal_count, 2)
+  assert.equal(parsed.diagnostics.parsed_proposal_count, 1)
+  assert.equal(parsed.proactiveEventProposals[0].description, "周日中午和朋友吃饭")
+}
+
+for (const [messageId, descriptions] of [
+  ["message-exam", ["周五早上考试"]],
+  ["message-sunday", ["周日中午和朋友吃饭", "周日下午做脸"]],
+  ["message-work", ["明天早上交销量表", "明天做客户信息统计"]],
+]) {
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: { items: [] },
+    proactive_event_proposals: descriptions.map(description => ({
+      action: "create_or_update",
+      matched_event_id: null,
+      description,
+      state: "planned",
+      expected_window: { start: null, end: null },
+      source_message_id: messageId,
+    })),
+  }))
+  assert.deepEqual(parsed.proactiveEventProposals.map(item => item.description), descriptions)
+}
+
+for (const message of ["宝宝抱抱", "我去洗澡等会回来"]) {
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: { items: [] },
+    proactive_event_proposals: [],
+  }))
+  assert.equal(typeof message, "string")
+  assert.deepEqual(parsed.proactiveEventProposals, [])
 }
 
 console.log("active context judge output tests passed")

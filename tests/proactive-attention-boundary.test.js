@@ -17,7 +17,11 @@ assert.ok(judgeStart >= 0)
 assert.ok(updateStart > judgeStart)
 assert.equal((judgeSource.match(/callLLM\(/g) || []).length, 1)
 assert.match(judgeSource, /active_context/)
-assert.match(judgeSource, /proactive_event_proposal/)
+assert.match(judgeSource, /proactive_event_proposals/)
+assert.match(judgeSource, /周五早上要考试了[^]*捕获1个 planned 事件/)
+assert.match(judgeSource, /周日中午和朋友吃饭，下午去做脸[^]*捕获2个独立事件/)
+assert.match(judgeSource, /明天一早交销量表，然后做客户信息统计[^]*捕获2个独立事件/)
+assert.match(judgeSource, /我去洗澡等会回来[^]*通常返回空数组/)
 assert.doesNotMatch(judgeSource, /plan_follow_up|should_follow_up/)
 
 // Explicit plans no longer have any automatic plan task creation path.

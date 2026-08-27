@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import {
   PROACTIVE_OPEN_CANDIDATE_LIMIT,
   applyProactiveEventProposal,
+  applyProactiveEventProposals,
 } from "../lib/proactiveAttentionCandidates.js"
 
 function apply(candidates, {
@@ -25,6 +26,7 @@ function apply(candidates, {
         start: "2026-08-27T04:00:00.000Z",
         end: "2026-08-27T07:00:00.000Z",
       },
+      source_message_id: `message-${id}`,
     },
     sourceMessage: {
       id: `message-${id}`,
@@ -36,6 +38,48 @@ function apply(candidates, {
     createEventId: () => eventId,
     now: () => now,
   })
+}
+
+{
+  const ids = ["event-lunch", "event-facial"]
+  const result = applyProactiveEventProposals({
+    candidates: [],
+    proposals: ["周日中午和朋友吃饭", "周日下午做脸"].map(description => ({
+      action: "create_or_update",
+      matched_event_id: null,
+      description,
+      state: "planned",
+      expected_window: { start: null, end: null },
+      source_message_id: "message-multi",
+    })),
+    sourceMessage: { id: "message-multi", role: "user" },
+    createEventId: () => ids.shift(),
+  })
+  assert.deepEqual(result.candidates.map(item => item.event_id), ["event-lunch", "event-facial"])
+  assert.equal(result.diagnostics.filter(item => item.admission_result === "accepted").length, 2)
+}
+
+{
+  const result = applyProactiveEventProposals({
+    candidates: [],
+    proposals: [
+      { action: "create_or_update", description: "无来源事件", state: "planned", source_message_id: "wrong" },
+      {
+        action: "create_or_update",
+        matched_event_id: null,
+        description: "周五早上考试",
+        state: "planned",
+        expected_window: { start: null, end: null },
+        source_message_id: "message-exam",
+      },
+    ],
+    sourceMessage: { id: "message-exam", role: "user" },
+    createEventId: () => "event-exam",
+  })
+  assert.equal(result.candidates.length, 1)
+  assert.equal(result.candidates[0].event_id, "event-exam")
+  assert.equal(result.diagnostics[0].rejection_reason, "rejected_invalid_source")
+  assert.equal(result.diagnostics[1].admission_result, "accepted")
 }
 
 // Three differently worded user updates merge through a bounded existing ID,
