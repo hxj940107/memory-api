@@ -60,6 +60,7 @@ import {
   getStableMessageId,
   mergeCloudMessages,
   reconcileLocalMessageCloudId,
+  getValidCloudMessageId,
   upsertCloudMessage,
 } from "../lib/messageSync";
 import { XiaoCColors } from "../constants/theme";
@@ -143,7 +144,7 @@ type ChatResponse = {
   reply?: string;
   conversation_id?: string;
   user_message_id?: string | null;
-  assistant_message_id?: string | null;
+  assistant_message_id?: unknown;
   model?: string;
   usage?: Record<string, unknown>;
   attachments?: GeneratedAttachment[];
@@ -1603,9 +1604,14 @@ export default function ChatScreen() {
 
       const treeholeDraft = parseTreeholeDraft(data.reply || "");
 
-      const assistantCloudId = data.assistant_message_id
-        ? String(data.assistant_message_id)
-        : null;
+      const assistantCloudId = getValidCloudMessageId(data.assistant_message_id);
+      if (data.assistant_message_id != null && !assistantCloudId) {
+        console.log("CHAT RESPONSE INVALID ASSISTANT MESSAGE ID", {
+          type: typeof data.assistant_message_id,
+        });
+        latestCloudMessageIdRef.current = null;
+        return;
+      }
       const assistantMessage: Message = {
         id: assistantCloudId || createLocalMessageId(),
         cloudId: assistantCloudId || undefined,

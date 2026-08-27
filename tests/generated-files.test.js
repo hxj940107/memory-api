@@ -240,6 +240,7 @@ test("chat persistence, history restore, and signed download use attachment meta
   const app = fs.readFileSync(new URL("../mobile/XiaoC/src/app/chat.tsx", import.meta.url), "utf8")
 
   assert.match(chat, /attachments\.length \? \{ attachments \} : \{\}/)
+  assert.match(chat, /const assistantMessageId = await saveMessage\([\s\S]*attachments\.length \? \{ attachments \} : \{\}/)
   assert.match(chat, /GENERATED FILE CREATE FAILED:[\s\S]*整理好的内容我先放在这里/)
   assert.match(chat, /if \(!isGeneratedFileOutputComplete\(llm\.finishReason\)\)[\s\S]*else try[\s\S]*createGeneratedAttachment/)
   assert.match(chat, /没有把它当成完整文件交付/)

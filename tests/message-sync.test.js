@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
   getStableMessageId,
+  getValidCloudMessageId,
   mergeCloudMessages,
   reconcileLocalMessageCloudId,
   upsertCloudMessage,
@@ -44,6 +45,47 @@ test("HTTP first and polling second keeps one assistant message", () => {
 
   assert.equal(state.length, 1)
   assert.equal(getStableMessageId(state[0]), "assistant-1")
+})
+
+test("an object assistant id is rejected instead of becoming object Object", () => {
+  const invalidId = getValidCloudMessageId({ id: "assistant-1" })
+  assert.equal(invalidId, null)
+  assert.notEqual(invalidId, "[object Object]")
+
+  const source = readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+  assert.doesNotMatch(source, /String\(data\.assistant_message_id\)/)
+  assert.match(source, /getValidCloudMessageId\(data\.assistant_message_id\)/)
+  assert.match(source, /data\.assistant_message_id != null && !assistantCloudId[\s\S]*return;/)
+})
+
+test("identical assistant text with different server ids remains two messages", () => {
+  let state = upsertCloudMessage([], cloudMessage("assistant-1", { text: "same" }))
+  state = upsertCloudMessage(state, cloudMessage("assistant-2", {
+    text: "same",
+    createdAt: "2026-08-20T08:00:01.000Z",
+  }))
+
+  assert.equal(state.length, 2)
+  assert.deepEqual(state.map(getStableMessageId), ["assistant-1", "assistant-2"])
+})
+
+test("generated attachment response and history reconcile by the same server id", () => {
+  const attachment = {
+    id: "attachment-1",
+    name: "notes.md",
+    type: "markdown",
+  }
+  let state = upsertCloudMessage([], cloudMessage("assistant-file", {
+    text: "整理好了",
+    attachments: [attachment],
+  }))
+  state = mergeCloudMessages(state, [cloudMessage("assistant-file", {
+    text: "整理好了",
+    attachments: [attachment],
+  })])
+
+  assert.equal(state.length, 1)
+  assert.deepEqual(state[0].attachments, [attachment])
 })
 
 test("repeated proactive polling is idempotent and preserves render identity", () => {

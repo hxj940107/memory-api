@@ -70,6 +70,7 @@ import {
 } from "../lib/proactiveAttentionCandidates.js"
 import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
 import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
+import { getSavedMessageId } from "../lib/messagePersistence.js"
 import {
   buildProactiveJudgeTimeAuthority,
   normalizeProactiveEventWindow,
@@ -609,7 +610,15 @@ async function saveMessage(user_id, role, content, conversation_id, metadata = {
   })
 
   const data = await res.json().catch(() => null)
-  return data?.data?.[0] || null
+  if (!res.ok) {
+    throw new Error(data?.error || `Unable to save ${role} message: ${res.status}`)
+  }
+
+  const messageId = getSavedMessageId(data)
+  if (!messageId) {
+    throw new Error(`Saved ${role} message response is missing a string id`)
+  }
+  return messageId
 }
 
 async function getLatestConversationContinuity(user_id, conversation_id) {

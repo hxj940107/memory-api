@@ -15,7 +15,11 @@ export type SyncMessage = {
   treeholeSaveStatus?: string;
   diarySaveStatus?: string;
   metadata?: object;
+  attachments?: unknown[];
 };
+
+export const getValidCloudMessageId = (value: unknown) =>
+  typeof value === "string" && value.trim() ? value : null;
 
 export const getStableMessageId = (message: Pick<SyncMessage, "id" | "cloudId">) =>
   String(message.cloudId || message.id);
@@ -60,6 +64,7 @@ const sameRenderableMessage = <T extends SyncMessage>(left: T, right: T) =>
   left.treeholeSaveStatus === right.treeholeSaveStatus &&
   left.diarySaveStatus === right.diarySaveStatus &&
   sameJsonValue(left.treeholeDraft, right.treeholeDraft) &&
+  sameJsonValue(left.attachments, right.attachments) &&
   sameMessageMetadata(left.metadata, right.metadata);
 
 const compareMessages = <T extends SyncMessage>(left: T, right: T) => {
