@@ -101,6 +101,7 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；`conversation_summary.summary_segments jsonb not null default '[]'::jsonb` 已上线，不再是待执行 migration。
   - 下一台设备或新的 Codex 窗口必须先核对当前 git status、commit 与部署状态，不得重新实现上述 P0 / P1 / P1.5 Batch 1 或 reliability cleanup；继续前先阅读 `docs/memory-context-architecture.md`。
   - 尚未实施的后续项包括 P1.5 Batch 2 scheduler、execution-time Attention Gate / inactivity arbitration、deep memory tool loop、long-term heat / cold / archive；它们不得被误记为当前已完成能力。
+  - Low Priority TODO：Proactive Attention scheduler / arbitration 稳定后，再按 `docs/memory-context-architecture.md` 的 Natural Rhythm 设计优化 `inactivity_reach_out`；它是自然靠近的候选时机，不是固定时间问候或固定话术。
   - Eligibility diagnostics 明确区分 `retrieved`、`relevant`、`eligible_for_prompt` 和 `eligible_for_proactive_attention`；当前 Memory 候选默认不具备 proactive attention。
   - P1.5 Batch 1 Proactive Attention Shadow Mode 已完成：structured candidate、代码生成且稳定的 event ID、user source provenance、merge、terminal lifecycle 和 deterministic Shadow Gate 已实现。
   - Shadow Mode 不创建 `proactive_attention` / `plan_follow_up` task，不发送事件回访，不参与或阻塞 inactivity scheduling，也不改变 cooldown、quiet hours 或 daily limit；Batch 2 尚未实施。

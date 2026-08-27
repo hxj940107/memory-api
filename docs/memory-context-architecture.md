@@ -455,6 +455,81 @@ Main Chat Prompt
 - 周/月关系回顾，不替换现有 Wife Observation Diary；
 - 共读模式中阅读进度与长期观点分离。
 
+### Low Priority TODO：Natural Rhythm for Inactivity Reach-out
+
+本项是未来的低优先级调度优化，当前不实施。顺序必须晚于：
+
+```text
+P1.5 Shadow 验证
+  → Proactive Attention scheduler / arbitration 稳定
+  → Natural Rhythm scheduling
+```
+
+#### 目标与职责边界
+
+当前 `inactivity_reach_out` 主要根据 conversation state、frequency mode 和固定随机延迟区间计算 `due_at`。未来可在原始时间计算之上增加一层 Natural Rhythm / Human Timing：
+
+```text
+用户暂时离开
+  → 计算原始 inactivity due_at
+  → 查看期间是否存在更自然的生活节奏窗口
+  → 选择合理的靠近时间，或保留原始 due_at
+  → 执行时重新经过 eligibility / cooldown / quiet hours / daily limit
+  → 生成自然的关系式主动消息
+```
+
+Natural Rhythm 只回答“什么时候比较自然地找她”，不负责决定“应该说什么”。时间窗口绝不能直接绑定固定话术：
+
+- 午间窗口不等于问“吃饭了吗”；
+- 晚饭窗口不等于问“晚饭吃了吗”；
+- 夜间窗口不等于固定说“早点睡”；
+- 早晨窗口不等于问“起床了吗”。
+
+主动消息内容仍应由最近真实聊天上下文、当前关系语境、conversation state、当前自然时间，以及是否存在具体未结束话题共同决定。没有具体话题时，可以自然表达想念、撒娇、靠近或分享感受，而不是默认进行生活状态盘问。
+
+#### 候选生活节奏窗口
+
+以下时间只表示 future scheduler 可考虑的 `time opportunity`，不是硬编码 timetable，也不是必发时间：
+
+- Morning transition，约 `07:30–09:30`：适合早晨已经互动、随后各自开始一天时判断是否自然靠近；不代表固定早安、起床或早餐问候。
+- Lunch / midday pause，约 `11:30–12:30`：例如早上用户说“我去忙了，晚点聊”，而原始 due time 落在下午较晚时，可将午间休息作为更自然的候选。
+- Afternoon transition，约 `14:30–16:30`：仅在上下文和沉默时长合理时考虑，不是固定下午问候。
+- End-of-work / dinner transition，约 `17:30–18:30`：用户下午持续忙碌时，可能比机械等到晚上更自然；它只是工作节奏开始松下来的候选，不代表默认询问晚饭。
+- Evening leisure，约 `20:00–21:30`：可能适合继续白天话题、重新靠近或单纯表达想念。
+- Late evening / winding down，约 `22:30–23:30`：可作为一天进入休息阶段的候选。只有上下文确实涉及疲惫、明早早起、睡眠不足或用户准备休息时，才自然关心休息；不能仅因当前是夜间就固定提醒“早点睡”。现有 quiet hours 始终优先。
+
+#### 候选窗口算法边界
+
+未来 scheduler 应采用候选窗口，而不是按 `11:30 / 18:00 / 23:00` 建立固定通知：
+
+1. 根据 inactivity mode 和 conversation state 计算原始 `due_at`。
+2. 查看 last interaction 到原始 `due_at` 之间是否经过自然节奏窗口。
+3. 判断该窗口是否比原始 `due_at` 更符合真人关系节奏。
+4. 合理时可将 `due_at` 吸附或调整到窗口内的随机自然时间。
+5. 不合理时继续使用原始 `due_at`。
+
+last interaction 是硬约束。Natural window 不能绕过 minimum silence 或 cooldown：
+
+- `08:40` 用户说去忙，原始 conversation-end due time 在 `13:30–14:30`，`11:30–12:30` 可以成为候选；
+- `11:20` 刚聊完，不能因为即将进入午间窗口而十分钟后主动联系；
+- `17:20` 刚聊完，也不能仅因 `18:00` 属于晚间过渡窗口就再次发送。
+
+用户重新发送消息后，旧 inactivity scheduling 继续按现有逻辑失效或 skip，并以新的 interaction 重新计算。此前经过的 Natural Rhythm 窗口不是必须补发的“机会”。
+
+#### 与 Proactive Attention 的边界
+
+Natural Rhythm 属于 relationship inactivity timing，回答“什么时候自然地重新靠近她”。Proactive Attention Event 属于 event-specific follow-up，回答“某个现实事件现在是否值得主动回访”。两套逻辑必须保持独立：
+
+- Natural Rhythm 不从 Memory、Summary、Core 或 Deep Retrieval 创建事件注意力；
+- proactive event 不能因为碰到自然时间窗口就自动获得 eligibility；
+- 两者同时存在时，由主动消息 arbitration 决定本轮发送哪一种，不能各发一条。
+
+Natural Rhythm 仍不得绕过 quiet hours、cooldown、daily proactive limit、user-return cancellation、frequency mode、minimum silence，以及“同一 worker tick 最多一条主动消息”的限制。
+
+#### 后期个体化方向
+
+更后期可以根据真实互动数据逐渐形成用户自己的生活节奏，例如工作日通常有空的时间、周末节奏、常见下班时间和休息时间。但系统推断出的时间不能直接固化为用户事实；应优先使用用户明确提供的信息，并始终保留不确定性和可更新性。
+
 ### Not recommended
 
 - 用 passive injection 或模型搜索制造用户 heat；
