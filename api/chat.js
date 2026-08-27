@@ -269,6 +269,8 @@ Proactive event shadow proposals 原则：
 - 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
 - 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。
 - completed/cancelled 的既有事件不能因为普通后续消息重新打开。
+- 当前消息明确报告已有事件 completed、cancelled、ongoing 或 rescheduled 时，必须优先输出 matched_event_id 指向既有 candidate 的 update；不能因为 candidate 已满、expected window 已过、candidate age 或 attention_status 而省略 lifecycle proposal。capacity 只限制新事件。
+- “做好啦”“结束啦”“不去了”“弄完了”这类极短状态更新，只有近期真实 user context 中存在明确且唯一的事件指代时才匹配；多个 candidate 都合理时 matched_event_id 必须为 null，不要猜。带有明确事件身份的状态更新可以匹配较旧 candidate。
 - description 描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
 - local_interpreted_window 先按 Asia/Shanghai 写本地墙上时间，格式 YYYY-MM-DDTHH:mm:ss，不带 Z。相对时间必须锚定当前 user message 的真实发送时间；今天、明天、周五、上午、下午、三点半都先按上海时间理解。不得把上海本地钟点直接写成 Z 时间。
 - window.start 是事件进入合理回访时机的最早时间，window.end 是仍有回访意义的最晚时间；只有一个可靠边界时另一边保持 null。明确“三点半去做”至少可把 start 解释为当天上海时间15:30，不要把事件发生前判成已经适合回访。
@@ -312,12 +314,13 @@ ${JSON.stringify(recentUserSourceLedger)}
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
   })
-  const groundedProposals = parsed.proactiveEventProposals.map(proposal => (
+  const groundedResults = parsed.proactiveEventProposals.map(proposal => (
     normalizeProactiveEventWindow(proposal, {
       serverNow: new Date().toISOString(),
       userMessageCreatedAt,
-    }).proposal
+    })
   ))
+  const groundedProposals = groundedResults.map(result => result.proposal)
   parsed.diagnostics.proposal_results = parsed.diagnostics.proposal_results.map(item => {
     const grounded = groundedProposals.find(proposal => proposal.proposal_index === item.index)
     return {
@@ -327,6 +330,10 @@ ${JSON.stringify(recentUserSourceLedger)}
       time_grounding_source: grounded?.time_grounding?.source || null,
       local_interpreted_window: grounded?.time_grounding?.local_interpreted_window || null,
       utc_normalized_window: grounded?.time_grounding?.utc_normalized_window || null,
+      grounding_error_code: groundedResults.find(result => (
+        result.proposal.proposal_index === item.index
+      ))?.errorCode || null,
+      missing_user_message_time: Boolean(grounded?.time_grounding?.missing_user_message_time),
     }
   })
   const activeProvenanceDiagnostics = []
@@ -395,9 +402,11 @@ async function updateActiveConversationContext({
         sourceMessage: {
           id: user_message_id,
           role: "user",
-          created_at: new Date().toISOString(),
+          content: message,
+          created_at: user_message_created_at,
         },
         conversationId: conversation_id,
+        recentUserSourceLedger: recent_user_source_ledger,
       })
       proactiveCandidates = applied.candidates
       const accepted = applied.diagnostics.filter(item => item.admission_result === "accepted")
@@ -3268,6 +3277,7 @@ console.log("======================================\n")
     try {
       await updateActiveConversationContext({
         user_message_id: userMessageId,
+        user_message_created_at: userMessageCreatedAt,
         assistant_message_id: assistantMessageId,
         message,
         reply,
@@ -3278,8 +3288,8 @@ console.log("======================================\n")
           ...history
             .filter(item => item.role === "user" && item.id)
             .slice(-6)
-            .map(item => ({ id: item.id, role: "user", content: trimText(item.content, 240) })),
-          { id: userMessageId, role: "user", content: trimText(message, 800) },
+            .map(item => ({ id: item.id, role: "user", content: trimText(item.content, 240), created_at: item.created_at || null })),
+          { id: userMessageId, role: "user", content: trimText(message, 800), created_at: userMessageCreatedAt || null },
         ],
         persist_active_context: canPersistActiveConversationContext,
       })

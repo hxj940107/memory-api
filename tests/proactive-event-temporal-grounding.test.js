@@ -74,4 +74,23 @@ const messageAt = "2026-08-27T05:45:19.133Z" // 13:45 Asia/Shanghai
   assert.equal(authority.current_user_message_shanghai_time, "2026-08-27T13:45:19")
 }
 
+{
+  const missing = normalizeProactiveEventWindow({
+    local_interpreted_window: {
+      start: "1970-01-01T08:00:00",
+      end: "1970-01-01T09:00:00",
+    },
+    time_grounding_source: "relative_to_user_message",
+  }, { userMessageCreatedAt: null })
+  assert.equal(missing.errorCode, "missing_user_message_time")
+  assert.deepEqual(missing.proposal.expected_window, { start: null, end: null })
+  assert.equal(missing.proposal.time_grounding.user_message_created_at_utc, null)
+  assert.equal(missing.proposal.time_grounding.user_message_local_time, null)
+  assert.equal(missing.proposal.time_grounding.missing_user_message_time, true)
+
+  const authority = buildProactiveJudgeTimeAuthority({ userMessageCreatedAt: null })
+  assert.equal(authority.current_user_message_created_at_utc, null)
+  assert.equal(authority.current_user_message_shanghai_time, null)
+}
+
 console.log("proactive event temporal grounding tests passed")

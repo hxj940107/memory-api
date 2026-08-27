@@ -3,8 +3,11 @@ import {
   PROACTIVE_OPEN_CANDIDATE_LIMIT,
   applyProactiveEventProposal,
   applyProactiveEventProposals,
+  isOpenProactiveAttentionCandidate,
+  normalizeProactiveAttentionCandidates,
 } from "../lib/proactiveAttentionCandidates.js"
 import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
+import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
 
 function apply(candidates, {
   id,
@@ -32,6 +35,7 @@ function apply(candidates, {
     sourceMessage: {
       id: `message-${id}`,
       role,
+      content: text,
       created_at: now,
     },
     conversationId: "conversation-1",
@@ -39,6 +43,17 @@ function apply(candidates, {
     createEventId: () => eventId,
     now: () => now,
   })
+}
+
+function proposal({ messageId, description, state = "planned", matchedEventId = null }) {
+  return {
+    action: "create_or_update",
+    matched_event_id: matchedEventId,
+    description,
+    state,
+    expected_window: { start: null, end: null },
+    source_message_id: messageId,
+  }
 }
 
 {
@@ -58,6 +73,164 @@ function apply(candidates, {
   })
   assert.deepEqual(result.candidates.map(item => item.event_id), ["event-lunch", "event-facial"])
   assert.equal(result.diagnostics.filter(item => item.admission_result === "accepted").length, 2)
+}
+
+// A named completion is a lifecycle update even when all three open slots are occupied.
+{
+  let candidates = []
+  for (const [id, text] of [[1, "下午三点半做雾化"], [2, "等待快递"], [3, "晚上整理材料"]]) {
+    candidates = apply(candidates, { id, text, eventId: `event-${id}` }).candidates
+  }
+  const completed = apply(candidates, {
+    id: 4,
+    text: "做完雾化了",
+    matchedEventId: "event-1",
+    state: "completed",
+    now: "2026-08-26T04:00:00.000Z",
+  })
+  const event = completed.candidates.find(item => item.event_id === "event-1")
+  assert.equal(completed.diagnostics.merge_action, "merged_existing")
+  assert.equal(completed.diagnostics.referent_check, "explicit_description_referent")
+  assert.equal(event.state, "completed")
+  assert.equal(event.attention_status, "closed")
+  assert.deepEqual(event.source_message_ids, ["message-1", "message-4"])
+  assert.equal(event.last_user_update.message_id, "message-4")
+  assert.equal(event.updated_at, "2026-08-26T04:00:00.000Z")
+  assert.equal(completed.candidates.filter(isOpenProactiveAttentionCandidate).length, 2)
+  const gate = evaluateProactiveAttention(event, { now: "2026-08-26T04:01:00.000Z" })
+  assert.equal(gate.eligible_for_proactive_attention, false)
+  assert.equal(gate.reason, "event_completed")
+  assert.equal(gate.hard_rejection, true)
+}
+
+// Existing updates run before new admissions, so one completion can release a slot in the same turn.
+{
+  let candidates = []
+  for (let id = 1; id <= 3; id += 1) {
+    candidates = apply(candidates, {
+      id,
+      text: id === 1 ? "下午做雾化" : `独立现实事件${id}`,
+      eventId: `event-${id}`,
+    }).candidates
+  }
+  const ids = ["event-new"]
+  const result = applyProactiveEventProposals({
+    candidates,
+    proposals: [
+      proposal({ messageId: "message-4", description: "明天准备新的现实事件" }),
+      proposal({ messageId: "message-4", description: "下午雾化已完成", state: "completed", matchedEventId: "event-1" }),
+    ],
+    sourceMessage: {
+      id: "message-4",
+      role: "user",
+      content: "做完雾化了，明天准备新的现实事件",
+      created_at: "2026-08-26T04:00:00.000Z",
+    },
+    createEventId: () => ids.shift(),
+    now: () => "2026-08-26T04:00:00.000Z",
+  })
+  assert.equal(result.diagnostics[0].merge_action, "created")
+  assert.equal(result.diagnostics[1].merge_action, "merged_existing")
+  assert.equal(result.candidates.find(item => item.event_id === "event-1").state, "completed")
+  assert.equal(result.candidates.find(item => item.event_id === "event-new").state, "planned")
+  assert.equal(result.candidates.filter(isOpenProactiveAttentionCandidate).length, 3)
+}
+
+// A generic short completion can match only one uniquely recent real user referent.
+{
+  const older = apply([], { id: 1, text: "中午吃饭和午休", eventId: "event-lunch" })
+  const recent = apply(older.candidates, {
+    id: 2,
+    text: "七点做明天的午饭",
+    eventId: "event-tomorrow-lunch",
+    now: "2026-08-26T02:00:00.000Z",
+  })
+  const completed = applyProactiveEventProposal({
+    candidates: recent.candidates,
+    proposal: proposal({
+      messageId: "message-3",
+      description: "七点准备明天午饭的事件已完成",
+      state: "completed",
+      matchedEventId: "event-tomorrow-lunch",
+    }),
+    sourceMessage: {
+      id: "message-3", role: "user", content: "做好啦",
+      created_at: "2026-08-26T02:30:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-2", role: "user" },
+      { id: "message-3", role: "user" },
+    ],
+    now: () => "2026-08-26T02:30:00.000Z",
+  })
+  assert.equal(completed.diagnostics.merge_action, "merged_existing")
+  assert.equal(completed.diagnostics.referent_check, "unique_recent_user_referent")
+  assert.equal(completed.candidates.find(item => item.event_id === "event-tomorrow-lunch").state, "completed")
+  assert.equal(completed.candidates.find(item => item.event_id === "event-lunch").state, "planned")
+}
+
+// Two events introduced together make a generic completion ambiguous; no merge is safer.
+{
+  const ids = ["event-a", "event-b"]
+  const existing = applyProactiveEventProposals({
+    candidates: [],
+    proposals: [
+      proposal({ messageId: "message-both", description: "现实事件甲" }),
+      proposal({ messageId: "message-both", description: "现实事件乙" }),
+    ],
+    sourceMessage: {
+      id: "message-both", role: "user", content: "稍后做甲和乙",
+      created_at: "2026-08-26T02:00:00.000Z",
+    },
+    createEventId: () => ids.shift(),
+    now: () => "2026-08-26T02:00:00.000Z",
+  })
+  const ambiguous = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-done",
+      description: "现实事件甲已完成",
+      state: "completed",
+      matchedEventId: "event-a",
+    }),
+    sourceMessage: {
+      id: "message-done", role: "user", content: "做好啦",
+      created_at: "2026-08-26T02:30:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-both", role: "user" },
+      { id: "message-done", role: "user" },
+    ],
+  })
+  assert.equal(ambiguous.diagnostics.merge_action, "ambiguous_event_match")
+  assert.equal(ambiguous.candidates.find(item => item.event_id === "event-a").state, "planned")
+}
+
+// Closed/terminal candidates remain in the snapshot but do not consume open capacity.
+{
+  const terminal = apply([], { id: 1, text: "已结束的事件", state: "completed", eventId: "event-closed" })
+  let candidates = terminal.candidates
+  for (let id = 2; id <= 4; id += 1) {
+    candidates = apply(candidates, { id, text: `开放事件${id}`, eventId: `event-${id}` }).candidates
+  }
+  assert.equal(normalizeProactiveAttentionCandidates(candidates).some(item => item.event_id === "event-closed"), true)
+  assert.equal(candidates.filter(isOpenProactiveAttentionCandidate).length, 3)
+  const rejected = apply(candidates, { id: 5, text: "再来一个开放事件", eventId: "event-5" })
+  assert.equal(rejected.diagnostics.merge_action, "rejected_candidate_limit")
+}
+
+// Missing message timestamps remain null instead of becoming epoch or processing time.
+{
+  const result = applyProactiveEventProposal({
+    candidates: [],
+    proposal: proposal({ messageId: "message-no-time", description: "无时间来源事件" }),
+    sourceMessage: { id: "message-no-time", role: "user", content: "之后有件事" },
+    createEventId: () => "event-no-time",
+    now: () => "2026-08-26T04:00:00.000Z",
+  })
+  assert.equal(result.candidates[0].last_user_update.created_at, null)
+  assert.notEqual(result.candidates[0].last_user_update.created_at, "1970-01-01T00:00:00.000Z")
 }
 
 {
