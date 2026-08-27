@@ -4,6 +4,7 @@ import {
   applyProactiveEventProposal,
   applyProactiveEventProposals,
 } from "../lib/proactiveAttentionCandidates.js"
+import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
 
 function apply(candidates, {
   id,
@@ -198,6 +199,41 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
   })
   assert.equal(rejected.candidates.length, PROACTIVE_OPEN_CANDIDATE_LIMIT)
   assert.equal(rejected.diagnostics.merge_action, "rejected_candidate_limit")
+}
+
+{
+  const existing = apply([], {
+    id: 1,
+    text: "三点半在公司做雾化",
+    eventId: "event-nebulizer",
+  })
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: { items: [] },
+    proactive_event_proposals: [{
+      action: "update",
+      matched_event_id: "event-nebulizer",
+      description: "昨天做过一次，今天再做一次雾化",
+      state: "planned",
+      expected_window: { start: null, end: null },
+      source_message_id: "message-2",
+    }],
+  }))
+  const updated = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: parsed.proactiveEventProposals[0],
+    sourceMessage: {
+      id: "message-2",
+      role: "user",
+      created_at: "2026-08-26T02:00:00.000Z",
+    },
+    createEventId: () => "must-not-create",
+    now: () => "2026-08-26T02:00:00.000Z",
+  })
+  assert.equal(updated.diagnostics.merge_action, "merged_existing")
+  assert.equal(updated.candidates.length, 1)
+  assert.equal(updated.candidates[0].event_id, "event-nebulizer")
+  assert.deepEqual(updated.candidates[0].source_message_ids, ["message-1", "message-2"])
+  assert.equal(updated.candidates[0].last_user_update.message_id, "message-2")
 }
 
 console.log("proactive attention candidate tests passed")

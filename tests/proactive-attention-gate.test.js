@@ -21,6 +21,53 @@ const base = {
   last_proactive_mention: null,
   created_at: "2026-08-26T08:00:00.000Z",
   updated_at: "2026-08-26T08:00:00.000Z",
+  follow_up_profile: {
+    result_expected: true,
+    result_uncertainty: "meaningful",
+    significance: "medium",
+    routine: false,
+    immediate_continuation: false,
+  },
+}
+
+{
+  const routine = evaluateProactiveAttention({
+    ...base,
+    expected_window: { start: null, end: null },
+    follow_up_profile: {
+      result_expected: false,
+      result_uncertainty: "none",
+      significance: "low",
+      routine: true,
+      immediate_continuation: true,
+    },
+  }, { now: "2026-08-26T10:00:00.000Z" })
+  assert.equal(routine.eligible_for_proactive_attention, false)
+  assert.equal(routine.reason, PROACTIVE_ATTENTION_GATE_REASONS.IMMEDIATE_ROUTINE_EVENT)
+  assert.equal(routine.hard_rejection, false)
+  assert.equal(routine.rejection_type, "semantic")
+}
+
+{
+  const meaningful = evaluateProactiveAttention({
+    ...base,
+    expected_window: { start: null, end: null },
+  }, { now: "2026-08-26T10:00:00.000Z" })
+  assert.equal(meaningful.eligible_for_proactive_attention, true)
+  assert.equal(meaningful.reason, PROACTIVE_ATTENTION_GATE_REASONS.ELIGIBLE_SHADOW)
+}
+
+{
+  const movedOn = evaluateProactiveAttention({
+    ...base,
+    expected_window: { start: null, end: null },
+  }, {
+    now: "2026-08-26T10:00:00.000Z",
+    conversationMovedOn: true,
+  })
+  assert.equal(movedOn.eligible_for_proactive_attention, false)
+  assert.equal(movedOn.reason, PROACTIVE_ATTENTION_GATE_REASONS.CONVERSATION_MOVED_ON)
+  assert.equal(movedOn.rejection_type, "semantic")
 }
 
 function rejected(candidate, reason, options = {}) {

@@ -71,6 +71,10 @@ import {
 import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
 import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
 import {
+  buildProactiveJudgeTimeAuthority,
+  normalizeProactiveEventWindow,
+} from "../lib/proactiveEventTemporalGrounding.js"
+import {
   normalizeSummarySegments,
   selectSummarySegmentsForPrompt,
 } from "../lib/summarySegments.js"
@@ -197,6 +201,7 @@ async function judgeActiveConversationContext({
   previousActiveContext,
   previousProactiveCandidates,
   userMessageId,
+  userMessageCreatedAt,
   recentUserSourceLedger = [],
 }) {
   if (!message) {
@@ -228,7 +233,10 @@ async function judgeActiveConversationContext({
     "description":"现实事件本身",
     "state":"planned",
     "expected_window":{"start":null,"end":null},
-    "source_message_id":"当前用户消息ID"
+    "local_interpreted_window":{"start":null,"end":null},
+    "time_grounding_source":"user_explicit_time、relative_to_user_message或insufficient_time_evidence",
+    "source_message_id":"当前用户消息ID",
+    "follow_up_profile":{"result_expected":false,"result_uncertainty":"none、low或meaningful","significance":"low、medium或high","routine":false,"immediate_continuation":false}
   }]
 }
 
@@ -253,6 +261,7 @@ Proactive event shadow proposals 原则：
 - 这只是结构化现实事件捕获，不会创建任务或发送主动消息；最多返回3项，没有符合条件的事件时返回空数组。
 - 捕获她当前消息明确表达的、具有可追踪生命周期的现实事件或状态变化，例如明确未来事件、预约、deadline、等待结果，以及事件开始、完成或取消。
 - 此阶段不要判断是否值得主动打断沉默、是否值得未来回访、当前是否应该主动联系；这些全部由后续 Proactive Attention Gate 判断。
+- follow_up_profile 只描述事件结构，不决定 admission：result_expected 表示未来是否自然会产生完成/结果；result_uncertainty 表示结果是否仍未知；significance 表示该节点对她的现实意义；routine / immediate_continuation 描述是否只是普通生活过程或极短期对话延续。所有事件仍按前述规则捕获，由 Gate 使用这些结构信号判断 worthiness。
 - 普通闲聊、即时情绪和没有后续生命周期的 conversation continuation 不创建 candidate。
 - candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断；每项 source_message_id 必须是当前用户消息 ID。
 - Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
@@ -260,7 +269,9 @@ Proactive event shadow proposals 原则：
 - 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。
 - completed/cancelled 的既有事件不能因为普通后续消息重新打开。
 - description 描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
-- expected_window 使用 ISO 时间；证据不足时 start/end 为 null，不要猜精确时间。
+- local_interpreted_window 先按 Asia/Shanghai 写本地墙上时间，格式 YYYY-MM-DDTHH:mm:ss，不带 Z。相对时间必须锚定当前 user message 的真实发送时间；今天、明天、周五、上午、下午、三点半都先按上海时间理解。不得把上海本地钟点直接写成 Z 时间。
+- window.start 是事件进入合理回访时机的最早时间，window.end 是仍有回访意义的最晚时间；只有一个可靠边界时另一边保持 null。明确“三点半去做”至少可把 start 解释为当天上海时间15:30，不要把事件发生前判成已经适合回访。
+- expected_window 由代码从 local_interpreted_window 转成 UTC；模型不要自行填 UTC。无法可靠确定边界时对应值为 null，不得凭空补精确分钟。start 不得晚于 end。
 - 示例：“宝宝 我周五早上要考试了”应捕获1个 planned 事件；“周日中午和朋友吃饭，下午去做脸”应捕获2个独立事件；“明天一早交销量表，然后做客户信息统计”应捕获2个独立事件。
 - 示例：普通寒暄返回空数组；“我去洗澡等会回来”属于即时 conversation continuation，通常返回空数组。
 `,
@@ -279,6 +290,12 @@ ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidat
 
 当前用户消息ID：${userMessageId || "unknown"}
 
+时间权威：
+${JSON.stringify(buildProactiveJudgeTimeAuthority({
+  serverNow: new Date().toISOString(),
+  userMessageCreatedAt,
+}))}
+
 近期 user source ledger（只用于校验 Active provenance）：
 ${JSON.stringify(recentUserSourceLedger)}
 `,
@@ -294,6 +311,23 @@ ${JSON.stringify(recentUserSourceLedger)}
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
   })
+  const groundedProposals = parsed.proactiveEventProposals.map(proposal => (
+    normalizeProactiveEventWindow(proposal, {
+      serverNow: new Date().toISOString(),
+      userMessageCreatedAt,
+    }).proposal
+  ))
+  parsed.diagnostics.proposal_results = parsed.diagnostics.proposal_results.map(item => {
+    const grounded = groundedProposals.find(proposal => proposal.proposal_index === item.index)
+    return {
+      ...item,
+      raw_action: item.action,
+      normalized_action: grounded?.action || item.normalized_action || null,
+      time_grounding_source: grounded?.time_grounding?.source || null,
+      local_interpreted_window: grounded?.time_grounding?.local_interpreted_window || null,
+      utc_normalized_window: grounded?.time_grounding?.utc_normalized_window || null,
+    }
+  })
   const activeProvenanceDiagnostics = []
   const activeContext = resolveActiveConversationContext(
       previousActiveContext,
@@ -307,13 +341,14 @@ ${JSON.stringify(recentUserSourceLedger)}
   return {
     activeContext,
     activeProvenanceDiagnostics,
-    proactiveEventProposals: parsed.proactiveEventProposals,
+    proactiveEventProposals: groundedProposals,
     diagnostics: parsed.diagnostics,
   }
 }
 
 async function updateActiveConversationContext({
   user_message_id,
+  user_message_created_at,
   assistant_message_id,
   message,
   reply,
@@ -346,6 +381,7 @@ async function updateActiveConversationContext({
       previousActiveContext: previous_active_context,
       previousProactiveCandidates: proactiveCandidates,
       userMessageId: user_message_id,
+      userMessageCreatedAt: user_message_created_at,
       recentUserSourceLedger: recent_user_source_ledger,
     })
     nextActiveContext = judged.activeContext
@@ -428,6 +464,8 @@ async function updateActiveConversationContext({
           gate_reason: gate.reason,
           confidence: gate.confidence,
           hard_rejection: gate.hard_rejection,
+          rejection_type: gate.rejection_type,
+          gate_worthiness_reason: gate.worthiness_reason,
           evaluated_at: gate.evaluated_at,
         }
       })
@@ -571,7 +609,7 @@ async function saveMessage(user_id, role, content, conversation_id, metadata = {
   })
 
   const data = await res.json().catch(() => null)
-  return data?.data?.[0]?.id || null
+  return data?.data?.[0] || null
 }
 
 async function getLatestConversationContinuity(user_id, conversation_id) {
@@ -2545,13 +2583,15 @@ const userMessageId = await saveUserMessage(
       }
     : null
 )
-
 // 2. history
 const historyCandidates = await getRecentMessages(
   user_id,
   cid,
   CONTEXT_BUDGET.recentHistoryFetchMessages
 )
+const userMessageCreatedAt = historyCandidates.find(
+  (historyMessage) => historyMessage.id === userMessageId
+)?.created_at || new Date().toISOString()
 let activeConversationContext = { items: [] }
 let proactiveAttentionCandidates = []
 let canPersistActiveConversationContext = true
@@ -3200,6 +3240,7 @@ console.log("======================================\n")
         user_id,
         conversation_id: cid,
         user_message_id: userMessageId,
+        user_message_created_at: userMessageCreatedAt,
         assistant_message_id: assistantMessageId,
         message,
         reply,

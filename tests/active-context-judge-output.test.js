@@ -20,6 +20,41 @@ const validProposal = {
   expected_window: { start: null, end: null },
   source_message_id: "message-exam",
 }
+
+{
+  const update = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [{
+      ...validProposal,
+      action: "update",
+      matched_event_id: "event-nebulizer",
+      source_message_id: "message-nebulizer-update",
+    }],
+  }))
+  assert.equal(update.proactiveEventProposals[0].action, "create_or_update")
+  assert.equal(update.proactiveEventProposals[0].raw_action, "update")
+  assert.equal(update.diagnostics.proposal_results[0].normalized_action, "create_or_update")
+
+  const create = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [{ ...validProposal, action: "create" }],
+  }))
+  assert.equal(create.proactiveEventProposals[0].action, "create_or_update")
+
+  const invalidUpdate = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [{ ...validProposal, action: "update", matched_event_id: null }],
+  }))
+  assert.equal(invalidUpdate.proactiveEventProposals.length, 0)
+  assert.equal(invalidUpdate.diagnostics.proposal_results[0].rejection_reason, "event_proposal_update_requires_match")
+
+  const invalidCreate = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [{ ...validProposal, action: "create", matched_event_id: "existing" }],
+  }))
+  assert.equal(invalidCreate.proactiveEventProposals.length, 0)
+  assert.equal(invalidCreate.diagnostics.proposal_results[0].rejection_reason, "event_proposal_create_cannot_match")
+}
 const validOutput = JSON.stringify({
   active_context: activeContext,
   proactive_event_proposals: [validProposal],
