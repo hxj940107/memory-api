@@ -276,6 +276,7 @@ Proactive event shadow proposals 原则：
 - candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断；每项 source_message_id 必须是当前用户消息 ID。
 - 每项还必须提供 source_evidence：它必须是当前 user 原话中的简短连续片段，并直接支持事件身份、时间或本轮 lifecycle 变化。旧 candidate、Active Context、小C回复只能帮助理解，不能替代当前 user 证据创建新事实。
 - matched existing event 的 proposal 必须提供 user_update。kind 表示当前 user 对该事件报告的状态；explicitness 表示用户是否明确表达该状态；evidence_text 必须逐字摘自当前 user message，time_evidence_text 如存在也必须逐字摘自当前 user message。assistant 问题只能帮助确定 existing event identity，不能成为状态或时间事实来源。
+- 当前 user 省略事件名、但紧邻的小C回复只明确承接一个 existing open event 时，仍应输出 matched existing update。比如小C说“那快去叫榴莲起来”，她说“不行，我想再拖会儿，计划推迟”，必须匹配该遛狗 event，并输出 user_update={"kind":"rescheduled","explicitness":"explicit","evidence_text":"计划推迟","time_evidence_text":null}。不能因为省略事件名而漏掉 user_update；身份可来自紧邻 assistant，新增状态事实只能来自当前 user 原话。
 - Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
 - 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
 - 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。

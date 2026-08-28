@@ -33,6 +33,7 @@ P1 当前已完成：
 - P1.5 Batch 2B send path ready 已完成并 commit/push：只有 `PROACTIVE_ATTENTION_SEND_ENABLED=true` 才能进入生成与消息持久化；env 缺失或其他值均 fail closed。OFF 状态在 generation 前短路，不写 proactive assistant message，也不更新 `last_proactive_mention` 或消费 inactivity ownership。
 - Batch 2B ON 路径复用现有 assistant message persistence，并在生成后重新读取 candidate、最新 user message 与 execution constraints；task processing ownership 丢失、candidate/version 改变、新 user message、terminal/closed、quiet hours、cooldown、daily limit 或 arbitration 改变都会在写消息前停止。task ID message lookup 负责 retry 幂等恢复，成功消息携带完整 candidate snapshot 并推进目标 event 的 `last_proactive_mention`。
 - P1.5 Batch 2C limited rollout safety 已在当前工作区实现：首轮真实发送只接受具有完整 start/end、可靠 user-time grounding 和安全 lifecycle diagnostics 的 open candidate。wake-up 到达 start 时不会机械追问，而是确定性延后到至少 15 分钟后且不早于时间窗中点；start-only、缺失 window、歧义/异常 history 与 unsafe provenance 均 no-send。该层不增加 LLM、关键词表、schema 或 API Function。
+- Contextual existing update bridge 支持紧邻 assistant 对唯一 open event 的明确问句或明确承接；用户可省略事件名，但 judge 仍必须输出当前 user 原文中的 structured update evidence。该 bridge 只允许更新 existing event，多个合理 referent、缺失 user evidence、terminal 无明确证据或 create proposal 继续拒绝。
 
 本轮 reliability cleanup 已完成、通过测试并 commit/push；下一步是确认或完成生产部署：
 

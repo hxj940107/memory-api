@@ -792,7 +792,8 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
   })
 }
 
-// The same elliptical reply is insufficient without an adjacent explicit question.
+// The same elliptical reply is insufficient without an adjacent assistant
+// message that uniquely establishes the existing event identity.
 {
   const existing = apply([], {
     id: 1,
@@ -825,6 +826,46 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
   })
   assert.equal(result.diagnostics.merge_action, "semantic_source_mismatch")
   assert.equal(result.candidates[0].last_user_update.message_id, "message-1")
+}
+
+// An immediately adjacent assistant continuation may bridge a uniquely named
+// existing event when the current user message supplies explicit update facts.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "八点半带小狗下楼逛逛",
+    eventId: "event-contextual-dog-walk",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-contextual-delay",
+      description: "八点半带小狗下楼逛逛",
+      matchedEventId: "event-contextual-dog-walk",
+      evidenceText: "计划推迟",
+      updateKind: "rescheduled",
+    }),
+    sourceMessage: {
+      id: "message-contextual-delay",
+      role: "user",
+      content: "不行，我想再拖会儿，计划推迟",
+      created_at: "2026-08-28T12:26:08.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-dog-walk-continuation",
+      role: "assistant",
+      content: "那快去叫小狗起来，别睡懒觉了",
+      created_at: "2026-08-28T12:25:33.000Z",
+      is_immediately_previous: true,
+    },
+    now: () => "2026-08-28T12:26:12.000Z",
+  })
+  assert.equal(result.diagnostics.admission_reason, "accepted_contextual_existing_update")
+  assert.equal(result.diagnostics.identity_source, "assistant_continuation_existing_event")
+  assert.equal(result.diagnostics.fact_source, "current_user_message")
+  assert.equal(result.candidates[0].event_id, "event-contextual-dog-walk")
+  assert.deepEqual(result.candidates[0].source_message_ids, ["message-1", "message-contextual-delay"])
+  assert.equal(result.candidates[0].last_user_update.message_id, "message-contextual-delay")
 }
 
 // A short terminal reply can use the same verified question bridge.
