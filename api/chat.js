@@ -236,6 +236,7 @@ async function judgeActiveConversationContext({
     "time_grounding_source":"user_explicit_time、relative_to_user_message或insufficient_time_evidence",
     "source_message_id":"当前用户消息ID",
     "source_evidence":"当前用户原话中直接支持该事件或状态变化的简短连续片段",
+    "user_update":{"kind":"completed、cancelled、rescheduled、planned、ongoing、result或other","explicitness":"explicit、implicit或none","evidence_text":"当前用户原话中的直接状态证据","time_evidence_text":null},
     "follow_up_profile":{"result_expected":false,"result_uncertainty":"none、low或meaningful","significance":"low、medium或high","routine":false,"immediate_continuation":false}
   }],
   "active_context":{"items":[]}
@@ -269,11 +270,12 @@ Proactive event shadow proposals 原则：
 - 普通闲聊、即时情绪和没有后续生命周期的 conversation continuation 不创建 candidate。
 - candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断；每项 source_message_id 必须是当前用户消息 ID。
 - 每项还必须提供 source_evidence：它必须是当前 user 原话中的简短连续片段，并直接支持事件身份、时间或本轮 lifecycle 变化。旧 candidate、Active Context、小C回复只能帮助理解，不能替代当前 user 证据创建新事实。
+- matched existing event 的 proposal 必须提供 user_update。kind 表示当前 user 对该事件报告的状态；explicitness 表示用户是否明确表达该状态；evidence_text 必须逐字摘自当前 user message，time_evidence_text 如存在也必须逐字摘自当前 user message。assistant 问题只能帮助确定 existing event identity，不能成为状态或时间事实来源。
 - Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
 - 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
 - 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。
 - completed/cancelled 的既有事件不能因为普通后续消息重新打开。
-- completed/cancelled 必须由当前 user 原话明确支持该事件已经结束或取消；症状、感受、评价或背景变化本身不等于事件完成。
+- completed/cancelled 时 user_update.kind 必须分别为 completed/cancelled，explicitness 必须为 explicit。症状改善、感受变化、评价或背景变化本身不等于事件完成或取消；只有用户明确表达事件本身已经结束、完成或取消，才标 explicit terminal update。
 - terminal/closed candidate 仍用于 identity continuity 判断。没有新的明确 user 证据时，不得把同一事项静默创建成新 UUID；明确表达新的 occurrence 时才可新建。
 - 当前消息明确报告已有事件 completed、cancelled、ongoing 或 rescheduled 时，必须优先输出 matched_event_id 指向既有 candidate 的 update；不能因为 candidate 已满、expected window 已过、candidate age 或 attention_status 而省略 lifecycle proposal。capacity 只限制新事件。
 - “做好啦”“结束啦”“不去了”“弄完了”这类极短状态更新，只有近期真实 user context 中存在明确且唯一的事件指代时才匹配；多个 candidate 都合理时 matched_event_id 必须为 null，不要猜。带有明确事件身份的状态更新可以匹配较旧 candidate。

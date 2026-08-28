@@ -31,6 +31,14 @@ function apply(candidates, {
         end: "2026-08-27T07:00:00.000Z",
       },
       source_message_id: `message-${id}`,
+      user_update: matchedEventId
+        ? {
+            kind: state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "planned",
+            explicitness: "explicit",
+            evidence_text: text,
+            time_evidence_text: null,
+          }
+        : null,
     },
     sourceMessage: {
       id: `message-${id}`,
@@ -45,7 +53,16 @@ function apply(candidates, {
   })
 }
 
-function proposal({ messageId, description, state = "planned", matchedEventId = null }) {
+function proposal({
+  messageId,
+  description,
+  state = "planned",
+  matchedEventId = null,
+  evidenceText = description,
+  timeEvidenceText = null,
+  explicitness = "explicit",
+  updateKind = state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : "planned",
+}) {
   return {
     action: "create_or_update",
     matched_event_id: matchedEventId,
@@ -53,6 +70,14 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
     state,
     expected_window: { start: null, end: null },
     source_message_id: messageId,
+    user_update: matchedEventId
+      ? {
+          kind: updateKind,
+          explicitness,
+          evidence_text: evidenceText,
+          time_evidence_text: timeEvidenceText,
+        }
+      : null,
   }
 }
 
@@ -124,6 +149,12 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
     local_interpreted_window: { start: null, end: null },
     time_grounding_source: "insufficient_time_evidence",
     source_message_id: "message-exam-done",
+    user_update: {
+      kind: "completed",
+      explicitness: "explicit",
+      evidence_text: "考完试了",
+      time_evidence_text: null,
+    },
     follow_up_profile: {
       result_expected: false,
       result_uncertainty: "none",
@@ -182,7 +213,13 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
     candidates,
     proposals: [
       proposal({ messageId: "message-4", description: "明天准备新的现实事件" }),
-      proposal({ messageId: "message-4", description: "下午雾化已完成", state: "completed", matchedEventId: "event-1" }),
+      proposal({
+        messageId: "message-4",
+        description: "下午雾化已完成",
+        state: "completed",
+        matchedEventId: "event-1",
+        evidenceText: "做完雾化了",
+      }),
     ],
     sourceMessage: {
       id: "message-4",
@@ -216,6 +253,7 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
       description: "七点准备明天午饭的事件已完成",
       state: "completed",
       matchedEventId: "event-tomorrow-lunch",
+      evidenceText: "做好啦",
     }),
     sourceMessage: {
       id: "message-3", role: "user", content: "做好啦",
@@ -254,9 +292,10 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
     candidates: existing.candidates,
     proposal: proposal({
       messageId: "message-done",
-      description: "现实事件甲已完成",
-      state: "completed",
-      matchedEventId: "event-a",
+        description: "现实事件甲已完成",
+        state: "completed",
+        matchedEventId: "event-a",
+        evidenceText: "做好啦",
     }),
     sourceMessage: {
       id: "message-done", role: "user", content: "做好啦",
@@ -457,6 +496,13 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
       state: "planned",
       expected_window: { start: null, end: null },
       source_message_id: "message-2",
+      source_evidence: "今天再去做一次雾化",
+      user_update: {
+        kind: "planned",
+        explicitness: "explicit",
+        evidence_text: "今天再去做一次雾化",
+        time_evidence_text: "今天",
+      },
     }],
   }))
   const updated = applyProactiveEventProposal({
@@ -494,6 +540,8 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "下午雾化治疗已经完成",
         state: "completed",
         matchedEventId: "event-nebulizer",
+        evidenceText: "好像也没什么不舒服了",
+        explicitness: "implicit",
       }),
       source_evidence: "好像也没什么不舒服了",
     },
@@ -564,6 +612,7 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "一会儿去吃饭",
         state: "completed",
         matchedEventId: "event-eating",
+        evidenceText: "吃完了",
       }),
       source_evidence: "吃完了",
     },
@@ -603,6 +652,7 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
       description: "下午去做雾化",
       state: "cancelled",
       matchedEventId: "event-nebulizer",
+      evidenceText: "下午雾化不去了",
     }),
     sourceMessage: {
       id: "message-cancel",
@@ -622,6 +672,9 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
       description: "雾化改到明天下午",
       state: "planned",
       matchedEventId: "event-nebulizer",
+      evidenceText: "雾化改到明天下午",
+      timeEvidenceText: "明天下午",
+      updateKind: "rescheduled",
     }),
     sourceMessage: {
       id: "message-reschedule",
@@ -700,6 +753,9 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "下午雾化治疗",
         state: "planned",
         matchedEventId: "event-contextual-nebulizer",
+        evidenceText: "没呢 三点多再去",
+        timeEvidenceText: "三点多",
+        updateKind: "rescheduled",
       }),
       expected_window: {
         start: "2026-08-26T07:00:00.000Z",
@@ -750,6 +806,9 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         messageId: "message-no-bridge",
         description: "下午雾化治疗",
         matchedEventId: "event-no-bridge",
+        evidenceText: "没呢 三点多再去",
+        timeEvidenceText: "三点多",
+        updateKind: "rescheduled",
       }),
       expected_window: {
         start: "2026-08-26T07:00:00.000Z",
@@ -783,6 +842,7 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "下午雾化治疗",
         state: "completed",
         matchedEventId: "event-contextual-completion",
+        evidenceText: "做完了",
       }),
       source_evidence: "做完了",
     },
@@ -806,6 +866,137 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
   assert.equal(result.candidates[0].attention_status, "closed")
 }
 
+// Production regression: semantic evidence, not whole-message length or a
+// deterministic terminal phrase list, admits a longer explicit completion.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-production-completion",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-production-completion",
+        description: "下午雾化治疗",
+        state: "completed",
+        matchedEventId: "event-production-completion",
+        evidenceText: "做完啦",
+        timeEvidenceText: "四点左右",
+      }),
+      source_evidence: "做完啦",
+      expected_window: {
+        start: "2026-08-26T08:00:00.000Z",
+        end: "2026-08-26T08:00:00.000Z",
+      },
+    },
+    sourceMessage: {
+      id: "message-production-completion",
+      role: "user",
+      content: "做完啦 四点左右去做的",
+      created_at: "2026-08-26T09:58:07.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-production-question",
+      role: "assistant",
+      content: "到家了，今天雾化做了吗？",
+      created_at: "2026-08-26T09:57:39.000Z",
+      is_immediately_previous: true,
+    },
+    now: () => "2026-08-26T09:58:12.000Z",
+  })
+  const event = result.candidates[0]
+  assert.equal(result.diagnostics.admission_reason, "accepted_contextual_existing_update")
+  assert.equal(result.diagnostics.identity_source, "assistant_question_existing_event")
+  assert.equal(result.diagnostics.fact_source, "current_user_message")
+  assert.equal(result.diagnostics.evidence_verified, true)
+  assert.equal(result.diagnostics.user_update.kind, "completed")
+  assert.equal(result.diagnostics.user_update.explicitness, "explicit")
+  assert.equal(result.diagnostics.user_update.evidence_text, "做完啦")
+  assert.equal(event.event_id, "event-production-completion")
+  assert.equal(event.state, "completed")
+  assert.equal(event.attention_status, "closed")
+  assert.deepEqual(event.source_message_ids, ["message-1", "message-production-completion"])
+  assert.equal(event.last_user_update.message_id, "message-production-completion")
+}
+
+// The code does not need to recognize the wording used for an explicit update.
+{
+  const existing = apply([], { id: 1, text: "去办理现实事项", eventId: "event-semantic-done" })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-semantic-done",
+      description: "去办理现实事项",
+      state: "completed",
+      matchedEventId: "event-semantic-done",
+      evidenceText: "搞定了",
+    }),
+    sourceMessage: {
+      id: "message-semantic-done", role: "user", content: "搞定了，刚回来",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-semantic-done", role: "user" },
+    ],
+  })
+  assert.equal(result.diagnostics.admission_reason, "accepted_existing_update")
+  assert.equal(result.candidates[0].state, "completed")
+}
+
+// Explicit cancellation semantics come from the judge evidence, not a phrase matcher.
+{
+  const existing = apply([], { id: 1, text: "晚些时候参加活动", eventId: "event-cancel-semantic" })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-cancel-semantic",
+      description: "晚些时候参加活动",
+      state: "cancelled",
+      matchedEventId: "event-cancel-semantic",
+      evidenceText: "算了，不去了",
+    }),
+    sourceMessage: {
+      id: "message-cancel-semantic", role: "user", content: "算了，不去了",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-cancel-semantic", role: "user" },
+    ],
+  })
+  assert.equal(result.candidates[0].state, "cancelled")
+  assert.equal(result.candidates[0].attention_status, "closed")
+}
+
+// A judge-provided quote that is absent from the current user message is rejected.
+{
+  const existing = apply([], { id: 1, text: "去办理现实事项", eventId: "event-false-quote" })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-false-quote",
+      description: "去办理现实事项",
+      state: "completed",
+      matchedEventId: "event-false-quote",
+      evidenceText: "已经办完了",
+    }),
+    sourceMessage: {
+      id: "message-false-quote", role: "user", content: "晚点再说",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-false-quote", role: "user" },
+    ],
+  })
+  assert.equal(result.diagnostics.merge_action, "invalid_source_provenance")
+  assert.equal(result.diagnostics.evidence_verified, false)
+  assert.equal(result.candidates[0].state, "planned")
+}
+
 // A symptom report does not become terminal merely because the assistant asked
 // about the uniquely identified treatment event.
 {
@@ -822,6 +1013,8 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "下午雾化治疗",
         state: "completed",
         matchedEventId: "event-contextual-symptom",
+        evidenceText: "好像没什么不舒服了",
+        explicitness: "implicit",
       }),
       source_evidence: "好像没什么不舒服了",
     },
@@ -864,6 +1057,7 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
         description: "下午雾化治疗",
         state: "completed",
         matchedEventId: "event-nebulizer-a",
+        evidenceText: "做完了",
       }),
       source_evidence: "做完了",
     },

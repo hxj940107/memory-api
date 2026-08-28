@@ -29,6 +29,12 @@ const validProposal = {
       action: "update",
       matched_event_id: "event-nebulizer",
       source_message_id: "message-nebulizer-update",
+      user_update: {
+        kind: "planned",
+        explicitness: "explicit",
+        evidence_text: "三点再去",
+        time_evidence_text: "三点",
+      },
     }],
   }))
   assert.equal(update.proactiveEventProposals[0].action, "create_or_update")
@@ -114,6 +120,12 @@ const validOutput = JSON.stringify({
     description: "周五早上的公司知识考试已完成",
     state: "completed",
     source_message_id: "message-exam-completed",
+    user_update: {
+      kind: "completed",
+      explicitness: "explicit",
+      evidence_text: "考试已完成",
+      time_evidence_text: null,
+    },
   }
   const proposalFirstActiveTruncated = `{
     "proactive_event_proposals":${JSON.stringify([completedProposal])},
@@ -205,9 +217,34 @@ const validOutput = JSON.stringify({
 }
 
 {
+  const missingEvidence = parseActiveContextJudgeOutput(JSON.stringify({
+    active_context: activeContext,
+    proactive_event_proposals: [{
+      ...validProposal,
+      action: "update",
+      matched_event_id: "event-exam",
+    }],
+  }))
+  assert.equal(missingEvidence.proactiveEventProposals.length, 0)
+  assert.equal(
+    missingEvidence.diagnostics.proposal_results[0].rejection_reason,
+    "event_proposal_existing_update_missing_evidence"
+  )
+}
+
+{
   const parsed = parseActiveContextJudgeOutput(JSON.stringify({
     active_context: activeContext,
-    proactive_event_proposals: [{ ...validProposal, matched_event_id: "invented-id" }],
+    proactive_event_proposals: [{
+      ...validProposal,
+      matched_event_id: "invented-id",
+      user_update: {
+        kind: "planned",
+        explicitness: "explicit",
+        evidence_text: "周五早上考试",
+        time_evidence_text: null,
+      },
+    }],
   }))
   const applied = applyProactiveEventProposal({
     candidates: [],
