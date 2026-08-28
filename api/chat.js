@@ -69,6 +69,11 @@ import {
   normalizeProactiveAttentionCandidates,
 } from "../lib/proactiveAttentionCandidates.js"
 import { evaluateProactiveAttention } from "../lib/proactiveAttentionGate.js"
+import {
+  PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE,
+  PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
+  planProactiveAttentionWakeup,
+} from "../lib/proactiveAttentionScheduler.js"
 import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
 import { getSavedMessageId } from "../lib/messagePersistence.js"
 import {
@@ -371,6 +376,7 @@ ${JSON.stringify(recentUserSourceLedger)}
 }
 
 async function updateActiveConversationContext({
+  user_id,
   user_message_id,
   user_message_created_at,
   assistant_message_id,
@@ -497,6 +503,73 @@ async function updateActiveConversationContext({
           evaluated_at: gate.evaluated_at,
         }
       })
+      const acceptedEventIds = new Set(
+        (proactiveMergeDiagnostics.proposals || [])
+          .filter(item => item.admission_result === "accepted" && item.resulting_event_id)
+          .map(item => item.resulting_event_id)
+      )
+      const schedulingDiagnostics = []
+      for (const candidate of proactiveCandidates.filter(item => acceptedEventIds.has(item.event_id))) {
+        const decision = planProactiveAttentionWakeup(candidate, { now: evaluatedAt })
+        const scheduling = {
+          event_id: candidate.event_id,
+          candidate_updated_at: candidate.updated_at,
+          ...decision,
+        }
+        try {
+          if (decision.scheduled) {
+            const { data, error } = await supabase
+              .from("xiaoc_proactive_tasks")
+              .upsert(
+                {
+                  user_id,
+                  type: PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
+                  source_type: PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE,
+                  source_id: candidate.event_id,
+                  status: "pending",
+                  due_at: decision.scheduled_for,
+                  conversation_id,
+                  reason: "在候选事件进入合理关注窗口时重新执行 Shadow Gate。",
+                  payload: {
+                    execution_mode: "shadow",
+                    event_id: candidate.event_id,
+                    candidate_updated_at: candidate.updated_at,
+                    scheduled_for: decision.scheduled_for,
+                    scheduled_from_assistant_message_id: assistant_message_id,
+                  },
+                  completed_at: null,
+                  message_id: null,
+                  last_error: null,
+                  updated_at: evaluatedAt,
+                },
+                { onConflict: "user_id,type,source_type,source_id" }
+              )
+              .select("id,due_at,status")
+              .single()
+            if (error) throw error
+            scheduling.task_id = data.id
+          } else {
+            const { error } = await supabase
+              .from("xiaoc_proactive_tasks")
+              .update({
+                status: "skipped",
+                last_error: decision.reason,
+                updated_at: evaluatedAt,
+              })
+              .eq("user_id", user_id)
+              .eq("type", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+              .eq("source_type", PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE)
+              .eq("source_id", candidate.event_id)
+              .eq("status", "pending")
+            if (error) throw error
+          }
+        } catch (scheduleError) {
+          scheduling.scheduled = false
+          scheduling.reason = "schedule_persist_failed"
+          scheduling.error = String(scheduleError?.message || scheduleError || "").slice(0, 180)
+        }
+        schedulingDiagnostics.push(scheduling)
+      }
       await saveActiveConversationContext(
         assistant_message_id,
         nextActiveContext,
@@ -506,6 +579,7 @@ async function updateActiveConversationContext({
           mergeDiagnostics: proactiveMergeDiagnostics,
           judgeDiagnostics,
           activeProvenanceDiagnostics,
+          schedulingDiagnostics,
         }
       )
     } catch (err) {
@@ -719,6 +793,7 @@ async function saveActiveConversationContext(messageId, context, proactiveShadow
                 merge: proactiveShadow.mergeDiagnostics || null,
                 judge: proactiveShadow.judgeDiagnostics || null,
                 active_provenance: proactiveShadow.activeProvenanceDiagnostics || [],
+                scheduling: proactiveShadow.schedulingDiagnostics || [],
                 evaluated_at: new Date().toISOString(),
               },
             }
@@ -3294,6 +3369,7 @@ console.log("======================================\n")
 
     try {
       await updateActiveConversationContext({
+        user_id,
         user_message_id: userMessageId,
         user_message_created_at: userMessageCreatedAt,
         assistant_message_id: assistantMessageId,

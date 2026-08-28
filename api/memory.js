@@ -25,6 +25,12 @@ import {
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
+import { normalizeProactiveAttentionCandidates } from "../lib/proactiveAttentionCandidates.js"
+import {
+  PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
+  evaluateProactiveAttentionExecution,
+  planProactiveAttentionWakeup,
+} from "../lib/proactiveAttentionScheduler.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2073,9 +2079,159 @@ async function enqueueNextInactivityReachOutTask(task, result) {
   return data
 }
 
+async function loadLatestProactiveAttentionCandidate(task) {
+  if (!task.conversation_id || !task.source_id) return null
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id,metadata,created_at")
+    .eq("user_id", task.user_id)
+    .eq("conversation_id", task.conversation_id)
+    .eq("role", "assistant")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(40)
+
+  if (error) throw error
+  for (const message of data || []) {
+    if (!Array.isArray(message.metadata?.proactiveAttentionCandidates)) continue
+    const candidate = normalizeProactiveAttentionCandidates(
+      message.metadata.proactiveAttentionCandidates
+    ).find(item => item.event_id === task.source_id)
+    if (candidate) return { candidate, snapshot_message_id: message.id }
+  }
+  return null
+}
+
+async function getProactiveExecutionContext(task, candidate, now) {
+  const { data: latestUserMessage, error: latestUserError } = await supabase
+    .from("messages")
+    .select("id,created_at")
+    .eq("user_id", task.user_id)
+    .eq("conversation_id", task.conversation_id)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (latestUserError) throw latestUserError
+
+  const latestUserAt = latestUserMessage?.created_at
+    ? new Date(latestUserMessage.created_at).getTime()
+    : null
+  const nowTime = new Date(now).getTime()
+  const sourceIds = new Set((candidate?.source_message_ids || []).map(String))
+  const userCurrentlyActive = Boolean(
+    latestUserAt
+    && nowTime - latestUserAt < 15 * 60 * 1000
+  )
+  const conversationMovedOn = Boolean(
+    latestUserMessage?.id
+    && !sourceIds.has(String(latestUserMessage.id))
+    && latestUserAt > new Date(candidate?.updated_at || 0).getTime()
+  )
+
+  const { data: inactivityTasks, error: inactivityError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,user_id,type,source_type,source_id,status,due_at,payload,created_at")
+    .eq("user_id", task.user_id)
+    .eq("type", "inactivity_reach_out")
+    .in("status", ["pending", "processing"])
+    .lte("due_at", now)
+    .order("due_at", { ascending: true })
+    .limit(1)
+  if (inactivityError) throw inactivityError
+  const inactivityTask = inactivityTasks?.[0] || null
+  const inactivityValidation = inactivityTask
+    ? await validateInactivityReachOutTask(inactivityTask)
+    : { allowed: false }
+
+  const cooldown = await getProactiveMessageCooldown(task)
+  const localDate = getMomentLocalTime(new Date(now)).date
+  const localDayStart = new Date(`${localDate}T00:00:00+08:00`).toISOString()
+  const { count, error: dailyError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", task.user_id)
+    .eq("status", "completed")
+    .not("message_id", "is", null)
+    .gte("completed_at", localDayStart)
+  if (dailyError) throw dailyError
+
+  return {
+    latest_user_message_id: latestUserMessage?.id || null,
+    userCurrentlyActive,
+    conversationMovedOn,
+    quietHours: isProactiveQuietHours(new Date(now)),
+    cooldownActive: Boolean(cooldown),
+    dailyLimitReached: (count || 0) >= 2,
+    inactivityEligible: Boolean(inactivityValidation.allowed),
+    inactivity_task_id: inactivityTask?.id || null,
+  }
+}
+
+async function executeProactiveAttentionWakeup(task) {
+  const evaluatedAt = new Date().toISOString()
+  const latest = await loadLatestProactiveAttentionCandidate(task)
+  if (!latest?.candidate) {
+    const execution = evaluateProactiveAttentionExecution({
+      candidate: null,
+      scheduledFor: task.payload?.scheduled_for || task.due_at,
+      now: evaluatedAt,
+    })
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: { ...(task.payload || {}), execution, no_op_reason: "event_missing" },
+    }
+  }
+
+  const candidate = latest.candidate
+  const nextWakeup = planProactiveAttentionWakeup(candidate, { now: evaluatedAt })
+  if (
+    nextWakeup.scheduled
+    && new Date(nextWakeup.scheduled_for).getTime() > new Date(evaluatedAt).getTime()
+  ) {
+    return {
+      deferred: true,
+      dueAt: nextWakeup.scheduled_for,
+      reason: "candidate_rescheduled",
+      payload: {
+        ...(task.payload || {}),
+        candidate_updated_at: candidate.updated_at,
+        scheduled_for: nextWakeup.scheduled_for,
+        reload_snapshot_message_id: latest.snapshot_message_id,
+        last_reload_at: evaluatedAt,
+      },
+    }
+  }
+
+  const context = await getProactiveExecutionContext(task, candidate, evaluatedAt)
+  const execution = evaluateProactiveAttentionExecution({
+    candidate,
+    scheduledFor: task.payload?.scheduled_for || task.due_at,
+    now: evaluatedAt,
+    ...context,
+  })
+  return {
+    shadowOnly: true,
+    conversationId: task.conversation_id,
+    payload: {
+      ...(task.payload || {}),
+      reload_snapshot_message_id: latest.snapshot_message_id,
+      execution_context: context,
+      execution,
+      no_op_reason: execution.would_send ? null : execution.execution_reason,
+    },
+  }
+}
+
 async function executeProactiveTask(task) {
-  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update"].includes(task.type)) {
+  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
+  }
+
+  if (task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE) {
+    return executeProactiveAttentionWakeup(task)
   }
 
   if (task.type === "treehole_autonomous_update") {
@@ -2143,28 +2299,35 @@ async function checkPendingProactiveTasks() {
   if (error) throw error
   if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0 }
 
-  if (isProactiveQuietHours(now)) {
+  const shadowWakeups = pending.filter(item => item.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+  const quietDeferred = pending.filter(item => item.type !== PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+  if (isProactiveQuietHours(now) && quietDeferred.length) {
     const nextDueAt = getNextProactiveMorning(now)
     const { error: deferError } = await supabase
       .from("xiaoc_proactive_tasks")
       .update({ due_at: nextDueAt, updated_at: now.toISOString() })
-      .in("id", pending.map((item) => item.id))
+      .in("id", quietDeferred.map((item) => item.id))
       .eq("status", "pending")
 
     if (deferError) throw deferError
 
-    return { checked: pending.length, completed: 0, deferred: pending.length, failed: 0, nextDueAt }
+    if (!shadowWakeups.length) {
+      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt }
+    }
   }
 
   let completed = 0
+  let deferred = isProactiveQuietHours(now) ? quietDeferred.length : 0
   let failed = 0
 
   const taskPriority = {
-    plan_follow_up: 0,
-    inactivity_reach_out: 1,
-    treehole_autonomous_update: 2,
+    proactive_attention_wakeup: 0,
+    plan_follow_up: 1,
+    inactivity_reach_out: 2,
+    treehole_autonomous_update: 3,
   }
-  const prioritizedPending = [...pending].sort((a, b) =>
+  const processablePending = isProactiveQuietHours(now) ? shadowWakeups : pending
+  const prioritizedPending = [...processablePending].sort((a, b) =>
     (taskPriority[a.type] ?? 9) - (taskPriority[b.type] ?? 9)
   )
 
@@ -2189,10 +2352,12 @@ async function checkPendingProactiveTasks() {
             status: "pending",
             due_at: result.dueAt,
             last_error: result.reason,
+            ...(result.payload ? { payload: result.payload } : {}),
             updated_at: new Date().toISOString(),
           })
           .eq("id", task.id)
           .eq("status", "processing")
+        deferred += 1
         continue
       }
 
@@ -2213,8 +2378,9 @@ async function checkPendingProactiveTasks() {
         .update({
           status: "completed",
           completed_at: new Date().toISOString(),
-          message_id: result.messageId,
-          conversation_id: result.conversationId,
+          message_id: result.shadowOnly ? null : result.messageId,
+          conversation_id: result.conversationId || task.conversation_id,
+          ...(result.payload ? { payload: result.payload } : {}),
           updated_at: new Date().toISOString(),
         })
         .eq("id", task.id)
@@ -2249,7 +2415,7 @@ async function checkPendingProactiveTasks() {
     }
   }
 
-  return { checked: pending.length, completed, deferred: 0, failed }
+  return { checked: pending.length, completed, deferred, failed }
 }
 
 function normalizeMomentCandidateText(value) {
