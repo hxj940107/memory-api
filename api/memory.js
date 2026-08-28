@@ -36,6 +36,7 @@ import {
   buildProactiveAttentionIntent,
   buildProactiveAttentionPrompt,
   candidateSnapshotAfterProactiveSend,
+  evaluateLimitedProactiveAttentionRollout,
   initialProactiveAttentionSendDiagnostics,
   validateFinalProactiveAttentionRecheck,
 } from "../lib/proactiveAttentionSend.js"
@@ -2106,7 +2107,14 @@ async function loadLatestProactiveAttentionCandidate(task) {
       message.metadata.proactiveAttentionCandidates
     )
     const candidate = candidates.find(item => item.event_id === task.source_id)
-    if (candidate) return { candidate, candidates, snapshot_message_id: message.id }
+    if (candidate) {
+      return {
+        candidate,
+        candidates,
+        snapshot_message_id: message.id,
+        snapshot_metadata: message.metadata || {},
+      }
+    }
   }
   return null
 }
@@ -2308,11 +2316,18 @@ async function executeProactiveAttentionWakeup(task) {
   })
 
   const sendEnabled = isProactiveAttentionSendEnabled()
+  const rollout = evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution,
+    snapshotMetadata: latest.snapshot_metadata,
+    now: evaluatedAt,
+  })
   const sendDiagnostics = initialProactiveAttentionSendDiagnostics({
     eventId: candidate.event_id,
     taskId: task.id,
     execution,
     sendEnabled,
+    rollout,
   })
   const basePayload = {
     ...(task.payload || {}),
@@ -2321,16 +2336,39 @@ async function executeProactiveAttentionWakeup(task) {
     execution,
   }
 
+  if (
+    execution.would_send
+    && rollout.rollout_rejection_reason === "too_early_for_follow_up"
+    && rollout.next_evaluation_at
+  ) {
+    return {
+      deferred: true,
+      dueAt: rollout.next_evaluation_at,
+      reason: "too_early_for_follow_up",
+      payload: {
+        ...basePayload,
+        proactiveAttentionSend: sendDiagnostics,
+        rollout,
+        no_op_reason: "too_early_for_follow_up",
+      },
+    }
+  }
+
   // Production remains Shadow unless the explicit server-side flag is exactly true.
   // Keep this branch before context loading, generation, or message persistence.
-  if (!sendEnabled || !execution.would_send) {
+  if (!sendEnabled || !execution.would_send || !rollout.rollout_eligible) {
     return {
       shadowOnly: true,
       conversationId: task.conversation_id,
       payload: {
         ...basePayload,
         proactiveAttentionSend: sendDiagnostics,
-        no_op_reason: execution.would_send ? "send_disabled" : execution.execution_reason,
+        rollout,
+        no_op_reason: !execution.would_send
+          ? execution.execution_reason
+          : !rollout.rollout_eligible
+            ? rollout.rollout_rejection_reason
+            : "send_disabled",
       },
     }
   }
@@ -2344,6 +2382,8 @@ async function executeProactiveAttentionWakeup(task) {
       send_claimed: true,
       send_succeeded: true,
       message_id: existingMessage.id,
+      last_proactive_mention_updated: true,
+      inactivity_ownership_outcome: "proactive_event_send_consumed",
     }
     await finalizeProactiveAttentionMessageMetadata({
       message: existingMessage,
@@ -2398,6 +2438,12 @@ async function executeProactiveAttentionWakeup(task) {
     now: finalAt,
     ...finalContext,
   })
+  const finalRollout = evaluateLimitedProactiveAttentionRollout({
+    candidate: finalLatest?.candidate || null,
+    execution: finalExecution,
+    snapshotMetadata: finalLatest?.snapshot_metadata || null,
+    now: finalAt,
+  })
   const finalRecheck = validateFinalProactiveAttentionRecheck({
     beforeCandidate: candidate,
     beforeLatestUserMessageId: context.latest_user_message_id,
@@ -2409,8 +2455,14 @@ async function executeProactiveAttentionWakeup(task) {
     ...generatingDiagnostics,
     final_recheck_passed: finalRecheck.passed,
     final_recheck_reason: finalRecheck.reason,
+    rollout_eligible: finalRollout.rollout_eligible,
+    rollout_rejection_reason: finalRollout.rollout_rejection_reason,
+    rollout_evaluated_at: finalRollout.evaluated_at,
   }
-  if (!finalRecheck.passed) {
+  if (!finalRecheck.passed || !finalRollout.rollout_eligible) {
+    const rejectionReason = finalRecheck.passed
+      ? finalRollout.rollout_rejection_reason
+      : finalRecheck.reason
     return {
       shadowOnly: true,
       conversationId: task.conversation_id,
@@ -2418,8 +2470,9 @@ async function executeProactiveAttentionWakeup(task) {
         ...basePayload,
         final_execution_context: finalContext,
         final_execution: finalExecution,
+        final_rollout: finalRollout,
         proactiveAttentionSend: checkedDiagnostics,
-        no_op_reason: finalRecheck.reason,
+        no_op_reason: rejectionReason,
       },
     }
   }
@@ -2468,6 +2521,8 @@ async function executeProactiveAttentionWakeup(task) {
     ...claimedDiagnostics,
     send_succeeded: true,
     message_id: messageId,
+    last_proactive_mention_updated: true,
+    inactivity_ownership_outcome: "proactive_event_send_consumed",
   }
   try {
     await finalizeProactiveAttentionMessageMetadata({

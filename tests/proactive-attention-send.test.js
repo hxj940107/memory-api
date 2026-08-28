@@ -7,6 +7,7 @@ import {
   buildProactiveAttentionIntent,
   buildProactiveAttentionPrompt,
   candidateSnapshotAfterProactiveSend,
+  evaluateLimitedProactiveAttentionRollout,
   initialProactiveAttentionSendDiagnostics,
   validateFinalProactiveAttentionRecheck,
 } from "../lib/proactiveAttentionSend.js"
@@ -19,6 +20,10 @@ const candidate = {
   source_message_ids: ["user-1"],
   last_user_update: { message_id: "user-1", text: "下午去做雾化" },
   expected_window: { start: "2026-08-28T07:00:00.000Z", end: "2026-08-28T09:00:00.000Z" },
+  time_grounding: {
+    source: "user_explicit_time",
+    missing_user_message_time: false,
+  },
   updated_at: "2026-08-28T06:00:00.000Z",
 }
 
@@ -101,15 +106,87 @@ test("final recheck blocks candidate changes, user activity, and execution-polic
 })
 
 test("shadow diagnostics show generation was not attempted", () => {
+  const rollout = evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution,
+    now: "2026-08-28T08:00:00.000Z",
+  })
   const diagnostics = initialProactiveAttentionSendDiagnostics({
     eventId: "event-1",
     taskId: "task-1",
     execution,
     sendEnabled: false,
+    rollout,
   })
   assert.equal(diagnostics.execution_mode, "shadow")
   assert.equal(diagnostics.generation_attempted, false)
   assert.equal(diagnostics.generation_skipped_reason, "send_disabled")
+  assert.equal(diagnostics.rollout_eligible, true)
+  assert.equal(diagnostics.inactivity_ownership_outcome, "not_consumed")
+})
+
+test("limited rollout waits until a natural point inside a complete grounded window", () => {
+  const atStart = evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution,
+    now: "2026-08-28T07:00:01.000Z",
+  })
+  assert.equal(atStart.rollout_rejection_reason, "too_early_for_follow_up")
+  assert.equal(atStart.next_evaluation_at, "2026-08-28T08:00:00.000Z")
+
+  const naturalTime = evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution,
+    now: "2026-08-28T08:00:00.000Z",
+  })
+  assert.equal(naturalTime.rollout_eligible, true)
+  assert.equal(naturalTime.reason, "eligible_limited_rollout")
+})
+
+test("limited rollout rejects missing, start-only, and ungrounded windows", () => {
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate: { ...candidate, expected_window: { start: null, end: null } },
+    execution,
+  }).rollout_rejection_reason, "missing_expected_window")
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate: { ...candidate, expected_window: { start: candidate.expected_window.start, end: null } },
+    execution,
+  }).rollout_rejection_reason, "incomplete_expected_window")
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate: { ...candidate, time_grounding: { source: "insufficient_time_evidence" } },
+    execution,
+  }).rollout_rejection_reason, "unsafe_time_grounding")
+})
+
+test("limited rollout rejects terminal, unsafe-history, and non-winning executions", () => {
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate: { ...candidate, state: "completed", attention_status: "closed" },
+    execution,
+  }).rollout_rejection_reason, "terminal_or_closed_event")
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution,
+    snapshotMetadata: {
+      proactiveAttentionDiagnostics: [{
+        matched_event_id: candidate.event_id,
+        admission_result: "rejected",
+        rejection_reason: "ambiguous_event_match",
+      }],
+    },
+  }).rollout_rejection_reason, "unsafe_candidate_history")
+  for (const reason of ["user_currently_active", "quiet_hours", "proactive_cooldown", "daily_proactive_limit"]) {
+    const result = evaluateLimitedProactiveAttentionRollout({
+      candidate,
+      execution: { ...execution, would_send: false, arbitration: "neither", execution_reason: reason },
+      now: "2026-08-28T08:00:00.000Z",
+    })
+    assert.equal(result.rollout_rejection_reason, reason)
+  }
+  assert.equal(evaluateLimitedProactiveAttentionRollout({
+    candidate,
+    execution: { ...execution, would_send: false, arbitration: "inactivity_wins", execution_reason: "inactivity_wins" },
+    now: "2026-08-28T08:00:00.000Z",
+  }).rollout_eligible, false)
 })
 
 test("API keeps OFF short-circuit before generation and uses task-id message idempotency", () => {
@@ -118,8 +195,10 @@ test("API keeps OFF short-circuit before generation and uses task-id message ide
     source.indexOf("async function executeProactiveAttentionWakeup"),
     source.indexOf("async function executeProactiveTask")
   )
-  assert.ok(wakeup.indexOf("if (!sendEnabled || !execution.would_send)") < wakeup.indexOf("generateProactiveAttentionMessage"))
+  assert.ok(wakeup.indexOf("if (!sendEnabled || !execution.would_send || !rollout.rollout_eligible)") < wakeup.indexOf("generateProactiveAttentionMessage"))
   assert.match(source, /metadata->>proactiveTaskId/)
+  assert.match(source, /ownsProactiveAttentionTaskClaim/)
+  assert.match(source, /proactive_attention_send_attempt_count/)
   assert.match(source, /validateFinalProactiveAttentionRecheck/)
   assert.match(source, /proactiveAttentionCandidates: candidateSnapshotAfterProactiveSend/)
 })
