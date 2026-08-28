@@ -4,7 +4,7 @@
 
 ## 0. 当前交接状态
 
-截至本轮交接，Memory / Context P0、P1、P1.5 Batch 1 与 reliability cleanup 均已完成；P1.5 Batch 2A scheduler wake-up + execution-time Shadow Gate 已在当前工作区实现并通过测试，尚待 commit、部署和生产观察。下一台设备或新的 Codex 窗口应先核对 git 与部署状态，不要重新实现本节列出的能力。
+截至本轮交接，Memory / Context P0、P1、P1.5 Batch 1、reliability cleanup 与 Batch 2A 均已完成；Batch 2A scheduler wake-up + execution-time Shadow Gate 已 commit/push。Batch 2B send path 已在当前工作区实现，但服务器 feature flag 默认关闭，尚未 commit、部署或启用真实发送。下一台设备或新的 Codex 窗口应先核对 git 与部署状态，不要重新实现本节列出的能力。
 
 ### 0.1 已完成
 
@@ -30,6 +30,8 @@ P1 当前已完成：
 - deterministic Shadow Gate 已实现，并显式输出 `eligible_for_proactive_attention`、reason、confidence 与 hard rejection diagnostics。
 - 当前仍是严格 Shadow Mode：candidate snapshot、merge 与 Gate diagnostics 只写 assistant message metadata；不创建 `proactive_attention` task，不发送 event follow-up，不阻塞或改变 `inactivity_reach_out`，不恢复旧 `plan_follow_up` 自动创建，也不改变 cooldown、quiet hours 或 daily limit。
 - P1.5 Batch 2A 已实现：accepted candidate 复用 `xiaoc_proactive_tasks` 按 event ID 维护 wake-up；到期后 reload 最新 candidate，重新执行 Gate、quiet hours、cooldown、daily limit、recent activity 与 inactivity arbitration，并只持久化 `execution_mode=shadow` / `would_send` diagnostics。不会生成或发送 event follow-up message。
+- P1.5 Batch 2B send path ready 已在当前工作区实现：只有 `PROACTIVE_ATTENTION_SEND_ENABLED=true` 才能进入生成与消息持久化；env 缺失或其他值均 fail closed。OFF 状态在 generation 前短路，不写 proactive assistant message，也不更新 `last_proactive_mention` 或消费 inactivity ownership。
+- Batch 2B ON 路径复用现有 assistant message persistence，并在生成后重新读取 candidate、最新 user message 与 execution constraints；task processing ownership 丢失、candidate/version 改变、新 user message、terminal/closed、quiet hours、cooldown、daily limit 或 arbitration 改变都会在写消息前停止。task ID message lookup 负责 retry 幂等恢复，成功消息携带完整 candidate snapshot 并推进目标 event 的 `last_proactive_mention`。
 
 本轮 reliability cleanup 已完成、通过测试并 commit/push；下一步是确认或完成生产部署：
 
@@ -51,8 +53,8 @@ P1 当前已完成：
 
 以下项目尚未实施，不得与上述已完成状态混淆：
 
-- P1.5 Batch 2A commit、部署与生产 Shadow execution 观察；
-- P1.5 Batch 2B 真实发送（必须晚于 Batch 2A 生产验证）；
+- P1.5 Batch 2B commit、部署并在 flag OFF 下观察 send diagnostics；
+- P1.5 Batch 2B 真实发送 rollout（独立步骤，必须显式开启服务器 flag）；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。
@@ -74,8 +76,8 @@ Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。�
 - reliability cleanup 已位于 `d955608`；换设备后先核对生产部署状态，禁止重新施工 P0、P1、P1.5 Batch 1 或本轮 cleanup；
 - `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
-- Batch 2A 只允许 scheduler wake-up 与 execution-time Shadow decision；不得把 `would_send=true` 接入消息生成或发送链路。Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
-- 当前顺序固定为：Batch 2A commit/部署 → 生产观察 wake-up / reload / Gate / arbitration / idempotency → 验证通过后再设计 Batch 2B 真实发送 → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
+- Batch 2B 部署时必须保持 `PROACTIVE_ATTENTION_SEND_ENABLED` 缺失或为 `false`；`would_send=true` 只形成 OFF diagnostics，不能自动生成或发送。Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
+- 当前顺序固定为：Batch 2B commit/部署（flag OFF）→ 生产观察 wake-up / Gate / arbitration / send-disabled diagnostics → 独立真实发送 rollout → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
 
 ## 1. 当前核心设计原则
 
@@ -437,12 +439,12 @@ Main Chat Prompt
 - segment summary、covered message IDs 与旧摘要压缩；
 - dynamic context budget。
 
-### P1.5：当前 Shadow 验证顺序
+### P1.5：当前 Batch 2B rollout 顺序
 
-- Batch 2A 当前工作区实现已完成，先 commit、部署并观察真实 wake-up；
-- 审计 task dedupe、latest candidate reload、terminal/reschedule no-op、execution Gate 与 inactivity arbitration diagnostics；
-- Batch 2A 仍严格禁止真实 event follow-up message；
-- 生产验证通过后再进入 Batch 2B，不得提前打开发送路径。
+- Batch 2A 已 commit/push，保留 task dedupe、latest candidate reload、terminal/reschedule no-op、execution Gate 与 inactivity arbitration 边界；
+- Batch 2B send path ready 部署时保持服务器 flag OFF，先观察 `proactiveAttentionSend` 的 `send_disabled` diagnostics；
+- 真正开启发送属于独立 rollout，开启前再次确认幂等恢复、final recheck、失败重试和 inactivity collision；
+- flag OFF 时真实 event proactive message 必须为 0。
 
 ### P1：更后续
 

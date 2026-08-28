@@ -9,6 +9,7 @@ import {
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   TREEHOLE_AUTONOMOUS_POLICY,
   getInactivityReachOutDelayMinutes,
+  isProactiveAttentionSendEnabled,
   normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
@@ -31,6 +32,13 @@ import {
   evaluateProactiveAttentionExecution,
   planProactiveAttentionWakeup,
 } from "../lib/proactiveAttentionScheduler.js"
+import {
+  buildProactiveAttentionIntent,
+  buildProactiveAttentionPrompt,
+  candidateSnapshotAfterProactiveSend,
+  initialProactiveAttentionSendDiagnostics,
+  validateFinalProactiveAttentionRecheck,
+} from "../lib/proactiveAttentionSend.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2094,12 +2102,98 @@ async function loadLatestProactiveAttentionCandidate(task) {
   if (error) throw error
   for (const message of data || []) {
     if (!Array.isArray(message.metadata?.proactiveAttentionCandidates)) continue
-    const candidate = normalizeProactiveAttentionCandidates(
+    const candidates = normalizeProactiveAttentionCandidates(
       message.metadata.proactiveAttentionCandidates
-    ).find(item => item.event_id === task.source_id)
-    if (candidate) return { candidate, snapshot_message_id: message.id }
+    )
+    const candidate = candidates.find(item => item.event_id === task.source_id)
+    if (candidate) return { candidate, candidates, snapshot_message_id: message.id }
   }
   return null
+}
+
+async function findExistingProactiveAttentionMessage(task) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id,metadata,created_at")
+    .eq("user_id", task.user_id)
+    .eq("conversation_id", task.conversation_id)
+    .eq("role", "assistant")
+    .eq("metadata->>proactiveTaskId", String(task.id))
+    .eq("metadata->>proactiveType", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data || null
+}
+
+async function ownsProactiveAttentionTaskClaim(task) {
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id")
+    .eq("id", task.id)
+    .eq("status", "processing")
+    .maybeSingle()
+  if (error) throw error
+  return Boolean(data?.id)
+}
+
+async function finalizeProactiveAttentionMessageMetadata({
+  message,
+  task,
+  latest,
+  diagnostics,
+  sentAt,
+}) {
+  let existingMetadata = message.metadata
+  if (!existingMetadata) {
+    const { data, error: loadError } = await supabase
+      .from("messages")
+      .select("metadata")
+      .eq("id", message.id)
+      .eq("user_id", task.user_id)
+      .maybeSingle()
+    if (loadError) throw loadError
+    existingMetadata = data?.metadata || {}
+  }
+  const metadata = {
+    ...existingMetadata,
+    proactive: true,
+    proactiveType: PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
+    proactiveTaskId: task.id,
+    proactiveAttentionEventId: task.source_id,
+    proactiveAttentionSend: diagnostics,
+    proactiveAttentionCandidates: candidateSnapshotAfterProactiveSend({
+      candidates: latest.candidates,
+      eventId: task.source_id,
+      messageId: message.id,
+      taskId: task.id,
+      sentAt,
+    }),
+  }
+  const { error } = await supabase
+    .from("messages")
+    .update({ metadata })
+    .eq("id", message.id)
+    .eq("user_id", task.user_id)
+  if (error) throw error
+}
+
+async function generateProactiveAttentionMessage(intent, now) {
+  const local = getMomentLocalTime(new Date(now))
+  const raw = await callSmallLLM(buildProactiveAttentionPrompt({
+    systemPrompt,
+    intent,
+    localTime: `${local.date} ${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`,
+  }), {
+    model: AI_MODELS.chat,
+    max_tokens: 90,
+    temperature: 0.45,
+  })
+  const content = cleanProactiveMessage(raw)
+  if (!content || isBadProactiveMessage(content)) {
+    throw new Error("invalid proactive attention message")
+  }
+  return content
 }
 
 async function getProactiveExecutionContext(task, candidate, now) {
@@ -2212,15 +2306,195 @@ async function executeProactiveAttentionWakeup(task) {
     now: evaluatedAt,
     ...context,
   })
-  return {
-    shadowOnly: true,
+
+  const sendEnabled = isProactiveAttentionSendEnabled()
+  const sendDiagnostics = initialProactiveAttentionSendDiagnostics({
+    eventId: candidate.event_id,
+    taskId: task.id,
+    execution,
+    sendEnabled,
+  })
+  const basePayload = {
+    ...(task.payload || {}),
+    reload_snapshot_message_id: latest.snapshot_message_id,
+    execution_context: context,
+    execution,
+  }
+
+  // Production remains Shadow unless the explicit server-side flag is exactly true.
+  // Keep this branch before context loading, generation, or message persistence.
+  if (!sendEnabled || !execution.would_send) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        proactiveAttentionSend: sendDiagnostics,
+        no_op_reason: execution.would_send ? "send_disabled" : execution.execution_reason,
+      },
+    }
+  }
+
+  const existingMessage = await findExistingProactiveAttentionMessage(task)
+  if (existingMessage) {
+    const recoveredDiagnostics = {
+      ...sendDiagnostics,
+      generation_skipped_reason: "existing_message_recovered",
+      final_recheck_reason: "existing_message_recovered",
+      send_claimed: true,
+      send_succeeded: true,
+      message_id: existingMessage.id,
+    }
+    await finalizeProactiveAttentionMessageMetadata({
+      message: existingMessage,
+      task,
+      latest,
+      diagnostics: recoveredDiagnostics,
+      sentAt: existingMessage.created_at || evaluatedAt,
+    })
+    return {
+      messageId: existingMessage.id,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        proactiveAttentionSend: recoveredDiagnostics,
+        no_op_reason: null,
+      },
+    }
+  }
+
+  const recentContext = await getRecentInactivityContext(task)
+  const intent = buildProactiveAttentionIntent({
     conversationId: task.conversation_id,
+    candidate,
+    execution,
+    recentMessages: recentContext.messages,
+    createdAt: evaluatedAt,
+  })
+  const generatingDiagnostics = {
+    ...sendDiagnostics,
+    generation_attempted: true,
+    generation_skipped_reason: null,
+  }
+  let content
+  try {
+    content = await generateProactiveAttentionMessage(intent, evaluatedAt)
+  } catch (error) {
+    error.proactiveAttentionSendDiagnostics = {
+      ...generatingDiagnostics,
+      final_recheck_reason: "generation_failed",
+    }
+    throw error
+  }
+
+  const finalAt = new Date().toISOString()
+  const finalLatest = await loadLatestProactiveAttentionCandidate(task)
+  const finalContext = finalLatest?.candidate
+    ? await getProactiveExecutionContext(task, finalLatest.candidate, finalAt)
+    : { latest_user_message_id: null }
+  const finalExecution = evaluateProactiveAttentionExecution({
+    candidate: finalLatest?.candidate || null,
+    scheduledFor: task.payload?.scheduled_for || task.due_at,
+    now: finalAt,
+    ...finalContext,
+  })
+  const finalRecheck = validateFinalProactiveAttentionRecheck({
+    beforeCandidate: candidate,
+    beforeLatestUserMessageId: context.latest_user_message_id,
+    afterCandidate: finalLatest?.candidate,
+    afterLatestUserMessageId: finalContext.latest_user_message_id,
+    afterExecution: finalExecution,
+  })
+  const checkedDiagnostics = {
+    ...generatingDiagnostics,
+    final_recheck_passed: finalRecheck.passed,
+    final_recheck_reason: finalRecheck.reason,
+  }
+  if (!finalRecheck.passed) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        final_execution_context: finalContext,
+        final_execution: finalExecution,
+        proactiveAttentionSend: checkedDiagnostics,
+        no_op_reason: finalRecheck.reason,
+      },
+    }
+  }
+
+  const sentAt = new Date().toISOString()
+  const claimedDiagnostics = {
+    ...checkedDiagnostics,
+    send_claimed: true,
+    send_attempted: true,
+  }
+  if (!await ownsProactiveAttentionTaskClaim(task)) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        proactiveAttentionSend: {
+          ...checkedDiagnostics,
+          final_recheck_passed: false,
+          final_recheck_reason: "send_claim_lost",
+        },
+        no_op_reason: "send_claim_lost",
+      },
+    }
+  }
+  let messageId
+  try {
+    messageId = await saveProactiveMessage({
+      user_id: task.user_id,
+      conversation_id: task.conversation_id,
+      content,
+      task,
+      metadata: {
+        proactiveAttentionEventId: candidate.event_id,
+        proactiveAttentionSend: claimedDiagnostics,
+      },
+    })
+  } catch (error) {
+    error.proactiveAttentionSendDiagnostics = {
+      ...claimedDiagnostics,
+      final_recheck_reason: "message_persistence_failed",
+    }
+    throw error
+  }
+  const completedDiagnostics = {
+    ...claimedDiagnostics,
+    send_succeeded: true,
+    message_id: messageId,
+  }
+  try {
+    await finalizeProactiveAttentionMessageMetadata({
+      message: { id: messageId },
+      task,
+      latest: finalLatest,
+      diagnostics: completedDiagnostics,
+      sentAt,
+    })
+  } catch (error) {
+    error.proactiveAttentionSendDiagnostics = {
+      ...claimedDiagnostics,
+      message_id: messageId,
+      final_recheck_reason: "message_metadata_finalize_failed",
+    }
+    throw error
+  }
+  return {
+    messageId,
+    conversationId: task.conversation_id,
+    content,
     payload: {
-      ...(task.payload || {}),
-      reload_snapshot_message_id: latest.snapshot_message_id,
-      execution_context: context,
-      execution,
-      no_op_reason: execution.would_send ? null : execution.execution_reason,
+      ...basePayload,
+      final_execution_context: finalContext,
+      final_execution: finalExecution,
+      proactiveAttentionSend: completedDiagnostics,
+      no_op_reason: null,
     },
   }
 }
@@ -2402,12 +2676,26 @@ async function checkPendingProactiveTasks() {
     } catch (taskError) {
       failed += 1
       console.error("xiaoc proactive task failed:", taskError)
+      const isAttentionSendFailure = task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE
+        && isProactiveAttentionSendEnabled()
+      const sendAttemptCount = Number(task.payload?.proactive_attention_send_attempt_count || 0) + 1
+      const retryAttentionSend = isAttentionSendFailure && sendAttemptCount < 3
       await supabase
         .from("xiaoc_proactive_tasks")
         .update({
-          status: "pending",
+          status: retryAttentionSend || !isAttentionSendFailure ? "pending" : "skipped",
           due_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           last_error: taskError.message || "proactive task failed",
+          ...(isAttentionSendFailure ? {
+            payload: {
+              ...(task.payload || {}),
+              proactive_attention_send_attempt_count: sendAttemptCount,
+              proactive_attention_send_last_error: trimText(taskError.message, 240),
+              ...(taskError.proactiveAttentionSendDiagnostics ? {
+                proactiveAttentionSend: taskError.proactiveAttentionSendDiagnostics,
+              } : {}),
+            },
+          } : {}),
           updated_at: new Date().toISOString(),
         })
         .eq("id", task.id)
