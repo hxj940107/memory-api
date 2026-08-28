@@ -378,6 +378,7 @@ async function updateActiveConversationContext({
   previous_proactive_candidates = [],
   conversation_id,
   recent_user_source_ledger = [],
+  contextual_assistant_message = null,
   persist_active_context = true,
 }) {
   let nextActiveContext = resolveActiveConversationContext(
@@ -421,6 +422,7 @@ async function updateActiveConversationContext({
         },
         conversationId: conversation_id,
         recentUserSourceLedger: recent_user_source_ledger,
+        contextualAssistantMessage: contextual_assistant_message,
       })
       proactiveCandidates = applied.candidates
       const accepted = applied.diagnostics.filter(item => item.admission_result === "accepted")
@@ -3305,6 +3307,17 @@ console.log("======================================\n")
             .map(item => ({ id: item.id, role: "user", content: trimText(item.content, 240), created_at: item.created_at || null })),
           { id: userMessageId, role: "user", content: trimText(message, 800), created_at: userMessageCreatedAt || null },
         ],
+        contextual_assistant_message: (() => {
+          const lastHistoryMessage = history[history.length - 1]
+          if (lastHistoryMessage?.role !== "assistant" || !lastHistoryMessage?.id) return null
+          return {
+            id: lastHistoryMessage.id,
+            role: "assistant",
+            content: trimText(lastHistoryMessage.content, 600),
+            created_at: lastHistoryMessage.created_at || null,
+            is_immediately_previous: true,
+          }
+        })(),
         persist_active_context: canPersistActiveConversationContext,
       })
 

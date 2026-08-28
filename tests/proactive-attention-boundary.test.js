@@ -34,7 +34,7 @@ assert.doesNotMatch(chat, /PROACTIVE ATTENTION QUEUED/)
 // Inactivity scheduling is independent of Active Context success and is not
 // hidden behind a plan-task branch.
 const schedulingStart = chat.indexOf("await updateActiveConversationContext({")
-const schedulingSource = chat.slice(schedulingStart, schedulingStart + 1800)
+const schedulingSource = chat.slice(schedulingStart, schedulingStart + 2600)
 assert.match(schedulingSource, /active conversation context update failed/)
 assert.match(schedulingSource, /enqueueInactivityReachOutTask/)
 assert.match(schedulingSource, /inactivity reach-out enqueue failed/)
@@ -42,6 +42,9 @@ assert.doesNotMatch(schedulingSource, /if \(planTask\)|else\s*\{[\s\S]*enqueueIn
 assert.match(chat, /proactiveAttentionCandidates/)
 assert.match(chat, /proactiveAttentionDiagnostics/)
 assert.match(chat, /mode: "shadow"/)
+assert.match(schedulingSource, /contextual_assistant_message/)
+assert.match(schedulingSource, /lastHistoryMessage\?\.role !== "assistant"/)
+assert.match(schedulingSource, /is_immediately_previous: true/)
 
 // Removed compatibility helpers and aliases must not remain in production.
 assert.doesNotMatch(productionSources, /filterContextEntries/)

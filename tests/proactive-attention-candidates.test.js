@@ -534,6 +534,13 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
       content: "吃完了！",
       created_at: "2026-08-26T03:00:00.000Z",
     },
+    contextualAssistantMessage: {
+      id: "assistant-nebulizer-context",
+      role: "assistant",
+      content: "下午还要去做雾化吗？",
+      created_at: "2026-08-26T02:59:00.000Z",
+      is_immediately_previous: true,
+    },
     createEventId: () => "must-not-create",
   })
   assert.equal(result.diagnostics.merge_action, "duplicate_terminal_recreation")
@@ -675,6 +682,207 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
     nextOccurrence.candidates.find(item => item.event_id === "event-nebulizer-new").source_message_ids,
     ["message-next-occurrence"]
   )
+}
+
+// A direct reply to the immediately previous, uniquely targeted assistant
+// question may bridge identity for an existing non-terminal update only.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-contextual-nebulizer",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-contextual-update",
+        description: "下午雾化治疗",
+        state: "planned",
+        matchedEventId: "event-contextual-nebulizer",
+      }),
+      expected_window: {
+        start: "2026-08-26T07:00:00.000Z",
+        end: "2026-08-26T08:00:00.000Z",
+      },
+      source_evidence: "没呢 三点多再去",
+    },
+    sourceMessage: {
+      id: "message-contextual-update",
+      role: "user",
+      content: "没呢 三点多再去",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-nebulizer-question",
+      role: "assistant",
+      content: "去做雾化了吗？",
+      created_at: "2026-08-26T05:32:00.000Z",
+      is_immediately_previous: true,
+    },
+    now: () => "2026-08-26T05:33:01.000Z",
+  })
+  const event = result.candidates[0]
+  assert.equal(result.diagnostics.admission_reason, "accepted_contextual_existing_update")
+  assert.equal(result.diagnostics.contextual_assistant_message_id, "assistant-nebulizer-question")
+  assert.equal(result.diagnostics.contextual_referent_verified, true)
+  assert.equal(result.diagnostics.identity_source, "assistant_question_existing_event")
+  assert.equal(result.diagnostics.fact_source, "current_user_message")
+  assert.equal(event.event_id, "event-contextual-nebulizer")
+  assert.deepEqual(event.source_message_ids, ["message-1", "message-contextual-update"])
+  assert.deepEqual(event.expected_window, {
+    start: "2026-08-26T07:00:00.000Z",
+    end: "2026-08-26T08:00:00.000Z",
+  })
+}
+
+// The same elliptical reply is insufficient without an adjacent explicit question.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-no-bridge",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-no-bridge",
+        description: "下午雾化治疗",
+        matchedEventId: "event-no-bridge",
+      }),
+      expected_window: {
+        start: "2026-08-26T07:00:00.000Z",
+        end: "2026-08-26T08:00:00.000Z",
+      },
+      source_evidence: "没呢 三点多再去",
+    },
+    sourceMessage: {
+      id: "message-no-bridge",
+      role: "user",
+      content: "没呢 三点多再去",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+  })
+  assert.equal(result.diagnostics.merge_action, "semantic_source_mismatch")
+  assert.equal(result.candidates[0].last_user_update.message_id, "message-1")
+}
+
+// A short terminal reply can use the same verified question bridge.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-contextual-completion",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-contextual-done",
+        description: "下午雾化治疗",
+        state: "completed",
+        matchedEventId: "event-contextual-completion",
+      }),
+      source_evidence: "做完了",
+    },
+    sourceMessage: {
+      id: "message-contextual-done",
+      role: "user",
+      content: "做完了",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-completion-question",
+      role: "assistant",
+      content: "雾化做完了吗？",
+      created_at: "2026-08-26T05:32:00.000Z",
+      is_immediately_previous: true,
+    },
+  })
+  assert.equal(result.diagnostics.admission_reason, "accepted_contextual_existing_update")
+  assert.equal(result.candidates[0].event_id, "event-contextual-completion")
+  assert.equal(result.candidates[0].state, "completed")
+  assert.equal(result.candidates[0].attention_status, "closed")
+}
+
+// A symptom report does not become terminal merely because the assistant asked
+// about the uniquely identified treatment event.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-contextual-symptom",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-contextual-symptom",
+        description: "下午雾化治疗",
+        state: "completed",
+        matchedEventId: "event-contextual-symptom",
+      }),
+      source_evidence: "好像没什么不舒服了",
+    },
+    sourceMessage: {
+      id: "message-contextual-symptom",
+      role: "user",
+      content: "好像没什么不舒服了",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-visit-question",
+      role: "assistant",
+      content: "去做雾化了吗？",
+      created_at: "2026-08-26T05:32:00.000Z",
+      is_immediately_previous: true,
+    },
+  })
+  assert.equal(result.diagnostics.merge_action, "unsupported_terminal_transition")
+  assert.equal(result.candidates[0].state, "planned")
+}
+
+// An assistant question that fits two open events cannot bridge either identity.
+{
+  const first = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    eventId: "event-nebulizer-a",
+  })
+  const second = apply(first.candidates, {
+    id: 2,
+    text: "晚间雾化复诊",
+    eventId: "event-nebulizer-b",
+    now: "2026-08-26T02:00:00.000Z",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: second.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-ambiguous-context",
+        description: "下午雾化治疗",
+        state: "completed",
+        matchedEventId: "event-nebulizer-a",
+      }),
+      source_evidence: "做完了",
+    },
+    sourceMessage: {
+      id: "message-ambiguous-context",
+      role: "user",
+      content: "做完了",
+      created_at: "2026-08-26T05:33:00.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-ambiguous-question",
+      role: "assistant",
+      content: "雾化做完了吗？",
+      created_at: "2026-08-26T05:32:00.000Z",
+      is_immediately_previous: true,
+    },
+  })
+  assert.equal(result.diagnostics.merge_action, "ambiguous_event_match")
+  assert.equal(result.candidates.find(item => item.event_id === "event-nebulizer-a").state, "planned")
 }
 
 console.log("proactive attention candidate tests passed")
