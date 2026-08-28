@@ -3,6 +3,7 @@ import {
   selectSummaryBatch,
   splitOversizedSummaryMessage,
   processSummaryBatch,
+  shouldRunSummaryBatch,
 } from "../lib/summaryBatch.js"
 
 const makeMessage = (id, content) => ({
@@ -11,6 +12,60 @@ const makeMessage = (id, content) => ({
   content,
   created_at: `2026-08-18T00:00:${String(id).padStart(2, "0")}.000Z`,
 })
+
+{
+  const decision = shouldRunSummaryBatch([
+    makeMessage(1, "少量新消息"),
+    makeMessage(2, "继续积累"),
+  ], { minMessages: 8, forceChars: 4200, forceTokens: 900 })
+  assert.equal(decision.shouldRun, false)
+  assert.equal(decision.reason, "summary_debounced")
+}
+
+{
+  const messages = Array.from({ length: 8 }, (_, index) =>
+    makeMessage(index + 1, "达到现有消息间隔")
+  )
+  const decision = shouldRunSummaryBatch(messages, {
+    minMessages: 8,
+    forceChars: 4200,
+    forceTokens: 900,
+  })
+  assert.equal(decision.shouldRun, true)
+  assert.equal(decision.reason, "unsummarized_message_threshold")
+
+  const batch = selectSummaryBatch(messages)
+  assert.deepEqual(
+    batch.messages.map(item => item.id),
+    messages.map(item => item.id)
+  )
+}
+
+{
+  const accumulating = Array.from({ length: 8 }, (_, index) =>
+    makeMessage(index + 1, "连续但尚未达到安全阈值的消息")
+  )
+  for (let count = 1; count < 8; count += 1) {
+    assert.equal(shouldRunSummaryBatch(accumulating.slice(0, count), {
+      minMessages: 8,
+      forceChars: 4200,
+      forceTokens: 900,
+    }).shouldRun, false)
+  }
+  assert.equal(shouldRunSummaryBatch(accumulating, {
+    minMessages: 8,
+    forceChars: 4200,
+    forceTokens: 900,
+  }).shouldRun, true)
+}
+
+{
+  const decision = shouldRunSummaryBatch([
+    makeMessage(1, "长消息".repeat(1500)),
+  ], { minMessages: 8, forceChars: 4200, forceTokens: 900 })
+  assert.equal(decision.shouldRun, true)
+  assert.equal(decision.reason, "unsummarized_token_threshold")
+}
 
 {
   const messages = [makeMessage(1, "第一条"), makeMessage(2, "第二条")]

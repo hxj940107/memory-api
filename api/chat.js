@@ -105,6 +105,10 @@ import {
   isGeneratedFileOutputComplete,
   parseGeneratedFileRequest,
 } from "../lib/generatedFiles.js"
+import {
+  completeJudgePrefilterShadow,
+  evaluateJudgePrefilterShadow,
+} from "../lib/judgePrefilterShadow.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -335,6 +339,12 @@ ${JSON.stringify(recentUserSourceLedger)}
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
   })
+  parsed.diagnostics.usage = {
+    request_purpose: "active_context_and_proactive_event_judge",
+    model: AI_MODELS.memoryJudge,
+    ...buildPromptCacheUsageLog(raw.usage),
+  }
+  console.log("AI TASK USAGE:", parsed.diagnostics.usage)
   const groundedResults = parsed.proactiveEventProposals.map(proposal => (
     normalizeProactiveEventWindow(proposal, {
       serverNow: new Date().toISOString(),
@@ -405,6 +415,18 @@ async function updateActiveConversationContext({
     error_code: null,
     raw_output_summary: null,
   }
+  const judgePrefilter = evaluateJudgePrefilterShadow({
+    message,
+    previousActiveContext: previous_active_context,
+    previousProactiveCandidates: proactiveCandidates,
+    contextualAssistantMessage: contextual_assistant_message,
+  })
+  let judgePrefilterDiagnostics = completeJudgePrefilterShadow({
+    prefilter: judgePrefilter,
+    previousActiveContext: previous_active_context,
+    nextActiveContext,
+    mergeDiagnostics: proactiveMergeDiagnostics,
+  })
 
   try {
     const judged = await judgeActiveConversationContext({
@@ -460,6 +482,12 @@ async function updateActiveConversationContext({
         raw_output_summary: judgeDiagnostics.raw_output_summary,
       }
     }
+    judgePrefilterDiagnostics = completeJudgePrefilterShadow({
+      prefilter: judgePrefilter,
+      previousActiveContext: previous_active_context,
+      nextActiveContext,
+      mergeDiagnostics: proactiveMergeDiagnostics,
+    })
   } catch (err) {
     console.error("active conversation context judge failed:", err)
     judgeDiagnostics = {
@@ -472,6 +500,12 @@ async function updateActiveConversationContext({
       event_id: null,
       merge_action: "judge_failed",
       error_code: judgeDiagnostics.error_code,
+    }
+    judgePrefilterDiagnostics = {
+      ...judgePrefilterDiagnostics,
+      judge_actually_called: true,
+      judge_failed: true,
+      dangerous_false_skip: false,
     }
   }
 
@@ -579,6 +613,7 @@ async function updateActiveConversationContext({
           diagnostics: proactiveDiagnostics,
           mergeDiagnostics: proactiveMergeDiagnostics,
           judgeDiagnostics,
+          judgePrefilterDiagnostics,
           activeProvenanceDiagnostics,
           schedulingDiagnostics,
         }
@@ -793,6 +828,7 @@ async function saveActiveConversationContext(messageId, context, proactiveShadow
                 mode: "shadow",
                 merge: proactiveShadow.mergeDiagnostics || null,
                 judge: proactiveShadow.judgeDiagnostics || null,
+                prefilter: proactiveShadow.judgePrefilterDiagnostics || null,
                 active_provenance: proactiveShadow.activeProvenanceDiagnostics || [],
                 scheduling: proactiveShadow.schedulingDiagnostics || [],
                 evaluated_at: new Date().toISOString(),
@@ -3238,7 +3274,7 @@ console.log("======================================\n")
 
       void (async () => {
         try {
-          await fetch(
+          const summaryResponse = await fetch(
             `${process.env.BASE_URL}/api/update-summary`,
             {
               method: "POST",
@@ -3251,8 +3287,16 @@ console.log("======================================\n")
               })
             }
           )
-
-          console.log("SUMMARY UPDATED AFTER REPLY")
+          const summaryResult = await summaryResponse.json().catch(() => null)
+          if (!summaryResponse.ok) {
+            throw new Error(summaryResult?.error || `Summary update failed: ${summaryResponse.status}`)
+          }
+          console.log(
+            summaryResult?.deferred
+              ? "SUMMARY DEFERRED AFTER REPLY"
+              : "SUMMARY UPDATED AFTER REPLY",
+            summaryResult?.reason || null
+          )
         } catch (err) {
           console.error("update-summary after reply failed:", err)
         }

@@ -1,10 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { AI_ENDPOINTS, AI_MODELS, APP_USER } from "../lib/aiConfig.js";
+import {
+  AI_ENDPOINTS,
+  AI_MODELS,
+  APP_USER,
+  CONTEXT_BUDGET,
+  SUMMARY_POLICY,
+} from "../lib/aiConfig.js";
 import {
   SUMMARY_BATCH_MAX_MESSAGES,
   SUMMARY_BATCH_MAX_CHARS,
   SUMMARY_EXISTING_MAX_CHARS,
+  shouldRunSummaryBatch,
   selectSummaryBatch,
   splitOversizedSummaryMessage,
 } from "../lib/summaryBatch.js";
@@ -18,6 +25,7 @@ import {
   validateSummarySemantics,
 } from "../lib/summaryPolicy.js";
 import { selectTokenAwareRecentHistory } from "../lib/dynamicContextBudget.js";
+import { buildPromptCacheUsageLog } from "../lib/promptCaching.js";
 import {
   createSummarySegment,
   mergeCompressedSummarySegments,
@@ -67,14 +75,14 @@ async function updateSummaryWithClaude(
 
     console.log("AI TASK USAGE:", {
       task: "update-summary",
+      requestPurpose: "summary",
       model: AI_MODELS.summary,
       inputMessages: requestMessages.length,
       batchMessages: batchMessageCount,
       inputChars,
       maxTokens: SUMMARY_OUTPUT_MAX_TOKENS,
       success: response.ok && Boolean(summary),
-      inputTokens: data?.usage?.prompt_tokens ?? null,
-      outputTokens: data?.usage?.completion_tokens ?? null,
+      ...buildPromptCacheUsageLog(data?.usage),
       durationMs: Date.now() - startedAt
     })
 
@@ -259,6 +267,48 @@ export default async function handler(req, res) {
         success: true,
         message: "No messages outside recent window require summary.",
         recentMessages: recentSelection.selectedMessages,
+      })
+    }
+
+    const debounce = shouldRunSummaryBatch(summaryEvidence, {
+      minMessages: SUMMARY_POLICY.intervalMessages,
+      forceChars: SUMMARY_POLICY.forceHistoryChars,
+      forceTokens: Math.floor(CONTEXT_BUDGET.recentHistoryTokens * 0.4),
+    })
+    if (!debounce.shouldRun) {
+      console.log("SUMMARY DEBOUNCED:", {
+        conversationId: conversation_id,
+        ...debounce,
+      })
+      return res.status(202).json({
+        success: true,
+        deferred: true,
+        reason: debounce.reason,
+        summaryDebounce: debounce,
+      })
+    }
+
+    const { data: checkpointRow, error: checkpointError } = await supabase
+      .from("conversation_summary")
+      .select("last_summarized_at,updated_at")
+      .eq("conversation_id", conversation_id)
+      .maybeSingle()
+    if (checkpointError) {
+      return res.status(500).json({ error: checkpointError.message })
+    }
+    if (
+      checkpointRow?.last_summarized_at !== (summaryRow?.last_summarized_at || null)
+      || checkpointRow?.updated_at !== (summaryRow?.updated_at || null)
+    ) {
+      console.log("SUMMARY STALE REQUEST SKIPPED:", {
+        conversationId: conversation_id,
+        initialCheckpoint: summaryRow?.last_summarized_at || null,
+        latestCheckpoint: checkpointRow?.last_summarized_at || null,
+      })
+      return res.status(202).json({
+        success: true,
+        deferred: true,
+        reason: "summary_checkpoint_advanced",
       })
     }
 
