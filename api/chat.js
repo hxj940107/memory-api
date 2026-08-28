@@ -227,23 +227,25 @@ async function judgeActiveConversationContext({
 
 只输出 JSON：
 {
-  "active_context":{"items":[]},
   "proactive_event_proposals":[{
     "action":"create_or_update",
     "matched_event_id":null,
     "description":"现实事件本身",
     "state":"planned",
-    "expected_window":{"start":null,"end":null},
     "local_interpreted_window":{"start":null,"end":null},
     "time_grounding_source":"user_explicit_time、relative_to_user_message或insufficient_time_evidence",
     "source_message_id":"当前用户消息ID",
     "follow_up_profile":{"result_expected":false,"result_uncertainty":"none、low或meaningful","significance":"low、medium或high","routine":false,"immediate_continuation":false}
-  }]
+  }],
+  "active_context":{"items":[]}
 }
+
+必须先完整输出 proactive_event_proposals，再输出 active_context。不要改变这个字段顺序，不要输出解释或额外 diagnostics。
 
 Active context 更新原则：
 - active_context.items 必须是更新后的完整状态，不是增量；最多4项。
-- 每项格式：{"topic":"简短主题","context":"一两句必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
+- 每项格式：{"topic":"简短主题","context":"必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
+- 为保证结构化输出稳定：topic 最多24字，context 最多90字，source_evidence 最多36字；不要复述完整消息、已有说明或同一事实。未被本轮更新的旧事项只保留必要 context，source_evidence 可为空字符串。
 - 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
 - “值得保留 active context”与“当前是否适合主动提及”彼此独立；不需要主动提及的事项也可能仍应保留。
 - 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
@@ -271,7 +273,7 @@ Proactive event shadow proposals 原则：
 - completed/cancelled 的既有事件不能因为普通后续消息重新打开。
 - 当前消息明确报告已有事件 completed、cancelled、ongoing 或 rescheduled 时，必须优先输出 matched_event_id 指向既有 candidate 的 update；不能因为 candidate 已满、expected window 已过、candidate age 或 attention_status 而省略 lifecycle proposal。capacity 只限制新事件。
 - “做好啦”“结束啦”“不去了”“弄完了”这类极短状态更新，只有近期真实 user context 中存在明确且唯一的事件指代时才匹配；多个 candidate 都合理时 matched_event_id 必须为 null，不要猜。带有明确事件身份的状态更新可以匹配较旧 candidate。
-- description 描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
+- description 最多80字，只描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
 - local_interpreted_window 先按 Asia/Shanghai 写本地墙上时间，格式 YYYY-MM-DDTHH:mm:ss，不带 Z。相对时间必须锚定当前 user message 的真实发送时间；今天、明天、周五、上午、下午、三点半都先按上海时间理解。不得把上海本地钟点直接写成 Z 时间。
 - window.start 是事件进入合理回访时机的最早时间，window.end 是仍有回访意义的最晚时间；只有一个可靠边界时另一边保持 null。明确“三点半去做”至少可把 start 解释为当天上海时间15:30，不要把事件发生前判成已经适合回访。
 - expected_window 由代码从 local_interpreted_window 转成 UTC；模型不要自行填 UTC。无法可靠确定边界时对应值为 null，不得凭空补精确分钟。start 不得晚于 end。
@@ -289,7 +291,14 @@ Proactive event shadow proposals 原则：
 ${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { items: [] })}
 
 已有 structured proactive event candidates：
-${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates))}
+${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates).map(candidate => ({
+  event_id: candidate.event_id,
+  description: candidate.description,
+  state: candidate.state,
+  attention_status: candidate.attention_status,
+  expected_window: candidate.expected_window,
+  last_user_update_message_id: candidate.last_user_update?.message_id || null,
+})))}
 
 当前用户消息ID：${userMessageId || "unknown"}
 
@@ -306,7 +315,7 @@ ${JSON.stringify(recentUserSourceLedger)}
     ],
     AI_MODELS.memoryJudge,
     {
-      max_tokens: 800,
+      max_tokens: 1800,
       temperature: 0,
       response_format: { type: "json_object" },
     }

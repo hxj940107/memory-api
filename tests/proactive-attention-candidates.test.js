@@ -103,6 +103,66 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
   assert.equal(gate.hard_rejection, true)
 }
 
+// Production regression: a complete lifecycle proposal survives a truncated
+// trailing Active Context section and still closes the original exam event.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "周五早上考试",
+    eventId: "event-friday-exam",
+    now: "2026-08-27T01:00:00.000Z",
+  })
+  const completedProposal = {
+    action: "update",
+    matched_event_id: "event-friday-exam",
+    description: "周五早上的考试已完成",
+    state: "completed",
+    local_interpreted_window: { start: null, end: null },
+    time_grounding_source: "insufficient_time_evidence",
+    source_message_id: "message-exam-done",
+    follow_up_profile: {
+      result_expected: false,
+      result_uncertainty: "none",
+      significance: "medium",
+      routine: false,
+      immediate_continuation: false,
+    },
+  }
+  const raw = `{
+    "proactive_event_proposals":${JSON.stringify([completedProposal])},
+    "active_context":{"items":[{"topic":"考试后状态"`
+  const parsed = parseActiveContextJudgeOutput(raw, { finishReason: "length" })
+  assert.equal(parsed.diagnostics.status, "parse_failed")
+  assert.equal(parsed.proactiveEventProposals.length, 1)
+  assert.equal(parsed.proactiveEventProposals[0].action, "create_or_update")
+
+  const completed = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: parsed.proactiveEventProposals[0],
+    sourceMessage: {
+      id: "message-exam-done",
+      role: "user",
+      content: "考完试了！昨天没睡好，可能有点压力，但考完了！还不错",
+      created_at: "2026-08-28T01:27:34.637Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-exam-done", role: "user" },
+    ],
+    createEventId: () => "must-not-create",
+    now: () => "2026-08-28T01:27:34.637Z",
+  })
+  const event = completed.candidates.find(item => item.event_id === "event-friday-exam")
+  assert.equal(completed.diagnostics.merge_action, "merged_existing")
+  assert.equal(event.event_id, "event-friday-exam")
+  assert.deepEqual(event.source_message_ids, ["message-1", "message-exam-done"])
+  assert.equal(event.state, "completed")
+  assert.equal(event.attention_status, "closed")
+  const gate = evaluateProactiveAttention(event, { now: "2026-08-28T01:28:00.000Z" })
+  assert.equal(gate.reason, "event_completed")
+  assert.equal(gate.hard_rejection, true)
+}
+
 // Existing updates run before new admissions, so one completion can release a slot in the same turn.
 {
   let candidates = []

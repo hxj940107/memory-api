@@ -107,6 +107,87 @@ const validOutput = JSON.stringify({
 }
 
 {
+  const completedProposal = {
+    ...validProposal,
+    action: "update",
+    matched_event_id: "event-exam",
+    description: "周五早上的公司知识考试已完成",
+    state: "completed",
+    source_message_id: "message-exam-completed",
+  }
+  const proposalFirstActiveTruncated = `{
+    "proactive_event_proposals":${JSON.stringify([completedProposal])},
+    "active_context":{"items":[{"topic":"截断中的事项"`
+  const parsed = parseActiveContextJudgeOutput(proposalFirstActiveTruncated, {
+    finishReason: "length",
+  })
+  assert.equal(parsed.diagnostics.status, "parse_failed")
+  assert.equal(parsed.diagnostics.top_level_error_code, "json_object_missing")
+  assert.match(parsed.diagnostics.error_code, /output_truncated/)
+  assert.equal(parsed.activeContext, null)
+  assert.equal(parsed.proactiveEventProposals.length, 1)
+  assert.equal(parsed.proactiveEventProposals[0].state, "completed")
+  assert.equal(parsed.proactiveEventProposals[0].matched_event_id, "event-exam")
+}
+
+{
+  const proposalItselfTruncated = `{
+    "proactive_event_proposals":[{"action":"update","matched_event_id":"event-exam"`
+  const parsed = parseActiveContextJudgeOutput(proposalItselfTruncated, {
+    finishReason: "length",
+  })
+  assert.equal(parsed.diagnostics.status, "parse_failed")
+  assert.deepEqual(parsed.proactiveEventProposals, [])
+  assert.match(parsed.diagnostics.proactive_event_proposal_error_code, /missing/)
+}
+
+{
+  const malformedProposalWithCompleteActive = JSON.stringify({
+    proactive_event_proposals: { invalid: true },
+    active_context: activeContext,
+  })
+  const parsed = parseActiveContextJudgeOutput(malformedProposalWithCompleteActive)
+  assert.equal(parsed.diagnostics.status, "parse_failed")
+  assert.equal(parsed.activeContext.items[0].topic, "周五考试")
+  assert.deepEqual(parsed.proactiveEventProposals, [])
+  assert.equal(
+    parsed.diagnostics.proactive_event_proposal_error_code,
+    "proactive_event_proposals_invalid_shape",
+  )
+}
+
+{
+  const fourProposals = parseActiveContextJudgeOutput(JSON.stringify({
+    proactive_event_proposals: Array.from({ length: 4 }, (_, index) => ({
+      ...validProposal,
+      description: `现实事件${index + 1}`,
+    })),
+    active_context: activeContext,
+  }))
+  assert.equal(fourProposals.diagnostics.proposal_count, 4)
+  assert.equal(fourProposals.proactiveEventProposals.length, 3)
+}
+
+{
+  const maximumActiveItems = parseActiveContextJudgeOutput(JSON.stringify({
+    proactive_event_proposals: [],
+    active_context: {
+      items: Array.from({ length: 4 }, (_, index) => ({
+        topic: `事项${index + 1}`,
+        context: `事项${index + 1}的必要上下文`,
+        status: "active",
+        kind: "plan",
+        source_message_id: `source-${index + 1}`,
+        last_referenced_message_id: `source-${index + 1}`,
+        source_evidence: `证据${index + 1}`,
+      })),
+    },
+  }))
+  assert.equal(maximumActiveItems.diagnostics.status, "parsed")
+  assert.equal(maximumActiveItems.activeContext.items.length, 4)
+}
+
+{
   const parsed = parseActiveContextJudgeOutput("不是 JSON")
   assert.equal(parsed.diagnostics.status, "parse_failed")
   assert.equal(parsed.activeContext, null)
