@@ -327,6 +327,7 @@ ${JSON.stringify(recentUserSourceLedger)}
     normalizeProactiveEventWindow(proposal, {
       serverNow: new Date().toISOString(),
       userMessageCreatedAt,
+      userMessage: message,
     })
   ))
   const groundedProposals = groundedResults.map(result => result.proposal)

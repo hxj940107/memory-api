@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import {
   buildProactiveJudgeTimeAuthority,
   normalizeProactiveEventWindow,
+  resolveChineseWeekdayDate,
 } from "../lib/proactiveEventTemporalGrounding.js"
 
 const messageAt = "2026-08-27T05:45:19.133Z" // 13:45 Asia/Shanghai
@@ -91,6 +92,163 @@ const messageAt = "2026-08-27T05:45:19.133Z" // 13:45 Asia/Shanghai
   const authority = buildProactiveJudgeTimeAuthority({ userMessageCreatedAt: null })
   assert.equal(authority.current_user_message_created_at_utc, null)
   assert.equal(authority.current_user_message_shanghai_time, null)
+}
+
+const fridayMorning = "2026-08-28T01:56:15.201Z" // Friday 09:56 Shanghai
+
+for (const [text, expected] of [
+  ["周六", "2026-08-29"],
+  ["星期六", "2026-08-29"],
+  ["礼拜六", "2026-08-29"],
+  ["周日", "2026-08-30"],
+  ["星期日", "2026-08-30"],
+  ["礼拜天", "2026-08-30"],
+  ["周一", "2026-08-31"],
+  ["周二", "2026-09-01"],
+  ["星期三", "2026-09-02"],
+  ["礼拜四", "2026-09-03"],
+  ["周五", "2026-08-28"],
+  ["这周日", "2026-08-30"],
+  ["本周日", "2026-08-30"],
+  ["下周一", "2026-08-31"],
+  ["下周星期日", "2026-09-06"],
+  ["下周日", "2026-09-06"],
+  ["下下周日", "2026-09-13"],
+]) {
+  const resolved = resolveChineseWeekdayDate({
+    text,
+    userMessageCreatedAt: fridayMorning,
+  })
+  assert.equal(resolved.resolved_local_date, expected, text)
+  assert.equal(resolved.convention, "ISO_8601_MONDAY_1_SUNDAY_7")
+}
+
+{
+  const productionCancellation = normalizeProactiveEventWindow({
+    state: "cancelled",
+    local_interpreted_window: {
+      start: "2026-08-31T12:00:00",
+      end: null,
+    },
+    time_grounding_source: "relative_to_user_message",
+  }, {
+    userMessageCreatedAt: fridayMorning,
+    userMessage: "本来周日约了朋友吃饭的 取消了😑",
+  }).proposal
+  assert.equal(
+    productionCancellation.time_grounding.local_interpreted_window.start,
+    "2026-08-30T12:00:00",
+  )
+  assert.equal(
+    productionCancellation.expected_window.start,
+    "2026-08-30T04:00:00.000Z",
+  )
+  assert.equal(productionCancellation.time_grounding.weekday_grounding.corrected, true)
+}
+
+{
+  const sundayMorning = "2026-08-30T00:00:00.000Z" // Sunday 08:00 Shanghai
+  const sameSundayEvening = resolveChineseWeekdayDate({
+    text: "周日晚上",
+    userMessageCreatedAt: sundayMorning,
+    targetLocalTime: { hour: 20, minute: 0, second: 0 },
+  })
+  assert.equal(sameSundayEvening.resolved_local_date, "2026-08-30")
+
+  const nextSundayAfterPassedTime = resolveChineseWeekdayDate({
+    text: "周日早上",
+    userMessageCreatedAt: "2026-08-30T05:00:00.000Z", // Sunday 13:00 Shanghai
+    targetLocalTime: { hour: 8, minute: 0, second: 0 },
+  })
+  assert.equal(nextSundayAfterPassedTime.resolved_local_date, "2026-09-06")
+}
+
+{
+  const shanghaiAlreadyFriday = resolveChineseWeekdayDate({
+    text: "周六",
+    userMessageCreatedAt: "2026-08-27T17:30:00.000Z", // UTC Thursday, Shanghai Friday
+  })
+  assert.equal(shanghaiAlreadyFriday.anchor_local_date, "2026-08-28")
+  assert.equal(shanghaiAlreadyFriday.resolved_local_date, "2026-08-29")
+}
+
+{
+  const crossYear = resolveChineseWeekdayDate({
+    text: "周五",
+    userMessageCreatedAt: "2026-12-31T02:00:00.000Z", // Thursday Shanghai
+  })
+  assert.equal(crossYear.resolved_local_date, "2027-01-01")
+}
+
+{
+  const explicitTime = normalizeProactiveEventWindow({
+    state: "planned",
+    local_interpreted_window: {
+      start: "2026-08-31T15:00:00",
+      end: "2026-08-31T17:00:00",
+    },
+    time_grounding_source: "relative_to_user_message",
+  }, {
+    userMessageCreatedAt: fridayMorning,
+    userMessage: "周日下午3点去见朋友",
+  }).proposal
+  assert.deepEqual(explicitTime.time_grounding.local_interpreted_window, {
+    start: "2026-08-30T15:00:00",
+    end: "2026-08-30T17:00:00",
+  })
+  assert.deepEqual(explicitTime.expected_window, {
+    start: "2026-08-30T07:00:00.000Z",
+    end: "2026-08-30T09:00:00.000Z",
+  })
+}
+
+{
+  const overnightWindow = normalizeProactiveEventWindow({
+    state: "planned",
+    local_interpreted_window: {
+      start: "2026-08-31T23:00:00",
+      end: "2026-09-01T01:00:00",
+    },
+    time_grounding_source: "relative_to_user_message",
+  }, {
+    userMessageCreatedAt: fridayMorning,
+    userMessage: "周日晚上参加活动",
+  }).proposal
+  assert.deepEqual(overnightWindow.time_grounding.local_interpreted_window, {
+    start: "2026-08-30T23:00:00",
+    end: "2026-08-31T01:00:00",
+  })
+}
+
+{
+  const dateOnly = resolveChineseWeekdayDate({
+    text: "周日",
+    userMessageCreatedAt: fridayMorning,
+  })
+  assert.equal(dateOnly.resolved_local_date, "2026-08-30")
+}
+
+{
+  const earlySeptember = normalizeProactiveEventWindow({
+    state: "planned",
+    local_interpreted_window: {
+      start: "2026-09-01T00:00:00",
+      end: "2026-09-05T23:59:59",
+    },
+    time_grounding_source: "user_explicit_time",
+  }, {
+    userMessageCreatedAt: fridayMorning,
+    userMessage: "九月初请假去医院",
+  }).proposal
+  assert.deepEqual(earlySeptember.time_grounding.local_interpreted_window, {
+    start: "2026-09-01T00:00:00",
+    end: "2026-09-05T23:59:59",
+  })
+  assert.deepEqual(earlySeptember.expected_window, {
+    start: "2026-08-31T16:00:00.000Z",
+    end: "2026-09-05T15:59:59.000Z",
+  })
+  assert.equal(earlySeptember.time_grounding.weekday_grounding, null)
 }
 
 console.log("proactive event temporal grounding tests passed")
