@@ -68,7 +68,11 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
       expected_window: { start: null, end: null },
       source_message_id: "message-multi",
     })),
-    sourceMessage: { id: "message-multi", role: "user" },
+    sourceMessage: {
+      id: "message-multi",
+      role: "user",
+      content: "周日中午和朋友吃饭，周日下午做脸",
+    },
     createEventId: () => ids.shift(),
   })
   assert.deepEqual(result.candidates.map(item => item.event_id), ["event-lunch", "event-facial"])
@@ -240,7 +244,7 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
       proposal({ messageId: "message-both", description: "现实事件乙" }),
     ],
     sourceMessage: {
-      id: "message-both", role: "user", content: "稍后做甲和乙",
+      id: "message-both", role: "user", content: "稍后做现实事件甲和现实事件乙",
       created_at: "2026-08-26T02:00:00.000Z",
     },
     createEventId: () => ids.shift(),
@@ -307,7 +311,11 @@ function proposal({ messageId, description, state = "planned", matchedEventId = 
         source_message_id: "message-exam",
       },
     ],
-    sourceMessage: { id: "message-exam", role: "user" },
+    sourceMessage: {
+      id: "message-exam",
+      role: "user",
+      content: "周五早上考试",
+    },
     createEventId: () => "event-exam",
   })
   assert.equal(result.candidates.length, 1)
@@ -457,6 +465,7 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
     sourceMessage: {
       id: "message-2",
       role: "user",
+      content: "昨天做了一次，今天再去做一次雾化",
       created_at: "2026-08-26T02:00:00.000Z",
     },
     createEventId: () => "must-not-create",
@@ -467,6 +476,205 @@ for (const source of ["dynamic_memory", "summary", "stable_memory", "core_memory
   assert.equal(updated.candidates[0].event_id, "event-nebulizer")
   assert.deepEqual(updated.candidates[0].source_message_ids, ["message-1", "message-2"])
   assert.equal(updated.candidates[0].last_user_update.message_id, "message-2")
+}
+
+// Production regression: a symptom update does not prove that a later
+// treatment event has already completed.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "今天下午再去做一次雾化",
+    eventId: "event-nebulizer",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-symptom",
+        description: "下午雾化治疗已经完成",
+        state: "completed",
+        matchedEventId: "event-nebulizer",
+      }),
+      source_evidence: "好像也没什么不舒服了",
+    },
+    sourceMessage: {
+      id: "message-symptom",
+      role: "user",
+      content: "嗯，好像也没什么不舒服了",
+      created_at: "2026-08-26T02:30:00.000Z",
+    },
+  })
+  assert.equal(result.diagnostics.merge_action, "unsupported_terminal_transition")
+  assert.equal(result.diagnostics.admission_reason, "unsupported_terminal_transition")
+  assert.equal(result.candidates[0].state, "planned")
+  assert.equal(result.candidates[0].attention_status, "open")
+}
+
+// Production regression: unrelated current text cannot recreate a terminal
+// event merely because that event remains visible in structured context.
+{
+  const terminal = apply([], {
+    id: 1,
+    text: "下午雾化治疗",
+    state: "completed",
+    eventId: "event-nebulizer",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: terminal.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-lunch-done",
+        description: "下午雾化治疗",
+      }),
+      source_evidence: "吃完了",
+    },
+    sourceMessage: {
+      id: "message-lunch-done",
+      role: "user",
+      content: "吃完了！",
+      created_at: "2026-08-26T03:00:00.000Z",
+    },
+    createEventId: () => "must-not-create",
+  })
+  assert.equal(result.diagnostics.merge_action, "duplicate_terminal_recreation")
+  assert.equal(result.candidates.length, 1)
+  assert.equal(result.candidates[0].event_id, "event-nebulizer")
+  assert.equal(result.candidates[0].state, "completed")
+}
+
+// The already verified short, uniquely-referential eating lifecycle remains intact.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "一会儿去吃饭",
+    eventId: "event-eating",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-eaten",
+        description: "一会儿去吃饭",
+        state: "completed",
+        matchedEventId: "event-eating",
+      }),
+      source_evidence: "吃完了",
+    },
+    sourceMessage: {
+      id: "message-eaten",
+      role: "user",
+      content: "吃完了！",
+      created_at: "2026-08-26T01:30:00.000Z",
+    },
+    recentUserSourceLedger: [
+      { id: "message-1", role: "user" },
+      { id: "message-eaten", role: "user" },
+    ],
+    now: () => "2026-08-26T01:30:00.000Z",
+  })
+  const event = result.candidates[0]
+  assert.equal(event.event_id, "event-eating")
+  assert.deepEqual(event.source_message_ids, ["message-1", "message-eaten"])
+  assert.equal(event.state, "completed")
+  assert.equal(event.attention_status, "closed")
+  const gate = evaluateProactiveAttention(event, { now: "2026-08-26T01:31:00.000Z" })
+  assert.equal(gate.reason, "event_completed")
+  assert.equal(gate.hard_rejection, true)
+}
+
+// Explicit cancellation and rescheduling keep the existing event identity.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "下午去做雾化",
+    eventId: "event-nebulizer",
+  })
+  const cancelled = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-cancel",
+      description: "下午去做雾化",
+      state: "cancelled",
+      matchedEventId: "event-nebulizer",
+    }),
+    sourceMessage: {
+      id: "message-cancel",
+      role: "user",
+      content: "下午雾化不去了",
+      created_at: "2026-08-26T02:00:00.000Z",
+    },
+  })
+  assert.equal(cancelled.candidates[0].event_id, "event-nebulizer")
+  assert.equal(cancelled.candidates[0].state, "cancelled")
+  assert.equal(cancelled.candidates[0].attention_status, "closed")
+
+  const rescheduled = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: proposal({
+      messageId: "message-reschedule",
+      description: "雾化改到明天下午",
+      state: "planned",
+      matchedEventId: "event-nebulizer",
+    }),
+    sourceMessage: {
+      id: "message-reschedule",
+      role: "user",
+      content: "雾化改到明天下午",
+      created_at: "2026-08-26T02:00:00.000Z",
+    },
+  })
+  assert.equal(rescheduled.candidates.length, 1)
+  assert.equal(rescheduled.candidates[0].event_id, "event-nebulizer")
+  assert.equal(rescheduled.diagnostics.admission_reason, "accepted_existing_update")
+}
+
+// A terminal event stays closed on unrelated text, while an explicitly stated
+// new occurrence may receive a fresh identity and real current provenance.
+{
+  const terminal = apply([], {
+    id: 1,
+    text: "今天下午做雾化",
+    state: "completed",
+    eventId: "event-nebulizer-old",
+  })
+  const unrelated = applyProactiveEventProposal({
+    candidates: terminal.candidates,
+    proposal: proposal({
+      messageId: "message-unrelated",
+      description: "今天下午做雾化",
+    }),
+    sourceMessage: {
+      id: "message-unrelated",
+      role: "user",
+      content: "刚吃完饭",
+      created_at: "2026-08-26T03:00:00.000Z",
+    },
+    createEventId: () => "must-not-create",
+  })
+  assert.equal(unrelated.diagnostics.merge_action, "duplicate_terminal_recreation")
+
+  const nextOccurrence = applyProactiveEventProposal({
+    candidates: terminal.candidates,
+    proposal: proposal({
+      messageId: "message-next-occurrence",
+      description: "明天下午再做一次雾化",
+    }),
+    sourceMessage: {
+      id: "message-next-occurrence",
+      role: "user",
+      content: "明天下午还要再去做一次雾化",
+      created_at: "2026-08-26T03:10:00.000Z",
+    },
+    createEventId: () => "event-nebulizer-new",
+  })
+  assert.equal(nextOccurrence.diagnostics.admission_reason, "accepted_new_event")
+  assert.equal(nextOccurrence.candidates.some(item => (
+    item.event_id === "event-nebulizer-new" && item.state === "planned"
+  )), true)
+  assert.deepEqual(
+    nextOccurrence.candidates.find(item => item.event_id === "event-nebulizer-new").source_message_ids,
+    ["message-next-occurrence"]
+  )
 }
 
 console.log("proactive attention candidate tests passed")
