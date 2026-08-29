@@ -237,14 +237,31 @@ async function judgeActiveConversationContext({
     }
   }
 
-  const raw = await callLLM(
-    [
-      {
-        role: "system",
-        content: `
+  const normalizedPreviousContext = normalizeActiveConversationContext(previousActiveContext) || { items: [] }
+  const normalizedPreviousCandidates = normalizeProactiveAttentionCandidates(previousProactiveCandidates)
+  const sourceIds = [...new Set([
+    ...normalizedPreviousContext.items.flatMap(item => [
+      item.source_message_id,
+      item.last_referenced_message_id,
+    ]),
+    ...(normalizedPreviousContext.mention_preferences || []).map(item => item.source_message_id),
+    ...recentUserSourceLedger.map(item => item.id),
+  ].filter(Boolean))]
+  const sourceAliasById = new Map(sourceIds.map((id, index) => [id, `s${index}`]))
+  const sourceIdAliases = Object.fromEntries(
+    [...sourceAliasById.entries()].map(([id, alias]) => [alias, id])
+  )
+  const eventAliasById = new Map(
+    normalizedPreviousCandidates.map((candidate, index) => [candidate.event_id, `e${index}`])
+  )
+  const eventIdAliases = Object.fromEntries(
+    [...eventAliasById.entries()].map(([id, alias]) => [alias, id])
+  )
+
+  const stableJudgeInstructions = `
 你是 XiaoC 的对话连续性判断器。只解释当前用户消息的语义，并更新短期上下文和现实事件候选；不要判断事件是否值得主动回访。
 
-只输出无空格 compact JSON：{"p":[],"c":{"i":[],"m":[]}}。p 是 proactive_event_proposals 的短格式，c 是 active_context 的短格式；先 p 后 c，不输出解释。
+只输出无空格 compact JSON：{"p":[],"c":"="} 或 {"p":[],"c":{"i":[],"m":[]}}。p 是 proactive_event_proposals 的短格式，c 是 active_context；先 p 后 c，不输出解释。
 
 p proposal 格式：{"a":"c|u","id":null,"d":"事件","s":"p|w|o|c|x|u","w":[null,null],"g":"e|r|i","ev":"原文","u":null,"f":[false,"n|l|m","l|m|h",false,false]}
 - a：c=create，u=update；id=matched_event_id；s：p=planned,w=waiting,o=ongoing,c=completed,x=cancelled,u=unknown。
@@ -255,6 +272,8 @@ p proposal 格式：{"a":"c|u","id":null,"d":"事件","s":"p|w|o|c|x|u","w":[nul
 c 格式：{"i":[{"t":"topic","c":"context","s":"a|w|r","k":"t|p|w|u","src":"source ID","ref":"last referenced ID","e":"原文"}],"m":[]}
 - item s：a=active,w=waiting,r=resolved；k：t=transient,p=plan,w=waiting,u=unresolved。
 - mention preference：{"t":"topic","a":"s|a","q":"u|a","g":"s|f","src":"消息ID","e":"原文"}；a=suppress/allow，q=unsolicited_check_in/all_mentions，g=soft/firm。
+- 如果本轮不需要改变任何 active item 或 mention preference，c 必须只输出字符串 "="，由代码完整沿用上一版；不要重复输出未变化的 c。
+- 只有确实新增、更新、解决、删除 item 或改变 mention preference 时才输出完整 c object。proposal 有变化不代表 c 必须变化；两者按各自语义判断。
 - proposal 的 source_message_id 固定由代码补成当前用户消息ID，不要输出 src。create 必须输出 d、ev；matched update 可省略 d、ev，代码分别沿用 existing description 与 u 的 evidence。没有 proposal/item/preference 就用空数组；其他无意义的空字段不要添加。
 
 Active Context：
@@ -281,39 +300,36 @@ Proactive event proposals：
 - description≤80字，只写现实事件；state 仅 planned/waiting/ongoing/completed/cancelled/unknown。
 - local_interpreted_window 使用 Asia/Shanghai 墙上时间 YYYY-MM-DDTHH:mm:ss（无 Z）。相对时间锚定真实 user message 时间；时间缺失或证据不足则相应边界为 null，绝不使用 1970 或编造精确分钟。start 是最早合理回访时机，end 是最晚仍有意义时机，start≤end；代码负责转 UTC。
 - 示例：“周五早上要考试了”应捕获1个 planned 事件；“周日中午和朋友吃饭，下午去做脸”应捕获2个独立事件；“明天一早交销量表，然后做客户信息统计”应捕获2个独立事件；普通寒暄或“我去洗澡等会回来”通常返回空数组。
-`,
-      },
-      {
-        role: "user",
-        content: `她刚刚说：${trimText(message, 800)}
+`
+  const dynamicJudgeInput = `她刚刚说：${trimText(message, 800)}
 
 小C刚刚回复：${trimText(reply, 600)}
 
 上一版 active context（同上 c 短键；旧项没有 e 时直接沿用）：
 ${JSON.stringify((() => {
-  const context = normalizeActiveConversationContext(previousActiveContext) || { items: [] }
+  const context = normalizedPreviousContext
   return {
     i: context.items.map(item => ({
       t: item.topic,
       c: item.context,
       s: ({ active: "a", waiting: "w", resolved: "r" })[item.status] || "a",
       k: ({ transient: "t", plan: "p", waiting: "w", unresolved: "u" })[item.kind] || "t",
-      src: item.source_message_id,
-      ref: item.last_referenced_message_id,
+      src: sourceAliasById.get(item.source_message_id) || item.source_message_id,
+      ref: sourceAliasById.get(item.last_referenced_message_id) || item.last_referenced_message_id,
     })),
     m: (context.mention_preferences || []).map(item => ({
       t: item.topic,
       a: item.action === "allow" ? "a" : "s",
       q: item.scope === "all_mentions" ? "a" : "u",
       g: item.strength === "firm" ? "f" : "s",
-      src: item.source_message_id,
+      src: sourceAliasById.get(item.source_message_id) || item.source_message_id,
     })),
   }
 })())}
 
-已有 candidates（id,d=description,s=state,a=attention,w=expected UTC,m=last user message,at=last user time）：
-${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates).map(candidate => ({
-  id: candidate.event_id,
+已有 candidates（id 使用 e 短别名；d=description,s=state,a=attention,w=expected UTC,m=last user message,at=last user time）：
+${JSON.stringify(normalizedPreviousCandidates.map(candidate => ({
+  id: eventAliasById.get(candidate.event_id) || candidate.event_id,
   d: trimText(candidate.description, 100),
   s: candidate.state,
   a: candidate.attention_status,
@@ -322,7 +338,7 @@ ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidat
   at: candidate.last_user_update?.created_at || null,
 })))}
 
-当前用户消息ID：${userMessageId || "unknown"}
+当前用户消息ID：${sourceAliasById.get(userMessageId) || userMessageId || "unknown"}
 
 时间权威：
 ${JSON.stringify(buildProactiveJudgeTimeAuthority({
@@ -330,10 +346,16 @@ ${JSON.stringify(buildProactiveJudgeTimeAuthority({
   userMessageCreatedAt,
 }))}
 
-近期 user source ledger（只用于校验 Active provenance）：
-${JSON.stringify(recentUserSourceLedger)}
-`,
-      },
+近期 user source ledger（id 使用 s 短别名，只用于校验 Active provenance；输出时原样引用别名）：
+${JSON.stringify(recentUserSourceLedger.map(item => ({
+  ...item,
+  id: sourceAliasById.get(item.id) || item.id,
+})))}
+`
+  const raw = await callLLM(
+    [
+      { role: "system", content: stableJudgeInstructions },
+      { role: "user", content: dynamicJudgeInput },
     ],
     AI_MODELS.memoryJudge,
     {
@@ -345,7 +367,10 @@ ${JSON.stringify(recentUserSourceLedger)}
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
     sourceMessageId: userMessageId,
-    existingCandidates: normalizeProactiveAttentionCandidates(previousProactiveCandidates),
+    existingCandidates: normalizedPreviousCandidates,
+    previousActiveContext,
+    eventIdAliases,
+    sourceIdAliases,
   })
   parsed.diagnostics.usage = {
     request_purpose: "active_context_and_proactive_event_judge",

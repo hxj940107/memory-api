@@ -67,6 +67,46 @@ const validOutput = JSON.stringify({
 })
 
 {
+  const previous = {
+    ...activeContext,
+    mention_preferences: [{
+      topic: "腰部近况",
+      action: "suppress",
+      scope: "unsolicited_check_in",
+      strength: "soft",
+      source_message_id: "message-boundary",
+    }],
+  }
+  const parsed = parseActiveContextJudgeOutput('{"p":[],"c":"="}', {
+    previousActiveContext: previous,
+  })
+  assert.equal(parsed.diagnostics.status, "parsed")
+  assert.equal(parsed.diagnostics.output_format, "compact_v2_carry")
+  assert.equal(parsed.activeContext.items.length, 1)
+  assert.equal(parsed.activeContext.items[0].topic, activeContext.items[0].topic)
+  assert.equal(
+    parsed.activeContext.items[0].last_referenced_message_id,
+    activeContext.items[0].last_referenced_message_id,
+  )
+  assert.equal(parsed.activeContext.mention_preferences.length, 1)
+  assert.equal(
+    parsed.activeContext.mention_preferences[0].source_message_id,
+    previous.mention_preferences[0].source_message_id,
+  )
+  assert.equal(
+    parsed.activeContext.mention_preferences[0].scope,
+    previous.mention_preferences[0].scope,
+  )
+  assert.deepEqual(parsed.proactiveEventProposals, [])
+}
+
+{
+  const parsed = parseActiveContextJudgeOutput('{"p":[],"c":"="}')
+  assert.equal(parsed.diagnostics.status, "parsed")
+  assert.deepEqual(parsed.activeContext, { items: [] })
+}
+
+{
   const parsed = parseActiveContextJudgeOutput(JSON.stringify({
     p: [{
       a: "u",
@@ -129,6 +169,41 @@ const validOutput = JSON.stringify({
   assert.equal(parsed.proactiveEventProposals[0].source_message_id, "message-current")
   assert.equal(parsed.proactiveEventProposals[0].description, "周五早上的公司知识考试")
   assert.equal(parsed.proactiveEventProposals[0].source_evidence, "做完了")
+}
+
+{
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    p: [{
+      a: "u",
+      id: "e0",
+      s: "o",
+      w: [null, null],
+      g: "i",
+      u: ["o", "e", "现在开始", null],
+      f: [true, "m", "m", false, false],
+    }],
+    c: {
+      i: [{
+        t: "开始调试",
+        c: "她现在开始调试",
+        s: "a",
+        k: "p",
+        src: "s0",
+        ref: "s1",
+        e: "现在开始",
+      }],
+      m: [],
+    },
+  }), {
+    sourceMessageId: "message-current",
+    existingCandidates: [{ event_id: "event-debug", description: "开始调试" }],
+    eventIdAliases: { e0: "event-debug" },
+    sourceIdAliases: { s0: "message-original", s1: "message-current" },
+  })
+  assert.equal(parsed.proactiveEventProposals[0].matched_event_id, "event-debug")
+  assert.equal(parsed.proactiveEventProposals[0].description, "开始调试")
+  assert.equal(parsed.activeContext.items[0].source_message_id, "message-original")
+  assert.equal(parsed.activeContext.items[0].last_referenced_message_id, "message-current")
 }
 
 {
