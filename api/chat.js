@@ -96,6 +96,7 @@ import {
 } from "../lib/momentImageLibrary.js"
 import {
   formatMomentSourceTimes,
+  normalizeMomentCandidateForPublish,
   normalizeMomentEventTime,
 } from "../lib/momentEventTime.js"
 import {
@@ -1715,6 +1716,38 @@ async function getRecentXiaoCMoments(user_id) {
   return data || []
 }
 
+async function getAutomaticMomentGenerationReadiness(user_id, recentMoments = []) {
+  const now = Date.now()
+  const since = new Date(now - 24 * 60 * 60 * 1000).toISOString()
+  const latestMomentAt = recentMoments[0]?.created_at
+    ? new Date(recentMoments[0].created_at).getTime()
+    : null
+
+  if (latestMomentAt !== null &&
+      now - latestMomentAt < CONTEXT_BUDGET.momentMinIntervalHours * 60 * 60 * 1000) {
+    return { ready: false, reason: "recent_moment_cooldown" }
+  }
+
+  const recentCount = recentMoments.filter(moment => moment.created_at >= since).length
+  if (recentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
+    return { ready: false, reason: "daily_moment_limit" }
+  }
+
+  const { count, error } = await supabase
+    .from("moment_candidates")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user_id)
+    .eq("status", "pending")
+    .gt("expires_at", new Date(now).toISOString())
+
+  if (error) throw error
+  if ((count || 0) > 0) {
+    return { ready: false, reason: "pending_candidate_exists" }
+  }
+
+  return { ready: true, reason: null }
+}
+
 function formatRecentMomentsForPrompt(moments = []) {
   if (!moments.length) return "暂无"
 
@@ -2093,6 +2126,20 @@ async function maybeCreateMoment({
     message = eligibility.contextText
 
   const recentMoments = await getRecentXiaoCMoments(user_id)
+
+  if (!isManualMomentRequest) {
+    const readiness = await getAutomaticMomentGenerationReadiness(user_id, recentMoments)
+
+    if (!readiness.ready) {
+      console.log("MOMENT CHECK SKIPPED: pre-generation readiness", readiness.reason)
+      await completeMomentAudit(auditId, {
+        skip_reason: readiness.reason,
+        outcome: "pre_generation_skipped",
+      })
+      return null
+    }
+  }
+
   const availableMomentImages = await getAvailableMomentImages(user_id)
   const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
   const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
@@ -2185,7 +2232,7 @@ ${isManualMomentRequest ? `触发条件：
 - 出现了明确但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
 - 对话里出现了一句有画面感、关系感、生活感的原话或互动反差。
 - 内容必须紧扣刚才的对话瞬间，不要泛化，不要脱离当前话题。
-- 纯技术或开发讨论、一般问答、没有具体事实的内容，返回 shouldPost: false。
+- 纯技术或开发讨论、一般问答、没有具体事实的内容不应进入自动生成；如果已经进入本步骤，只生成有真实依据的候选，不要再次做发布价值判断。
 - 不得为了生成候选而编造对话中没有发生的内容。
 - 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
 `}
@@ -2292,12 +2339,12 @@ ${momentImageCatalog}
 4. 当前时间、正文时段和图片时段是否一致？
 5. 事件时间和预计发布时间是否一致；若为延迟分享，正文是否明确表达回忆或补发？
 6. 是否与最近朋友圈重复？
-任一项不满足，就返回 shouldPost false；只有图片不满足时，保留正文并把 image 返回 null。
+自动模式已经通过调用前的低频和发布容量检查；不要因为频率再次拒绝。只有图片不满足时，保留正文并把 image 返回 null。
 
 生成结果要求：
 - 不解释为什么生成。
 - 不输出判断过程。
-- 如果不适合发，返回 shouldPost false。
+- ${isManualMomentRequest ? "如果明确请求仍没有任何可用真实内容，可以返回 shouldPost false。" : "自动模式必须返回一条有当前对话依据的候选，不返回 shouldPost false。"}
 - 如果值得发，返回 JSON，不要代码块：
 
 {
@@ -2391,6 +2438,23 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       sourceMessageCreatedAt: triggerUserMessageCreatedAt,
     })
     candidate.eventTime = eventTimeGrounding.eventTime
+
+    if (!isManualMomentRequest) {
+      const publishNormalization = normalizeMomentCandidateForPublish(
+        candidate,
+        expectedPublishAfter
+      )
+      Object.assign(candidate, publishNormalization.candidate)
+
+      if (publishNormalization.corrected) {
+        console.log("MOMENT PUBLISH VOICE NORMALIZED:", {
+          auditId,
+          reason: publishNormalization.correctionReason,
+          publishAfter: expectedPublishAfter,
+          shareMode: candidate.shareMode,
+        })
+      }
+    }
 
     console.log("MOMENT EVENT TIME AUDIT:", {
       auditId,

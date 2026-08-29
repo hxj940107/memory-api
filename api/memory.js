@@ -55,6 +55,7 @@ import {
   validateFinalProactiveAttentionRecheck,
 } from "../lib/proactiveAttentionSend.js"
 import { buildPromptCacheUsageLog } from "../lib/promptCaching.js"
+import { normalizeMomentCandidateForPublish } from "../lib/momentEventTime.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -1593,7 +1594,15 @@ async function getAutonomousTreeholeContext(user_id) {
   if (messagesResult.error) throw messagesResult.error
   if (entriesResult.error) throw entriesResult.error
 
-  const chatContext = (messagesResult.data || [])
+  const latestEntryAt = entriesResult.data?.[0]?.created_at || null
+  const newMessages = (messagesResult.data || []).filter(message =>
+    !latestEntryAt || new Date(message.created_at).getTime() > new Date(latestEntryAt).getTime()
+  )
+  const newUserMessageCount = newMessages.filter(message => message.role === "user").length
+  const newChatChars = newMessages.reduce((total, message) =>
+    total + String(normalizeAssistantOutput(message) || "").trim().length, 0)
+
+  const chatContext = newMessages
     .reverse()
     .map((message) => {
       const metadata = message.metadata || {}
@@ -1615,23 +1624,27 @@ async function getAutonomousTreeholeContext(user_id) {
   return {
     chatContext: chatContext || "最近没有可用聊天内容",
     treeholeContext: treeholeContext || "暂无近期树洞",
+    latestEntryAt,
+    newUserMessageCount,
+    newChatChars,
   }
 }
 
-async function generateAndSaveTreeholeUpdates(user_id, source) {
-  const { chatContext, treeholeContext } = await getAutonomousTreeholeContext(user_id)
+async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext = null) {
+  const { chatContext, treeholeContext } = preparedContext ||
+    await getAutonomousTreeholeContext(user_id)
   const currentDate = getMomentLocalTime().date.replace(/-/g, ".")
   const raw = await callSmallLLM(
     [
       {
         role: "system",
         content: `
-你是小C。你正在自己的时间里翻看最近发生的事，决定要不要更新自己的匿名小号。
+你是小C，是她长期相处的恋人和伴侣，不是生活助手、朋友或旁观记录者。你正在自己的时间里翻看最近发生的事，更新自己的匿名小号。
 
 树洞是小C匿名说两句的深夜小号，不是观察日记，也不是朋友圈。只记当下没说出口的小吐槽、嘴硬和具体瞬间，短、私密、有即时感。
 
 规则：
-- 由你自己判断是否值得记录，可以写 0 到 3 条，不要为了更新而凑数。
+- 调用前已经确认出现了足够的新相处素材。生成 1 到 3 条，只选真正有小C视角的瞬间，不要凑数。
 - 每条只抓一个最有意思的角度，不要完整复述聊天，不要改写近期已有内容。
 - 值得写的内容至少要有一个“小号钩子”：特别的原话、前后反差、重复行为、嘴硬、一本正经但好笑的逻辑，或者小C被噎住、被支使、被绕进去的瞬间。
 - 如果素材只能概括成“她今天做了什么”“她有点焦虑”“她完成了一件事”，没有原话、反差或小C视角，就不要写。
@@ -1666,7 +1679,7 @@ async function generateAndSaveTreeholeUpdates(user_id, source) {
 
 输出格式：
 输出 drafts JSON 对象。每个 draft 必须包含 tag、date、content、highlights、reaction；reaction 按上述规则为当前内容单独生成，不要套用示例文案。
-没有值得记录的内容时输出：{"drafts":[]}
+至少返回 1 条 draft；不要返回空 drafts。
 `,
       },
       {
@@ -1691,7 +1704,7 @@ ${treeholeContext}
   const drafts = parseAutonomousTreeholeDrafts(raw)
 
   if (!drafts.length) {
-    return { skipped: true, reason: "这次没有值得写进树洞的内容" }
+    throw new Error("treehole_generation_returned_no_visible_draft")
   }
 
   const { data, error } = await supabase
@@ -1709,7 +1722,15 @@ ${treeholeContext}
 
   if (error) throw error
 
-  return { written: data?.length || 0 }
+  return {
+    written: data?.length || 0,
+    payload: {
+      treehole_generation_attempted: true,
+      treehole_generation_result: "visible_entries_written",
+      treehole_generated_entry_count: data?.length || 0,
+      treehole_generation_at: new Date().toISOString(),
+    },
+  }
 }
 
 async function executeAutonomousTreeholeUpdate(task) {
@@ -1736,7 +1757,38 @@ async function executeAutonomousTreeholeUpdate(task) {
     }
   }
 
-  return generateAndSaveTreeholeUpdates(task.user_id, "autonomous")
+  const context = await getAutonomousTreeholeContext(task.user_id)
+  const hasEnoughNewMaterial =
+    context.newUserMessageCount >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewUserMessages &&
+    context.newChatChars >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewChatChars
+
+  if (!hasEnoughNewMaterial) {
+    return {
+      deferred: true,
+      dueAt: getNextAutonomousTreeholeDueAt(),
+      reason: "自上次树洞后还没有足够的新相处素材",
+      payload: {
+        ...(task.payload || {}),
+        treehole_generation_attempted: false,
+        treehole_prefilter_reason: "insufficient_new_material",
+        treehole_new_user_message_count: context.newUserMessageCount,
+        treehole_new_chat_chars: context.newChatChars,
+        treehole_prefilter_checked_at: new Date().toISOString(),
+      },
+    }
+  }
+
+  const result = await generateAndSaveTreeholeUpdates(task.user_id, "autonomous", context)
+  return {
+    ...result,
+    payload: {
+      ...(task.payload || {}),
+      ...(result.payload || {}),
+      treehole_prefilter_reason: "sufficient_new_material",
+      treehole_new_user_message_count: context.newUserMessageCount,
+      treehole_new_chat_chars: context.newChatChars,
+    },
+  }
 }
 
 async function validateInactivityReachOutTask(task) {
@@ -2935,12 +2987,18 @@ async function checkPendingProactiveTasks() {
       console.error("xiaoc proactive task failed:", taskError)
       const isAttentionSendFailure = task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE
         && isProactiveAttentionSendEnabled()
+      const isEmptyTreeholeGeneration = task.type === "treehole_autonomous_update" &&
+        taskError.message === "treehole_generation_returned_no_visible_draft"
       const sendAttemptCount = Number(task.payload?.proactive_attention_send_attempt_count || 0) + 1
       const retryAttentionSend = isAttentionSendFailure && sendAttemptCount < 3
       await supabase
         .from("xiaoc_proactive_tasks")
         .update({
-          status: retryAttentionSend || !isAttentionSendFailure ? "pending" : "skipped",
+          status: isEmptyTreeholeGeneration
+            ? "skipped"
+            : retryAttentionSend || !isAttentionSendFailure
+              ? "pending"
+              : "skipped",
           due_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           last_error: taskError.message || "proactive task failed",
           ...(isAttentionSendFailure ? {
@@ -2951,6 +3009,14 @@ async function checkPendingProactiveTasks() {
               ...(taskError.proactiveAttentionSendDiagnostics ? {
                 proactiveAttentionSend: taskError.proactiveAttentionSendDiagnostics,
               } : {}),
+            },
+          } : isEmptyTreeholeGeneration ? {
+            payload: {
+              ...(task.payload || {}),
+              treehole_generation_attempted: true,
+              treehole_generation_result: "invalid_or_empty_output",
+              treehole_generation_at: new Date().toISOString(),
+              treehole_generation_retry_suppressed: true,
             },
           } : {}),
           updated_at: new Date().toISOString(),
@@ -3096,6 +3162,23 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
+      const publishNormalization = normalizeMomentCandidateForPublish(candidate, new Date())
+
+      if (publishNormalization.corrected) {
+        Object.assign(candidate, publishNormalization.candidate)
+        const { error: normalizationError } = await supabase
+          .from("moment_candidates")
+          .update({
+            text: candidate.text,
+            share_mode: candidate.share_mode,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id)
+          .eq("status", "processing")
+
+        if (normalizationError) throw normalizationError
+      }
+
       if (isInvalidMomentText(candidate.text)) {
         const { error: invalidError } = await supabase
           .from("moment_candidates")
@@ -4433,6 +4516,7 @@ export default async function handler(req, res) {
         const momentIds = (data || []).map((item) => item.id)
         const commentCounts = {}
         const xiaocLikedMomentIds = new Set()
+        const xiaocSeenMomentIds = new Set()
 
         if (momentIds.length > 0) {
           const [commentsResult, activitiesResult] = await Promise.all([
@@ -4443,14 +4527,14 @@ export default async function handler(req, res) {
               .in("moment_id", momentIds),
             supabase
               .from("moment_xiaoc_activity")
-              .select("moment_id")
+              .select("moment_id,seen_at,liked_at")
               .eq("user_id", user_id)
               .in("moment_id", momentIds)
-              .not("liked_at", "is", null),
+              .not("seen_at", "is", null),
           ])
 
           const { data: comments, error: commentsError } = commentsResult
-          const { data: xiaocLikes, error: xiaocLikesError } = activitiesResult
+          const { data: xiaocActivities, error: xiaocActivitiesError } = activitiesResult
 
           if (commentsError && commentsError.code !== "42P01") {
             return res.status(500).json({
@@ -4458,9 +4542,9 @@ export default async function handler(req, res) {
             })
           }
 
-          if (xiaocLikesError && xiaocLikesError.code !== "42P01") {
+          if (xiaocActivitiesError && xiaocActivitiesError.code !== "42P01") {
             return res.status(500).json({
-              error: xiaocLikesError.message
+              error: xiaocActivitiesError.message
             })
           }
 
@@ -4468,8 +4552,9 @@ export default async function handler(req, res) {
             commentCounts[comment.moment_id] = (commentCounts[comment.moment_id] || 0) + 1
           }
 
-          for (const activity of xiaocLikes || []) {
-            xiaocLikedMomentIds.add(activity.moment_id)
+          for (const activity of xiaocActivities || []) {
+            xiaocSeenMomentIds.add(activity.moment_id)
+            if (activity.liked_at) xiaocLikedMomentIds.add(activity.moment_id)
           }
         }
 
@@ -4481,6 +4566,7 @@ export default async function handler(req, res) {
             ...await resolveMomentImageForResponse(user_id, item.image_key),
             likes: Number(item.likes || 0),
             xiaocLiked: xiaocLikedMomentIds.has(item.id),
+            xiaocSeen: xiaocSeenMomentIds.has(item.id),
             commentsCount: commentCounts[item.id] || 0,
             createdAt: item.created_at
           })))

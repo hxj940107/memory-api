@@ -33,6 +33,7 @@ type Moment = {
   avatarUri: string | null;
   likes: number;
   xiaocLiked: boolean;
+  xiaocSeen: boolean;
   commentsCount: number;
   image?: string | null;
   imageAspectRatio?: number | null;
@@ -58,6 +59,7 @@ type MomentsResponse = Array<{
   imageAspectRatio?: number | null;
   likes?: number;
   xiaocLiked?: boolean;
+  xiaocSeen?: boolean;
   commentsCount?: number;
   createdAt?: string;
 }>;
@@ -239,6 +241,7 @@ export default function MomentsScreen() {
           imageAspectRatio: item.imageAspectRatio || null,
           likes: Number(item.likes || 0),
           xiaocLiked: Boolean(item.xiaocLiked),
+          xiaocSeen: Boolean(item.xiaocSeen),
           commentsCount: Number(item.commentsCount || 0),
           createdAt: item.createdAt || new Date().toISOString(),
           avatar: isXiaoC
@@ -1047,6 +1050,7 @@ export default function MomentsScreen() {
         )}
 
         {moments.map((moment) => {
+          const isXiaoC = moment.author === "小C";
           const comments = commentsByMomentId[moment.id] || [];
           const commentAuthorById = comments.reduce<Record<string, string>>((items, comment) => {
             items[comment.id] = comment.authorName;
@@ -1135,6 +1139,11 @@ export default function MomentsScreen() {
                     />
                   </Pressable>
                 </View>
+
+                {!isXiaoC && moment.xiaocSeen && !moment.xiaocLiked &&
+                  !comments.some((comment) => comment.authorType === "xiaoc") && (
+                    <Text style={styles.xiaocSeenText}>小C看过了</Text>
+                  )}
 
                 {actionMenuVisible && (
                   <View
@@ -1729,6 +1738,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#8C8C91",
     marginRight: 18,
+  },
+
+  xiaocSeenText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#A2A2A7",
   },
 
   commentButton: {
