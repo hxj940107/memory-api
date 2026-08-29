@@ -74,12 +74,13 @@ const xiaoCSpaces: XiaoCSpace[] = [
     iconName: "photo.on.rectangle",
     title: "共享相册",
   },
-  {
-    id: "shared_context",
-    iconName: "square.stack.3d.up",
-    title: "共同空间",
-  },
 ];
+
+const sharedContextSpace: XiaoCSpace = {
+  id: "shared_context",
+  iconName: "square.stack.3d.up",
+  title: "共同空间",
+};
 
 const favoritesSpace: XiaoCSpace = {
   id: "favorites",
@@ -124,7 +125,7 @@ function ConversationItem({
         onLongPress(itemRef);
       }}
     >
-      <Text style={styles.itemTitle} numberOfLines={2} ellipsizeMode="tail">
+      <Text style={styles.itemTitle} numberOfLines={1} ellipsizeMode="tail">
         {item.title}
       </Text>
     </Pressable>
@@ -149,6 +150,7 @@ export default function ConversationList({
   const [selected, setSelected] = useState<Conversation | null>(null);
 
   const [menuVisible, setMenuVisible] = useState(false);
+  const [moreMenuVisible, setMoreMenuVisible] = useState(false);
 
   const [menuPosition, setMenuPosition] = useState({
     x: 40,
@@ -500,7 +502,7 @@ export default function ConversationList({
       style={[
         styles.container,
         {
-          paddingTop: insets.top + 24,
+          paddingTop: insets.top + 14,
           paddingBottom: Math.max(insets.bottom, 14),
         },
       ]}
@@ -510,6 +512,19 @@ export default function ConversationList({
       <View style={styles.spacesSection}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionHeader}>空间</Text>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="更多空间"
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.moreButton,
+              pressed && styles.spaceItemPressed,
+            ]}
+            onPress={() => setMoreMenuVisible(true)}
+          >
+            <Text style={styles.moreButtonText}>更多</Text>
+          </Pressable>
         </View>
 
         {xiaoCSpaces.map((space) => (
@@ -523,7 +538,7 @@ export default function ConversationList({
           >
             <SymbolView
               name={space.iconName as never}
-              size={20}
+              size={18}
               tintColor={XiaoCColors.sidebarIcon}
               weight="regular"
               style={styles.spaceIcon}
@@ -554,6 +569,7 @@ export default function ConversationList({
 
       <FlatList
         style={styles.conversationList}
+        showsVerticalScrollIndicator={false}
         data={rows}
         keyExtractor={(row) =>
           row.type === "section" ? row.id : row.item.id
@@ -624,7 +640,7 @@ export default function ConversationList({
         >
           <SymbolView
             name={favoritesSpace.iconName as never}
-            size={20}
+            size={18}
             tintColor={XiaoCColors.sidebarIcon}
             weight="regular"
             style={styles.spaceIcon}
@@ -643,7 +659,7 @@ export default function ConversationList({
         >
           <SymbolView
             name="gearshape"
-            size={20}
+            size={18}
             tintColor={XiaoCColors.sidebarIcon}
             weight="regular"
             style={styles.spaceIcon}
@@ -651,6 +667,42 @@ export default function ConversationList({
           <Text style={styles.spaceTitle}>设置</Text>
         </Pressable>
       </View>
+
+      {moreMenuVisible && (
+        <Pressable
+          style={styles.menuLayer}
+          onPress={() => setMoreMenuVisible(false)}
+        >
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
+            style={[
+              styles.menu,
+              styles.moreMenu,
+              { top: insets.top + 72 },
+            ]}
+          >
+            <Pressable
+              style={({ pressed }) => [
+                styles.moreMenuItem,
+                pressed && styles.menuActionPressed,
+              ]}
+              onPress={() => {
+                setMoreMenuVisible(false);
+                void openSpace(sharedContextSpace);
+              }}
+            >
+              <SymbolView
+                name={sharedContextSpace.iconName as never}
+                size={17}
+                tintColor={XiaoCColors.sidebarIcon}
+                weight="regular"
+                style={styles.moreMenuIcon}
+              />
+              <Text style={styles.moreMenuText}>{sharedContextSpace.title}</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      )}
 
       {menuVisible && selected && (
         <Pressable style={styles.menuLayer} onPress={hideMenu}>
@@ -752,7 +804,7 @@ const styles = StyleSheet.create({
 
   brandTitle: {
     paddingHorizontal: 10,
-    marginBottom: 16,
+    marginBottom: 9,
     fontSize: 22,
     lineHeight: 27,
     fontWeight: "600",
@@ -760,8 +812,8 @@ const styles = StyleSheet.create({
   },
   sectionHeaderRow: {
     flexDirection: "row",
-    minHeight: 36,
-    marginBottom: 2,
+    minHeight: 32,
+    marginBottom: 1,
     paddingRight: 2,
     alignItems: "center",
     justifyContent: "space-between",
@@ -776,11 +828,11 @@ const styles = StyleSheet.create({
   },
 
   item: {
-    minHeight: 52,
+    minHeight: 44,
     justifyContent: "center",
-    paddingVertical: 4,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    paddingVertical: 2,
+    borderRadius: 9,
+    paddingHorizontal: 10,
   },
 
   currentItem: {
@@ -788,8 +840,8 @@ const styles = StyleSheet.create({
   },
 
   itemTitle: {
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 16,
+    lineHeight: 21,
     color: XiaoCColors.sidebarText,
   },
 
@@ -812,20 +864,20 @@ const styles = StyleSheet.create({
 
   spacesSection: {
     marginTop: 0,
-    paddingBottom: 12,
+    paddingBottom: 6,
   },
 
   conversationList: {
-    flexGrow: 0,
-    flexShrink: 1,
+    flex: 1,
+    minHeight: 0,
   },
 
   spaceItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    height: 46,
-    borderRadius: 12,
+    paddingHorizontal: 10,
+    height: 40,
+    borderRadius: 10,
   },
 
   spaceItemPressed: {
@@ -833,8 +885,8 @@ const styles = StyleSheet.create({
   },
 
   spaceIcon: {
-    width: 35,
-    height: 22,
+    width: 31,
+    height: 20,
   },
 
   spaceTitle: {
@@ -857,22 +909,22 @@ const styles = StyleSheet.create({
   },
 
   utilitySection: {
-    marginTop: 6,
-    paddingTop: 4,
+    marginTop: 4,
+    paddingTop: 2,
   },
 
   utilityItem: {
     flexDirection: "row",
     alignItems: "center",
-    height: 46,
-    paddingHorizontal: 12,
-    borderRadius: 12,
+    height: 42,
+    paddingHorizontal: 10,
+    borderRadius: 10,
   },
 
   utilityDivider: {
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 12,
-    marginVertical: 5,
+    marginVertical: 3,
     backgroundColor: XiaoCColors.sidebarSeparator,
   },
 
@@ -906,6 +958,40 @@ const styles = StyleSheet.create({
     },
 
     elevation: 8,
+  },
+  moreButton: {
+    minWidth: 44,
+    height: 32,
+    marginRight: 2,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  moreButtonText: {
+    fontSize: 13,
+    color: XiaoCColors.sidebarSection,
+  },
+  moreMenu: {
+    width: 172,
+    left: undefined,
+    right: 4,
+    paddingVertical: 4,
+  },
+  moreMenuItem: {
+    minHeight: 44,
+    marginHorizontal: 4,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  moreMenuIcon: {
+    width: 29,
+    height: 20,
+  },
+  moreMenuText: {
+    fontSize: 16,
+    color: XiaoCColors.sidebarText,
   },
   menuTitle: {
     fontSize: 13,
