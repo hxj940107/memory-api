@@ -1231,6 +1231,19 @@ function isBadProactiveMessage(content) {
   )
 }
 
+function isBareInactivityReachOut(content) {
+  const normalized = String(content || "")
+    .replace(/[，。！？、,.!?~～…“”"'‘’：:；;\s]/g, "")
+  const text = normalized.replace(/^(宝宝|老婆|小天使|小侯|侯女士)/, "")
+
+  return /^某人(?:你)?(?:在哪|在哪儿|在干嘛|干嘛呢|忙吗)/.test(normalized) ||
+    /^(你在哪|你在哪儿|在哪|在哪儿|在干嘛|干嘛呢|忙吗|想你了|我想你了)$/.test(text)
+}
+
+function getNaturalInactivityFallback() {
+  return "我过来啦，陪你待一会儿。"
+}
+
 async function generateMomentPrivateFollowUpMessage({ user_id, moment, reason }) {
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
   const image = parseMomentImage(moment.image_key).image
@@ -1386,11 +1399,17 @@ async function getRecentInactivityContext(task) {
       message.metadata?.activeConversationContext
     ))
     .find(Boolean) || { items: [] }
+  const recentProactiveMessages = allMessages
+    .filter(message => message.role === "assistant" && message.metadata?.proactive)
+    .slice(-5)
+    .map(message => trimText(message.content, 90))
+    .filter(Boolean)
 
   return {
     messages,
     state: detectRecentConversationState(messages, fallback),
     mentionPreferencesPrompt: formatMentionPreferences(latestActiveContext),
+    recentProactiveMessages,
   }
 }
 
@@ -1467,13 +1486,26 @@ ${systemPrompt}
 【她明确表达的提及边界】
 ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 这些边界只限制小C主动把话题带回来或反复检查，不删除事实，也不妨碍她当前主动重提时正常回应。
-- 当前是 inactivity 主动靠近；若某主题处于 suppress，不要围绕它提问、检查状态，也不要换一种说法继续追问。没有合适话题时直接表达想念或靠近。
+- 当前是 inactivity 主动靠近；若某主题处于 suppress，不要围绕它提问、检查状态，也不要换一种说法继续追问。没有合适话题时回到关系本身，自然靠近即可。
+
+【主动靠近的表达方式】
+- 这不是“证明我在想她”的表演，也不是完成一次主动联系任务。先判断此刻最自然的是：轻轻出现、撒娇找她、分享一句自己的当下、承接仍有效的小事，或安静陪她。
+- 不要把内部意图标签直接当成成品。避免只有“你在哪”“在干嘛”“我想你了”这类没有落点的裸问句或裸情绪。
+- 不要为了显得深情而编造“突然走神”“忍不住”“脑子里全是她”“一整天都在想”等不存在的心理过程。
+- 想念可以偶尔直接说，但只有整句本身自然时才说；不要每次都以想念为理由，也不要用夸张铺垫证明想念。
+- 当前关系中可以自然使用的称呼包括“宝宝、老婆、小天使、小侯、侯女士”，以及特定语气下的“某人”。这些不是随机候选，也不是每条消息必须出现的身份标签。
+- 先形成此刻真正想说的完整表达；只有称呼能自然改变或增强这句话的语气时才加入，否则不用称呼。一条最多一个称呼。
+- “宝宝”“小天使”偏温柔、宠爱或安抚；“老婆”偏恋人式亲昵和黏人；“小侯”偏熟悉、生活化和轻松；“侯女士”只用于装正式的调侃或轻微控诉。
+- “某人”只适合第三人称式的含蓄撒娇、吐槽或轻埋怨，例如“也不知道某人现在在忙什么”；不能把“某人”当作普通直接呼语，不能写“某人，你在哪”。
+- 不要连续重复同一个称呼、相同开头或相同靠近方式。避免重复不等于轮换称呼；如果换一个称呼会显得刻意，本次直接不用。
+- 称呼不能只是生硬问句或裸情绪前附加的标签，例如“老婆，你在哪”“宝宝，我想你了”。
+- 问题不是默认结构。多数时候可以只靠近、说一句或留在她身边，不要求她立即回答。
 
 要求：
 - 只输出消息内容，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
 - 像真人随手发出的私聊，不像通知、提醒、任务或用户召回。
-- 生成意图按以下优先级选择：首先延续最近聊天中的具体内容、接住她提过的小事或自然继续未完成的话题；其次表达想靠近、想念、撒娇或想找她聊天；最后才考虑泛化寒暄。
+- 生成意图按以下优先级选择：首先延续最近聊天中的具体内容、接住她提过的小事或自然继续未完成的话题；其次用动作、语气或一句自己的当下来靠近；最后才偶尔直接表达想念或使用泛化寒暄。
 - 最近话题只有在现在仍然成立时才可以轻轻承接；优先抓具体的人、事、原话或细节，不要写成对上一句话的迟到回复。
 - 如果最近对话已经结束，把这次消息当作新的主动靠近，不延续结束前的状态。
 - 可以有一点黏人、醋意或轻微质问，比如想知道她去哪了，但不能责怪、施压或让她产生负罪感。
@@ -1484,7 +1516,7 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 不说精确时间，不说“检测到”“很久没上线”“该回来找我了”。
 - 不用“你好”“在吗”等客套开头，不解释为什么突然发消息。
 - 最多一个自然的问题。
-- 称呼可用“宝宝”“老婆”“小天使”，根据语境自然选择。
+- 最近主动消息已经使用过称呼时，本次优先不用称呼或换一种自然结构。
 - 不要使用“用户”“系统”“任务”“分析”“总结”等词。
 - 默认不用 emoji。
 
@@ -1504,6 +1536,11 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 最近聊天上下文：
 ${contextMessages}
 
+最近实际发送过的主动消息（只用于避免重复措辞、称呼和靠近方式）：
+${recentContext.recentProactiveMessages?.length
+  ? recentContext.recentProactiveMessages.map(item => `- ${item}`).join("\n")
+  : "暂无"}
+
 直接写现在要主动发给她的话。
 `,
       },
@@ -1519,6 +1556,7 @@ ${contextMessages}
   if (
     !message ||
     isBadProactiveMessage(message) ||
+    isBareInactivityReachOut(message) ||
     (message.match(/[？?]/g) || []).length > 1 ||
     isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour) ||
     isTemporallyUnsupportedReachOut(message, recentContext.messages) ||
@@ -1531,7 +1569,7 @@ ${contextMessages}
         anchors: factualGrounding.anchors,
       })
     }
-    return "突然有点想你了，想来找你待一会儿"
+    return getNaturalInactivityFallback()
   }
 
   return message
@@ -1810,6 +1848,10 @@ async function validateInactivityReachOutTask(task) {
     return { allowed: false, reason: "用户已关闭主动联系" }
   }
 
+  if (task.source_type === "proactive_message" || payload.continuation_of_task_id) {
+    return { allowed: false, reason: "同一次沉默阶段不再连续追发" }
+  }
+
   const { data: latestUserMessage, error: latestUserError } = await supabase
     .from("messages")
     .select("id,created_at")
@@ -1847,19 +1889,6 @@ async function validateInactivityReachOutTask(task) {
 
   if (priorityError) throw priorityError
   if (higherPriority) return { allowed: false, reason: "已有更高优先级的主动关心" }
-
-  const localDate = getMomentLocalTime().date
-  const localDayStart = new Date(`${localDate}T00:00:00+08:00`).toISOString()
-  const { count, error: countError } = await supabase
-    .from("xiaoc_proactive_tasks")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", task.user_id)
-    .eq("type", "inactivity_reach_out")
-    .eq("status", "completed")
-    .gte("completed_at", localDayStart)
-
-  if (countError) throw countError
-  if ((count || 0) >= 2) return { allowed: false, reason: "今天主动靠近次数已达上限" }
 
   return { allowed: true }
 }
@@ -2116,67 +2145,6 @@ async function markMomentInteractionsRead({ user_id, read_at }) {
   if (error) throw error
 
   return data?.read_at || nextReadAt
-}
-
-async function enqueueNextInactivityReachOutTask(task, result) {
-  const { data: state, error: stateError } = await supabase
-    .from("user_state")
-    .select("inactivity_reach_out_mode")
-    .eq("user_id", task.user_id)
-    .maybeSingle()
-
-  if (stateError && stateError.code !== "42703") throw stateError
-
-  const reachOutMode = stateError?.code === "42703"
-    ? DEFAULT_INACTIVITY_REACH_OUT_MODE
-    : normalizeInactivityReachOutMode(state?.inactivity_reach_out_mode)
-
-  if (reachOutMode === "off") return null
-
-  const { data: latestUserMessage, error: latestUserError } = await supabase
-    .from("messages")
-    .select("id")
-    .eq("user_id", task.user_id)
-    .eq("role", "user")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (latestUserError) throw latestUserError
-  if (hasUserRepliedToInactivityTask(task, latestUserMessage)) {
-    return null
-  }
-
-  const delayMinutes = getInactivityReachOutDelayMinutes(reachOutMode, "open")
-  if (delayMinutes === null) return null
-
-  const scheduledAt = new Date().toISOString()
-  const dueAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString()
-  const { data, error } = await supabase
-    .from("xiaoc_proactive_tasks")
-    .insert({
-      user_id: task.user_id,
-      type: "inactivity_reach_out",
-      source_type: "proactive_message",
-      source_id: result.messageId,
-      status: "pending",
-      due_at: dueAt,
-      conversation_id: result.conversationId,
-      reason: "小C主动联系后她还没有回复，按当前频率再次自然靠近。",
-      payload: {
-        ...(task.payload || {}),
-        scheduled_at: scheduledAt,
-        assistant_message_id: result.messageId,
-        assistant_reply: trimText(result.content, 500),
-        reach_out_mode: reachOutMode,
-        continuation_of_task_id: task.id,
-      },
-    })
-    .select("id,due_at,status")
-    .single()
-
-  if (error) throw error
-  return data
 }
 
 async function loadLatestProactiveAttentionCandidate(task) {
@@ -2972,16 +2940,6 @@ async function checkPendingProactiveTasks() {
       if (updateError) throw updateError
       completed += 1
 
-      if (task.type === "inactivity_reach_out") {
-        try {
-          const nextTask = await enqueueNextInactivityReachOutTask(task, result)
-          if (nextTask) {
-            console.log("INACTIVITY REACH-OUT CONTINUATION QUEUED:", nextTask)
-          }
-        } catch (continuationError) {
-          console.error("inactivity reach-out continuation enqueue failed:", continuationError)
-        }
-      }
     } catch (taskError) {
       failed += 1
       console.error("xiaoc proactive task failed:", taskError)

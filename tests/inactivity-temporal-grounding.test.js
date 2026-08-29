@@ -126,6 +126,6 @@ test("the inactivity prompt uses timed context and temporal validation without c
   assert.match(source, /【事件阶段与时间定位】/)
   assert.match(source, /isTemporallyUnsupportedReachOut\(message, recentContext\.messages\)/)
   assert.match(source, /validateProactiveHistoricalClaims/)
-  assert.match(source, /enqueueNextInactivityReachOutTask\(task, result\)/)
+  assert.match(source, /同一次沉默阶段不再连续追发/)
   assert.match(source, /isProactiveQuietHours\(now\)/)
 })

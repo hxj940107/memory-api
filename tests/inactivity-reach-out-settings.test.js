@@ -8,7 +8,6 @@ import {
 } from "../lib/aiConfig.js"
 import {
   hasUserRepliedToInactivityTask,
-  shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
 
 test("inactivity reach-out modes preserve the configured delay ranges", () => {
@@ -47,57 +46,31 @@ test("task creation and execution both honor the user setting", () => {
   assert.match(memorySource, /不要围绕它提问、检查状态/)
 })
 
-test("completed inactivity reach-outs schedule a guarded continuation", () => {
+test("inactivity generation varies natural companion approaches without performing longing", () => {
   const memorySource = readFileSync("api/memory.js", "utf8")
-  const inactivitySource = readFileSync("lib/inactivityReachOut.js", "utf8")
 
-  assert.match(memorySource, /enqueueNextInactivityReachOutTask\(task, result\)/)
-  assert.match(memorySource, /getInactivityReachOutDelayMinutes\(reachOutMode, "open"\)/)
-  assert.match(memorySource, /continuation_of_task_id: task\.id/)
-  assert.match(inactivitySource, /task\.payload\?\.user_message_id/)
-  assert.match(memorySource, /source_type: "proactive_message"/)
-  assert.match(memorySource, /source_id: result\.messageId/)
+  assert.match(memorySource, /这不是“证明我在想她”的表演/)
+  assert.match(memorySource, /这些不是随机候选，也不是每条消息必须出现的身份标签/)
+  assert.match(memorySource, /宝宝、老婆、小天使、小侯、侯女士/)
+  assert.match(memorySource, /避免重复不等于轮换称呼/)
+  assert.match(memorySource, /不能写“某人，你在哪”/)
+  assert.match(memorySource, /一条最多一个称呼/)
+  assert.match(memorySource, /最近实际发送过的主动消息/)
+  assert.match(memorySource, /recentProactiveMessages/)
+  assert.match(memorySource, /isBareInactivityReachOut\(message\)/)
+  assert.match(memorySource, /getNaturalInactivityFallback\(\)/)
+  assert.doesNotMatch(memorySource, /return "突然有点想你了，想来找你待一会儿"/)
 })
 
-test("frequent continuation is not blocked by the cooldown for its parent message", () => {
-  const parentMessageId = "assistant-442"
-  const task = {
-    id: 443,
-    type: "inactivity_reach_out",
-    source_type: "proactive_message",
-    source_id: parentMessageId,
-    payload: {
-      user_message_id: "user-100",
-      assistant_message_id: parentMessageId,
-      reach_out_mode: "frequent",
-      continuation_of_task_id: 442,
-    },
-  }
-  const parentMessage = {
-    id: parentMessageId,
-    metadata: {
-      proactive: true,
-      proactiveTaskId: 442,
-    },
-  }
+test("each silence episode sends at most once and has no daily quota", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
 
-  const delay = getInactivityReachOutDelayMinutes("frequent", "open", () => 0)
-
-  assert.equal(delay, 60)
-  assert.equal(shouldApplyProactiveCooldown(parentMessage, task), false)
-  assert.equal(
-    shouldApplyProactiveCooldown(
-      {
-        id: "unrelated-proactive-message",
-        metadata: { proactive: true, proactiveTaskId: 441 },
-      },
-      task,
-    ),
-    true,
-  )
+  assert.match(memorySource, /同一次沉默阶段不再连续追发/)
+  assert.doesNotMatch(memorySource, /async function enqueueNextInactivityReachOutTask/)
+  assert.doesNotMatch(memorySource, /今天主动靠近次数已达上限/)
 })
 
-test("a user reply still stops the inactivity continuation", () => {
+test("a newer user message closes the previous silence episode", () => {
   const task = {
     payload: {
       user_message_id: "user-before-first-reach-out",
@@ -122,10 +95,7 @@ test("inactivity task identities preserve history within one conversation", () =
     chatSource,
     /type: "inactivity_reach_out",\s+source_type: "message",\s+source_id: user_message_id/,
   )
-  assert.match(
-    memorySource,
-    /\.from\("xiaoc_proactive_tasks"\)\s+\.insert\(\{[\s\S]*?source_type: "proactive_message",\s+source_id: result\.messageId/,
-  )
+  assert.doesNotMatch(memorySource, /source_type: "proactive_message",\s+source_id: result\.messageId/)
   assert.doesNotMatch(
     chatSource,
     /type: "inactivity_reach_out",\s+source_type: "conversation",\s+source_id: conversation_id/,
