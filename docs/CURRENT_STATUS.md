@@ -1,5 +1,17 @@
 # XiaoC Current Status
 
+## Canonical Production Baseline — 2026-08-29
+
+This section is the current planning authority. Dated milestone sections below are retained as history and must not override this baseline.
+
+- P0, P1, and P1.5 Batch 1/2A/2B/2C are implemented. Proactive Attention has scheduler wake-up, execution-time Gate, inactivity arbitration, limited rollout, final recheck, duplicate-send protection, and a production kill switch.
+- P2 Shared Context MVP is implemented. Only explicitly bound conversations inject its working context, and updates are batched rather than called every turn.
+- Summary debounce and the combined Active Context/proactive Judge cost reductions are implemented. Judge prefilter remains Shadow and must not skip real requests until production evidence shows it is safe.
+- Moments, delayed XiaoC interaction, private follow-up, autonomous Treehole, Observation Diary, shared album, and inactivity reach-out are active mobile capabilities rather than placeholders.
+- Background reliability uses bounded retries, stale `processing` recovery, and task/message idempotency. Independent image descriptions are the only trusted historical visual provenance.
+- Vercel Hobby remains at the hard limit of 12 Serverless Functions; do not add a new `api/*.js` file without freeing a slot.
+- Current work is stabilization and production observation. Only confirmed production blockers should reopen frozen P1.5 semantics.
+
 ## Current Phase
 
 XiaoC is in an early mobile-first stabilization phase.
@@ -69,7 +81,7 @@ The highest principle is Experience First. Every change should be judged by whet
 - Stabilized multi-turn image understanding.
   - New images are still sent to the main vision-capable chat model for the current turn.
   - A separate Haiku 4.5 vision task creates `metadata.imageDescription` without chat history or personality prompts.
-  - Historical context prefers `imageDescription` and falls back to the earlier `visionSummary` field.
+  - Historical context uses only the independently generated `imageDescription`; assistant reply text is not treated as visual provenance.
   - Historical base64 images are not re-injected into the model context.
 - Moved non-critical post-chat work off the main response path so saved assistant replies can return to the mobile app without waiting for image metadata, memory, user-state, summary, or Moment follow-up work.
 - Improved pinned-memory injection within the existing character budget.
@@ -123,8 +135,9 @@ The highest principle is Experience First. Every change should be judged by whet
 - The left drawer now contains XiaoC's private spaces:
   - 深夜树洞
   - Observation Diary
+  - Moments / 朋友圈
+  - 共享相册
   - 收藏
-  - 朋友圈 placeholder
 - 深夜树洞:
   - has a dark “small account / treehole” feed UI
   - supports structured treehole draft cards in chat
@@ -147,7 +160,7 @@ The highest principle is Experience First. Every change should be judged by whet
 - XiaoC can remember the user's identity and dog-related pinned memory.
 - Recent history, summary memory, pinned memory, stable memory, and dynamic memory are combined in `api/chat.js`.
 - PIN memory cache has a 30-minute TTL and does not cache empty results.
-- PIN memory entries are selected within the existing 700-character budget with fact-oriented entries prioritized before injection.
+- Core Memory Snapshot preserves the complete pinned core for each conversation; dynamic memory remains separately budgeted and filtered.
 - Dynamic memory search query includes recent user messages plus the current message.
 - Supabase `memories` acts as a stable memory fallback in chat context.
 - Attribution-correction handling was added so XiaoC is less likely to confuse who said/wrote something.
@@ -200,7 +213,7 @@ add column if not exists updated_at timestamptz;
 - Favorites work locally.
 - Single-message deletion works and should survive refresh after Vercel deploy.
 - Memory retrieval from Ombre Brain is confirmed working in Vercel logs.
-- Multi-turn image continuity works through `imageDescription`, with `visionSummary` retained as a compatibility fallback.
+- Multi-turn image continuity works through independently generated `imageDescription`; legacy `visionSummary` is no longer injected as visual evidence.
 - Main chat responses are no longer intentionally blocked by non-critical post-chat tasks.
 - The prioritized PIN injection has been verified with the user's dog-name fact reaching the final system context.
 - Server-side Beijing time awareness has been verified in a live XiaoC reply.
@@ -232,7 +245,7 @@ If `PIN MEMORY` becomes empty again, investigate Ombre Brain `/breath-hook`, Rai
    - Confirm the triggering user/assistant turn is present exactly once.
    - Confirm the 18-message / 4,000-character window is used consistently by the asynchronous post-chat task.
 2. Add image awareness to Moment generation without re-injecting historical image data.
-   - Reuse saved `imageDescription`, with `visionSummary` as the compatibility fallback.
+   - Reuse saved `imageDescription`; omit image background when independent description is unavailable.
    - Keep image Moment work independent from the main chat response path.
 3. Continue monitoring post-chat task reliability.
    - Main replies must return immediately after the assistant message is saved.

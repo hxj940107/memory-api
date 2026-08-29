@@ -3,12 +3,14 @@ import fs from "node:fs"
 import {
   emptySharedWorkingContext,
   formatSharedContextForPrompt,
+  getSharedContextParseFailureBackoff,
   normalizeSharedContext,
   parseSharedContextUpdate,
   selectPendingSharedContextMessages,
   shouldUpdateSharedContext,
 } from "../lib/sharedContext.js"
 import { allocateDynamicContextBudget } from "../lib/dynamicContextBudget.js"
+import { loadPendingSharedContextMessages } from "../lib/sharedContextStore.js"
 
 const context = normalizeSharedContext({
   id: "shared-book",
@@ -56,6 +58,114 @@ const pending = selectPendingSharedContextMessages(messages, {
   conversation_checkpoints: { "conversation-a": "assistant-2" },
 }, "conversation-a")
 assert.equal(pending[0].id, "user-3")
+assert.deepEqual(selectPendingSharedContextMessages(messages, {
+  ...emptySharedWorkingContext(),
+  conversation_checkpoints: { "conversation-a": "outside-window" },
+}, "conversation-a"), [])
+
+assert.equal(getSharedContextParseFailureBackoff([{
+  role: "assistant",
+  metadata: {
+    sharedContext: {
+      id: "shared-book",
+      update_reason: "parse_failed",
+      update_failed_at: "2026-08-29T08:00:00.000Z",
+    },
+  },
+}], "shared-book", new Date("2026-08-29T08:10:00.000Z"))?.reason, "parse_failure_backoff")
+assert.equal(getSharedContextParseFailureBackoff([{
+  role: "assistant",
+  metadata: {
+    sharedContext: {
+      id: "shared-book",
+      update_reason: "parse_failed",
+      update_failed_at: "2026-08-29T08:00:00.000Z",
+    },
+  },
+}], "shared-book", new Date("2026-08-29T09:00:00.000Z")), null)
+
+function fakeSupabase(rows) {
+  class Query {
+    constructor() {
+      this.rows = [...rows]
+      this.orders = []
+      this.rowLimit = null
+    }
+    select() { return this }
+    eq(field, value) {
+      this.rows = this.rows.filter(row => String(row[field]) === String(value))
+      return this
+    }
+    in(field, values) {
+      this.rows = this.rows.filter(row => values.includes(row[field]))
+      return this
+    }
+    gte(field, value) {
+      this.rows = this.rows.filter(row => String(row[field]) >= String(value))
+      return this
+    }
+    order(field, { ascending }) {
+      this.orders.push({ field, ascending })
+      return this
+    }
+    limit(value) {
+      this.rowLimit = value
+      return this
+    }
+    result() {
+      const ordered = [...this.rows].sort((a, b) => {
+        for (const order of this.orders) {
+          const comparison = String(a[order.field]).localeCompare(String(b[order.field]))
+          if (comparison) return order.ascending ? comparison : -comparison
+        }
+        return 0
+      })
+      return { data: this.rowLimit ? ordered.slice(0, this.rowLimit) : ordered, error: null }
+    }
+    maybeSingle() {
+      const result = this.result()
+      return Promise.resolve({ data: result.data[0] || null, error: null })
+    }
+    then(resolve, reject) {
+      return Promise.resolve(this.result()).then(resolve, reject)
+    }
+  }
+  return { from: () => new Query() }
+}
+
+const longHistory = Array.from({ length: 100 }, (_, index) => ({
+  id: `message-${String(index + 1).padStart(3, "0")}`,
+  user_id: "user-1",
+  conversation_id: "conversation-a",
+  role: index % 2 ? "assistant" : "user",
+  content: `message ${index + 1}`,
+  created_at: `2026-08-29T08:${String(index).padStart(2, "0")}:00.000Z`,
+  metadata: {},
+}))
+const reloaded = await loadPendingSharedContextMessages({
+  supabase: fakeSupabase(longHistory),
+  userId: "user-1",
+  conversationId: "conversation-a",
+  workingContext: {
+    ...emptySharedWorkingContext(),
+    conversation_checkpoints: { "conversation-a": "message-010" },
+  },
+})
+assert.equal(reloaded.reason, "checkpoint_reloaded")
+assert.equal(reloaded.messages[0].id, "message-011")
+assert.equal(reloaded.messages.length, 80)
+
+const missingCheckpoint = await loadPendingSharedContextMessages({
+  supabase: fakeSupabase(longHistory),
+  userId: "user-1",
+  conversationId: "conversation-a",
+  workingContext: {
+    ...emptySharedWorkingContext(),
+    conversation_checkpoints: { "conversation-a": "deleted-message" },
+  },
+})
+assert.equal(missingCheckpoint.reason, "checkpoint_missing")
+assert.deepEqual(missingCheckpoint.messages, [])
 
 const parsed = parseSharedContextUpdate(JSON.stringify({
   progress: "读到第四章",
@@ -91,6 +201,8 @@ assert.match(chat, /hasSharedContext: Boolean\(sharedContext\)/)
 assert.match(chat, /formatSharedContextForPrompt/)
 assert.match(chat, /sharedContextPrompt \? \[sharedContextPrompt\]/)
 assert.match(chat, /SHARED_CONTEXT_UPDATE_TURN_THRESHOLD|shouldUpdateSharedContext/)
+assert.match(chat, /loadPendingSharedContextMessages/)
+assert.match(chat, /parse_failure_backoff|getSharedContextParseFailureBackoff/)
 assert.doesNotMatch(chat, /sharedContext[\s\S]{0,80}proactiveEventProposals/)
 assert.match(memory, /type === "shared_context"/)
 assert.match(memory, /action === "create"/)

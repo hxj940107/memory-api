@@ -59,6 +59,9 @@ test("inactivity generation varies natural companion approaches without performi
   assert.match(memorySource, /recentProactiveMessages/)
   assert.match(memorySource, /isBareInactivityReachOut\(message\)/)
   assert.match(memorySource, /getNaturalInactivityFallback\(\)/)
+  assert.match(memorySource, /fallback_applied/)
+  assert.match(memorySource, /fallback_reason/)
+  assert.match(memorySource, /inactivityGeneration/)
   assert.doesNotMatch(memorySource, /return "突然有点想你了，想来找你待一会儿"/)
 })
 

@@ -10,6 +10,8 @@ test("autonomous treehole checks for new shared-life material before calling the
   assert.match(config, /minimumNewChatChars: 160/)
   assert.match(source, /treehole_generation_attempted: false/)
   assert.match(source, /insufficient_new_material/)
+  assert.match(source, /newUserChars >= TREEHOLE_AUTONOMOUS_POLICY\.minimumNewChatChars/)
+  assert.match(source, /treehole_new_user_chars/)
   assert.match(source, /generateAndSaveTreeholeUpdates\(task\.user_id, "autonomous", context\)/)
 })
 

@@ -36,9 +36,9 @@ import {
   emptySharedWorkingContext,
   normalizeSharedContext,
   parseSharedContextUpdate,
-  selectPendingSharedContextMessages,
   shouldUpdateSharedContext,
 } from "../lib/sharedContext.js"
+import { loadPendingSharedContextMessages } from "../lib/sharedContextStore.js"
 import {
   PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE,
   PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
@@ -56,6 +56,14 @@ import {
 } from "../lib/proactiveAttentionSend.js"
 import { buildPromptCacheUsageLog } from "../lib/promptCaching.js"
 import { normalizeMomentCandidateForPublish } from "../lib/momentEventTime.js"
+import {
+  BACKGROUND_PROCESSING_STALE_MS,
+  getMarkedRetryCount,
+  getPayloadRetryCount,
+  planBackgroundFailure,
+  stripRetryMarker,
+  withRetryMarker,
+} from "../lib/backgroundTaskReliability.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -868,7 +876,7 @@ async function getRecentMomentChatContext(user_id) {
     .reverse()
     .map((message) => {
       const metadata = message.metadata || {}
-      const imageContext = metadata.imageDescription || metadata.visionSummary
+      const imageContext = metadata.imageDescription
       const content = [
         trimText(normalizeAssistantOutput(message), 220),
         imageContext ? `[图片背景信息] ${trimText(imageContext, 180)}` : "",
@@ -1553,15 +1561,23 @@ ${recentContext.recentProactiveMessages?.length
     recentContext.messages
   )
 
-  if (
-    !message ||
-    isBadProactiveMessage(message) ||
-    isBareInactivityReachOut(message) ||
-    (message.match(/[？?]/g) || []).length > 1 ||
-    isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour) ||
-    isTemporallyUnsupportedReachOut(message, recentContext.messages) ||
-    !factualGrounding.valid
-  ) {
+  const rejectionReason = !message
+    ? "empty_output"
+    : isBadProactiveMessage(message)
+      ? "internal_language"
+      : isBareInactivityReachOut(message)
+        ? "bare_reach_out"
+        : (message.match(/[？?]/g) || []).length > 1
+          ? "too_many_questions"
+          : isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour)
+            ? "time_inappropriate"
+            : isTemporallyUnsupportedReachOut(message, recentContext.messages)
+              ? "temporally_unsupported"
+              : !factualGrounding.valid
+                ? `factual_grounding:${factualGrounding.reason || "invalid"}`
+                : null
+
+  if (rejectionReason) {
     if (!factualGrounding.valid) {
       console.warn("PROACTIVE FACTUAL GROUNDING REJECTED:", {
         taskId: task.id || null,
@@ -1569,10 +1585,24 @@ ${recentContext.recentProactiveMessages?.length
         anchors: factualGrounding.anchors,
       })
     }
-    return getNaturalInactivityFallback()
+    return {
+      content: getNaturalInactivityFallback(),
+      diagnostics: {
+        generated_content_accepted: false,
+        fallback_applied: true,
+        fallback_reason: rejectionReason,
+      },
+    }
   }
 
-  return message
+  return {
+    content: message,
+    diagnostics: {
+      generated_content_accepted: true,
+      fallback_applied: false,
+      fallback_reason: null,
+    },
+  }
 }
 
 function parseAutonomousTreeholeDrafts(raw) {
@@ -1637,6 +1667,10 @@ async function getAutonomousTreeholeContext(user_id) {
     !latestEntryAt || new Date(message.created_at).getTime() > new Date(latestEntryAt).getTime()
   )
   const newUserMessageCount = newMessages.filter(message => message.role === "user").length
+  const newUserChars = newMessages
+    .filter(message => message.role === "user")
+    .reduce((total, message) =>
+      total + String(normalizeAssistantOutput(message) || "").trim().length, 0)
   const newChatChars = newMessages.reduce((total, message) =>
     total + String(normalizeAssistantOutput(message) || "").trim().length, 0)
 
@@ -1644,7 +1678,7 @@ async function getAutonomousTreeholeContext(user_id) {
     .reverse()
     .map((message) => {
       const metadata = message.metadata || {}
-      const imageContext = metadata.imageDescription || metadata.visionSummary
+      const imageContext = metadata.imageDescription
       const content = trimText(normalizeAssistantOutput(message), 700)
       return `${message.role === "user" ? "她" : "小C"}：${content}${
         imageContext ? `\n[图片背景信息]：${trimText(imageContext, 220)}` : ""
@@ -1664,6 +1698,7 @@ async function getAutonomousTreeholeContext(user_id) {
     treeholeContext: treeholeContext || "暂无近期树洞",
     latestEntryAt,
     newUserMessageCount,
+    newUserChars,
     newChatChars,
   }
 }
@@ -1798,7 +1833,7 @@ async function executeAutonomousTreeholeUpdate(task) {
   const context = await getAutonomousTreeholeContext(task.user_id)
   const hasEnoughNewMaterial =
     context.newUserMessageCount >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewUserMessages &&
-    context.newChatChars >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewChatChars
+    context.newUserChars >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewChatChars
 
   if (!hasEnoughNewMaterial) {
     return {
@@ -1810,6 +1845,7 @@ async function executeAutonomousTreeholeUpdate(task) {
         treehole_generation_attempted: false,
         treehole_prefilter_reason: "insufficient_new_material",
         treehole_new_user_message_count: context.newUserMessageCount,
+        treehole_new_user_chars: context.newUserChars,
         treehole_new_chat_chars: context.newChatChars,
         treehole_prefilter_checked_at: new Date().toISOString(),
       },
@@ -1824,6 +1860,7 @@ async function executeAutonomousTreeholeUpdate(task) {
       ...(result.payload || {}),
       treehole_prefilter_reason: "sufficient_new_material",
       treehole_new_user_message_count: context.newUserMessageCount,
+      treehole_new_user_chars: context.newUserChars,
       treehole_new_chat_chars: context.newChatChars,
     },
   }
@@ -1944,6 +1981,30 @@ async function getLastConversationId(user_id) {
 }
 
 async function saveProactiveMessage({ user_id, conversation_id, content, task, metadata = {} }) {
+  if (task.id) {
+    const { data: existingMessage, error: existingError } = await supabase
+      .from("messages")
+      .select("id,conversation_id")
+      .eq("user_id", user_id)
+      .eq("role", "assistant")
+      .eq("metadata->>proactiveTaskId", String(task.id))
+      .limit(1)
+      .maybeSingle()
+
+    if (existingError) throw existingError
+    if (existingMessage?.id) {
+      await supabase
+        .from("user_state")
+        .upsert({
+          user_id,
+          last_conversation_id: existingMessage.conversation_id || conversation_id,
+          last_conversation: existingMessage.conversation_id || conversation_id,
+          updated_at: new Date().toISOString(),
+        })
+      return String(existingMessage.id)
+    }
+  }
+
   const { data: message, error: messageError } = await supabase
     .from("messages")
     .insert({
@@ -2793,33 +2854,77 @@ async function executeProactiveTask(task) {
     ? await getRecentInactivityContext(task)
     : null
 
-  const content = task.type === "plan_follow_up"
-    ? await generatePlanFollowUpMessage({
-        user_id: task.user_id,
-        task,
-      })
+  const generation = task.type === "plan_follow_up"
+    ? {
+        content: await generatePlanFollowUpMessage({
+          user_id: task.user_id,
+          task,
+        }),
+        diagnostics: null,
+      }
     : await generateInactivityReachOutMessage({
         user_id: task.user_id,
         task,
         recentContext,
       })
+  const content = generation.content
   const conversationId = await getLastConversationId(task.user_id)
   const messageId = await saveProactiveMessage({
     user_id: task.user_id,
     conversation_id: conversationId,
     content,
     task,
+    metadata: generation.diagnostics
+      ? { inactivityGeneration: generation.diagnostics }
+      : {},
   })
 
   return {
     messageId,
     conversationId,
     content,
+    ...(generation.diagnostics ? {
+      payload: {
+        ...(task.payload || {}),
+        inactivity_generation: generation.diagnostics,
+      },
+    } : {}),
   }
 }
 
 async function checkPendingProactiveTasks() {
   const now = new Date()
+  const staleBefore = new Date(now.getTime() - BACKGROUND_PROCESSING_STALE_MS).toISOString()
+  const { data: staleTasks, error: staleTaskError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,type,payload,updated_at")
+    .eq("status", "processing")
+    .lte("updated_at", staleBefore)
+
+  if (staleTaskError && staleTaskError.code !== "42P01") throw staleTaskError
+  for (const staleTask of staleTasks || []) {
+    const recovery = planBackgroundFailure({
+      type: staleTask.type,
+      previousAttempts: getPayloadRetryCount(staleTask.payload),
+    })
+    await supabase
+      .from("xiaoc_proactive_tasks")
+      .update({
+        status: recovery.status,
+        due_at: now.toISOString(),
+        last_error: "stale processing claim recovered",
+        payload: {
+          ...(staleTask.payload || {}),
+          background_retry_count: recovery.attemptCount,
+          background_retry_limit: recovery.retryLimit,
+          background_last_failure: "stale_processing_claim",
+        },
+        updated_at: now.toISOString(),
+      })
+      .eq("id", staleTask.id)
+      .eq("status", "processing")
+  }
+
   await ensureAutonomousTreeholeTask(APP_USER.defaultUserId)
   let reconciliation
   try {
@@ -2943,27 +3048,30 @@ async function checkPendingProactiveTasks() {
     } catch (taskError) {
       failed += 1
       console.error("xiaoc proactive task failed:", taskError)
-      const isAttentionSendFailure = task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE
-        && isProactiveAttentionSendEnabled()
       const isEmptyTreeholeGeneration = task.type === "treehole_autonomous_update" &&
         taskError.message === "treehole_generation_returned_no_visible_draft"
-      const sendAttemptCount = Number(task.payload?.proactive_attention_send_attempt_count || 0) + 1
-      const retryAttentionSend = isAttentionSendFailure && sendAttemptCount < 3
+      const failurePlan = planBackgroundFailure({
+        type: task.type,
+        previousAttempts: getPayloadRetryCount(task.payload),
+      })
       await supabase
         .from("xiaoc_proactive_tasks")
         .update({
           status: isEmptyTreeholeGeneration
             ? "skipped"
-            : retryAttentionSend || !isAttentionSendFailure
-              ? "pending"
-              : "skipped",
+            : failurePlan.status,
           due_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           last_error: taskError.message || "proactive task failed",
-          ...(isAttentionSendFailure ? {
+          ...(!isEmptyTreeholeGeneration ? {
             payload: {
               ...(task.payload || {}),
-              proactive_attention_send_attempt_count: sendAttemptCount,
-              proactive_attention_send_last_error: trimText(taskError.message, 240),
+              background_retry_count: failurePlan.attemptCount,
+              background_retry_limit: failurePlan.retryLimit,
+              background_last_failure: trimText(taskError.message, 240),
+              ...(task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE ? {
+                proactive_attention_send_attempt_count: failurePlan.attemptCount,
+                proactive_attention_send_last_error: trimText(taskError.message, 240),
+              } : {}),
               ...(taskError.proactiveAttentionSendDiagnostics ? {
                 proactiveAttentionSend: taskError.proactiveAttentionSendDiagnostics,
               } : {}),
@@ -3063,6 +3171,31 @@ function getDeferredMomentCandidateTime(date) {
 async function checkPendingMomentCandidates() {
   const now = new Date()
   const nowIso = now.toISOString()
+  const staleBefore = new Date(now.getTime() - BACKGROUND_PROCESSING_STALE_MS).toISOString()
+  const { data: staleCandidates, error: staleCandidateError } = await supabase
+    .from("moment_candidates")
+    .select("id,last_error,updated_at")
+    .eq("status", "processing")
+    .lte("updated_at", staleBefore)
+
+  if (staleCandidateError?.code !== "42P01" && staleCandidateError) throw staleCandidateError
+  for (const staleCandidate of staleCandidates || []) {
+    const recovery = planBackgroundFailure({
+      type: "moment_candidate",
+      previousAttempts: getMarkedRetryCount(staleCandidate.last_error),
+    })
+    await supabase
+      .from("moment_candidates")
+      .update({
+        status: recovery.status,
+        publish_after: nowIso,
+        last_error: withRetryMarker("stale processing claim recovered", recovery.attemptCount),
+        updated_at: nowIso,
+      })
+      .eq("id", staleCandidate.id)
+      .eq("status", "processing")
+  }
+
   const { error: expireError } = await supabase
     .from("moment_candidates")
     .update({
@@ -3296,12 +3429,19 @@ async function checkPendingMomentCandidates() {
     } catch (candidateError) {
       failed += 1
       console.error("moment candidate publish failed:", candidateError)
+      const failurePlan = planBackgroundFailure({
+        type: "moment_candidate",
+        previousAttempts: getMarkedRetryCount(candidate.last_error),
+      })
       await supabase
         .from("moment_candidates")
         .update({
-          status: "pending",
+          status: failurePlan.status,
           publish_after: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          last_error: candidateError.message || "candidate publish failed",
+          last_error: withRetryMarker(
+            candidateError.message || "candidate publish failed",
+            failurePlan.attemptCount,
+          ),
           updated_at: new Date().toISOString(),
         })
         .eq("id", candidate.id)
@@ -3314,6 +3454,34 @@ async function checkPendingMomentCandidates() {
 
 async function checkPendingMomentsForXiaoC() {
   const now = new Date()
+  const staleBefore = new Date(now.getTime() - BACKGROUND_PROCESSING_STALE_MS).toISOString()
+  const { data: staleActivities, error: staleActivityError } = await supabase
+    .from("moment_xiaoc_activity")
+    .select("id,decision_reason,updated_at")
+    .eq("status", "processing")
+    .lte("updated_at", staleBefore)
+
+  if (staleActivityError) throw staleActivityError
+  for (const staleActivity of staleActivities || []) {
+    const recovery = planBackgroundFailure({
+      type: "moment_xiaoc_activity",
+      previousAttempts: getMarkedRetryCount(staleActivity.decision_reason),
+    })
+    await supabase
+      .from("moment_xiaoc_activity")
+      .update({
+        status: recovery.status,
+        next_check_at: now.toISOString(),
+        decision_reason: withRetryMarker(
+          stripRetryMarker(staleActivity.decision_reason) || "stale processing claim recovered",
+          recovery.attemptCount,
+        ),
+        updated_at: now.toISOString(),
+      })
+      .eq("id", staleActivity.id)
+      .eq("status", "processing")
+  }
+
   const { data: pending, error } = await supabase
     .from("moment_xiaoc_activity")
     .select("id,user_id,moment_id,status,next_check_at,seen_at,decision,decision_reason,liked_at,comment_id,private_follow_up_message_id")
@@ -3330,7 +3498,7 @@ async function checkPendingMomentsForXiaoC() {
 
   for (const activity of pending) {
     let resolvedDecision = activity.decision || null
-    let resolvedReason = activity.decision_reason || ""
+    let resolvedReason = stripRetryMarker(activity.decision_reason)
     const { data: claimed, error: claimError } = await supabase
       .from("moment_xiaoc_activity")
       .update({ status: "processing", updated_at: new Date().toISOString() })
@@ -3417,15 +3585,20 @@ async function checkPendingMomentsForXiaoC() {
     } catch (activityError) {
       failed += 1
       console.error("moment xiaoc activity processing failed:", activityError)
+      const failurePlan = planBackgroundFailure({
+        type: "moment_xiaoc_activity",
+        previousAttempts: getMarkedRetryCount(activity.decision_reason),
+      })
       await supabase
         .from("moment_xiaoc_activity")
         .update({
-          status: "pending",
+          status: failurePlan.status,
           next_check_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
           decision: resolvedDecision,
-          decision_reason: resolvedDecision
-            ? resolvedReason
-            : "影子判断失败，等待重试",
+          decision_reason: withRetryMarker(
+            resolvedDecision ? resolvedReason : "判断失败，等待有限重试",
+            failurePlan.attemptCount,
+          ),
           updated_at: new Date().toISOString(),
         })
         .eq("id", activity.id)
@@ -3437,25 +3610,17 @@ async function checkPendingMomentsForXiaoC() {
 }
 
 async function flushSharedContextForConversation({ userId, conversationId, sharedContext }) {
-  let messagesQuery = supabase
-    .from("messages")
-    .select("id,role,content,created_at")
-    .eq("user_id", userId)
-    .eq("conversation_id", conversationId)
-    .in("role", ["user", "assistant"])
-  if (sharedContext.bound_at) {
-    messagesQuery = messagesQuery.gte("created_at", sharedContext.bound_at)
+  const pendingResult = await loadPendingSharedContextMessages({
+    supabase,
+    userId,
+    conversationId,
+    workingContext: sharedContext.working_context,
+    boundAt: sharedContext.bound_at,
+  })
+  if (pendingResult.reason === "checkpoint_missing") {
+    return { triggered: false, reason: "checkpoint_missing", llmCalled: false }
   }
-  const { data: messages, error } = await messagesQuery
-    .order("created_at", { ascending: false })
-    .limit(80)
-  if (error) throw error
-
-  const pending = selectPendingSharedContextMessages(
-    [...(messages || [])].reverse(),
-    sharedContext.working_context,
-    conversationId
-  )
+  const pending = pendingResult.messages
   const trigger = shouldUpdateSharedContext(pending, { force: true })
   if (!trigger.shouldUpdate) return { triggered: false, reason: trigger.reason, llmCalled: false }
 

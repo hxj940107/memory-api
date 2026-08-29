@@ -26,10 +26,9 @@ P1 当前已完成：
 - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
 - 旧 `plan_follow_up` 自动 task 创建已暂停；Active Conversation Context 更新与 `inactivity_reach_out` 保持，历史 task 及执行兼容不删除。
 - Memory eligibility diagnostics 已显式区分 `retrieved`、`relevant`、`eligible_for_prompt` 与 `eligible_for_proactive_attention`。当前 Memory 检索或 prompt 注入不会自动获得 proactive attention。
-- P1.5 Batch 1 Proactive Attention Shadow Mode 已完成：structured event candidate、代码生成且稳定的 `event_id`、真实 user message source provenance、同事件 merge、terminal lifecycle（completed / cancelled 不自动 reopen）均已实现。
+- P1.5 Batch 1 的 structured event candidate、稳定 `event_id`、真实 user message source provenance、同事件 merge、terminal lifecycle（completed / cancelled 不自动 reopen）均已实现。
 - deterministic Shadow Gate 已实现，并显式输出 `eligible_for_proactive_attention`、reason、confidence 与 hard rejection diagnostics。
-- 当前仍是严格 Shadow Mode：candidate snapshot、merge 与 Gate diagnostics 只写 assistant message metadata；不创建 `proactive_attention` task，不发送 event follow-up，不阻塞或改变 `inactivity_reach_out`，不恢复旧 `plan_follow_up` 自动创建，也不改变 cooldown、quiet hours 或 daily limit。
-- P1.5 Batch 2A 已实现：accepted candidate 复用 `xiaoc_proactive_tasks` 按 event ID 维护 wake-up；到期后 reload 最新 candidate，重新执行 Gate、quiet hours、cooldown、daily limit、recent activity 与 inactivity arbitration，并只持久化 `execution_mode=shadow` / `would_send` diagnostics。不会生成或发送 event follow-up message。
+- P1.5 Batch 2A 已实现：accepted candidate 复用 `xiaoc_proactive_tasks` 按 event ID 维护 wake-up；到期后 reload 最新 candidate，重新执行 Gate、quiet hours、cooldown、recent activity 与 inactivity arbitration。
 - P1.5 Batch 2B send path ready 已完成并 commit/push：只有 `PROACTIVE_ATTENTION_SEND_ENABLED=true` 才能进入生成与消息持久化；env 缺失或其他值均 fail closed。OFF 状态在 generation 前短路，不写 proactive assistant message，也不更新 `last_proactive_mention` 或消费 inactivity ownership。
 - Batch 2B ON 路径复用现有 assistant message persistence，并在生成后重新读取 candidate、最新 user message 与 execution constraints；task processing ownership 丢失、candidate/version 改变、新 user message、terminal/closed、quiet hours、cooldown、daily limit 或 arbitration 改变都会在写消息前停止。task ID message lookup 负责 retry 幂等恢复，成功消息携带完整 candidate snapshot 并推进目标 event 的 `last_proactive_mention`。
 - P1.5 Batch 2C limited rollout safety 已实现：首轮真实发送只接受具有完整 start/end、可靠 user-time grounding 和安全 lifecycle diagnostics 的 open candidate。wake-up 到达 start 时不会机械追问，而是确定性延后到至少 15 分钟后且不早于时间窗中点；start-only、缺失 window、歧义/异常 history 与 unsafe provenance 均 no-send。该层不增加 LLM、关键词表、schema 或 API Function。
@@ -53,14 +52,14 @@ P1 当前已完成：
 
 ### 0.2 待继续
 
-以下项目尚未实施，不得与上述已完成状态混淆：
+以下项目需要继续观察或尚未实施，不得与上述已完成状态混淆：
 
-- P1.5 real proactive send 与 judge prefilter 的生产观察 / controlled rollout；
+- P1.5 real proactive send 的持续生产观察，以及 judge prefilter Shadow 数据验证；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。
 
-旧 Shadow production 的 `0 candidate` 样本包含 judge parser failure，不能用于判断 candidate recall。reliability cleanup 部署后必须重新积累可信样本；进入 Batch 2 前至少希望看到：
+旧 Shadow production 的 `0 candidate` 样本包含 judge parser failure，不能用于判断当前 candidate recall；后续生产回归至少应覆盖：
 
 - `2–3` 个真实 candidate；
 - 至少一个现实事件多次更新仍保持同一 `event_id`；
@@ -69,16 +68,16 @@ P1 当前已完成：
 - 至少一个 Gate rejection / hard rejection；
 - `proactiveAttentionShadow.judge.status` 基本稳定为 `parsed`。
 
-Artifact、周/月回顾和共读仍属于 P2 产品扩展，也尚未实施。本轮没有改变 Persona、Relationship Contract、Core Memory Snapshot、PIN、Dynamic Context Budget、Recent budget、proactive scheduler、Moment、Diary、generated files 或模型选择。
+P2 Shared Context MVP 已实现；完整 Artifact、周/月回顾和更深入的共读仍属于后续产品扩展。
 
 ### 0.3 继续开发约束
 
 - 当前 `api/*.js` 必须继续保持 12 个，不得新增 Vercel Function；
-- reliability cleanup 已位于 `d955608`；换设备后先核对生产部署状态，禁止重新施工 P0、P1、P1.5 Batch 1 或本轮 cleanup；
+- 换设备后先核对 git 与生产部署状态，禁止依据历史 commit 说明重新施工已经完成的 P0、P1 或 P1.5；
 - `supabase_summary_segments.sql` 只作为已执行的 schema 记录保留，不得再把它报告为待执行 migration。
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
-- Batch 2C 部署时必须保持 `PROACTIVE_ATTENTION_SEND_ENABLED` 缺失或为 `false`；rollout eligible 与 `would_send=true` 仍只形成 OFF diagnostics，不能自动生成或发送。Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
-- 当前顺序固定为：Batch 2C commit/部署（flag OFF）→ 生产观察 rollout eligibility / timing / send-disabled diagnostics → 用户显式执行首次真实发送 activation → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
+- `PROACTIVE_ATTENTION_SEND_ENABLED` 仍是生产 kill switch；无论开关状态，Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
+- 当前顺序固定为：稳定真实发送与成本 observability → 只修 production blocker → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
 
 ## 1. 当前核心设计原则
 

@@ -114,11 +114,12 @@ import {
   buildSharedContextUpdatePrompt,
   formatSharedContextForPrompt,
   getSharedContextDiagnostics,
+  getSharedContextParseFailureBackoff,
   normalizeSharedContext,
   parseSharedContextUpdate,
-  selectPendingSharedContextMessages,
   shouldUpdateSharedContext,
 } from "../lib/sharedContext.js"
+import { loadPendingSharedContextMessages } from "../lib/sharedContextStore.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -936,8 +937,8 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse().map(item => {
     const content = normalizeAssistantOutput(item)
 
-    const historicalContent = item.metadata?.imageDescription || item.metadata?.visionSummary
-      ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription || item.metadata.visionSummary}`
+    const historicalContent = item.metadata?.imageDescription
+      ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription}`
       : content
 
     return {
@@ -2797,24 +2798,24 @@ async function maybeUpdateBoundSharedContext({
   assistantMessageId,
 }) {
   if (!sharedContext) return null
-  let recentMessagesQuery = supabase
-    .from("messages")
-    .select("id,role,content,created_at")
-    .eq("user_id", userId)
-    .eq("conversation_id", conversationId)
-    .in("role", ["user", "assistant"])
-  if (sharedContext.bound_at) {
-    recentMessagesQuery = recentMessagesQuery.gte("created_at", sharedContext.bound_at)
+  const pendingResult = await loadPendingSharedContextMessages({
+    supabase,
+    userId,
+    conversationId,
+    workingContext: sharedContext.working_context,
+    boundAt: sharedContext.bound_at,
+  })
+  const pending = pendingResult.messages
+  if (pendingResult.reason === "checkpoint_missing") {
+    return { triggered: false, reason: "checkpoint_missing", llmCalled: false }
   }
-  const { data: recentMessages, error } = await recentMessagesQuery
-    .order("created_at", { ascending: false })
-    .limit(80)
-  if (error) throw error
-  const pending = selectPendingSharedContextMessages(
-    [...(recentMessages || [])].reverse(),
-    sharedContext.working_context,
-    conversationId
+  const parseFailureBackoff = getSharedContextParseFailureBackoff(
+    pending,
+    sharedContext.id,
   )
+  if (parseFailureBackoff) {
+    return { triggered: false, reason: parseFailureBackoff.reason, llmCalled: false }
+  }
   const trigger = shouldUpdateSharedContext(pending)
   if (!trigger.shouldUpdate) return { triggered: false, reason: trigger.reason, llmCalled: false }
 
@@ -2835,6 +2836,7 @@ async function maybeUpdateBoundSharedContext({
     triggered: true,
     reason: workingContext ? trigger.reason : "parse_failed",
     llmCalled: true,
+    ...(!workingContext ? { failedAt: new Date().toISOString() } : {}),
   }
   if (workingContext) {
     const { error: updateError } = await supabase
@@ -3464,7 +3466,7 @@ console.log("======================================\n")
     )
 
     if (userMessageId && normalizedImageUrls.length > 0) {
-      void (async () => {
+      waitUntil((async () => {
         try {
           const imageDescription = await imageDescriptionPromise
           console.log("IMAGE DESCRIPTION CHECK:", {
@@ -3480,36 +3482,35 @@ console.log("======================================\n")
             .eq("id", userMessageId)
             .maybeSingle()
 
-          const { error: visionSummaryError } = await supabase
+          const { error: imageDescriptionError } = await supabase
             .from("messages")
             .update({
               metadata: {
                 ...(imageMessage?.metadata || {}),
-                visionSummary: reply,
                 ...(imageDescription ? { imageDescription } : {})
               }
             })
             .eq("user_id", user_id)
             .eq("id", userMessageId)
 
-          if (visionSummaryError) {
-            console.error("vision summary save failed:", visionSummaryError)
+          if (imageDescriptionError) {
+            console.error("image description save failed:", imageDescriptionError)
           }
 
           console.log("IMAGE DESCRIPTION SAVED:", {
             userMessageId,
-            error: visionSummaryError?.message || null
+            error: imageDescriptionError?.message || null
           })
         } catch (err) {
           console.error("image metadata task failed:", err)
         }
-      })()
+      })())
     }
 
     if (shouldUpdateSummaryAfterReply) {
       console.log("ROLLING SUMMARY TRIGGERED AFTER REPLY")
 
-      void (async () => {
+      waitUntil((async () => {
         try {
           const summaryResponse = await fetch(
             `${process.env.BASE_URL}/api/update-summary`,
@@ -3537,11 +3538,11 @@ console.log("======================================\n")
         } catch (err) {
           console.error("update-summary after reply failed:", err)
         }
-      })()
+      })())
     }
 
     // 6.5 update current conversation (cross-device sync)
-    void (async () => {
+    waitUntil((async () => {
       try {
         await supabase
           .from("user_state")
@@ -3554,7 +3555,7 @@ console.log("======================================\n")
       } catch (err) {
         console.error("user state update failed:", err)
       }
-    })()
+    })())
 
     // 7. memory write
 
