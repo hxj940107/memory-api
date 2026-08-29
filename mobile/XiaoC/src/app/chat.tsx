@@ -1511,6 +1511,8 @@ export default function ChatScreen() {
         },
       });
 
+      if (conversationIdRef.current !== id) return;
+
       if (isRestoringLastConversation && data.length === 0) {
         await clearLastConversation();
         setConversationId(null);
@@ -1523,6 +1525,8 @@ export default function ChatScreen() {
       }
 
       const restoredMessages = await restoreHistoryItems(data);
+
+      if (conversationIdRef.current !== id) return;
 
       const pendingReplyClientId = pendingReplyClientIdRef.current;
       if (
@@ -1581,7 +1585,12 @@ export default function ChatScreen() {
           before_id: String(oldestCloudMessage.cloudId),
         },
       });
+
+      if (conversationIdRef.current !== id) return;
+
       const restoredMessages = await restoreHistoryItems(data);
+
+      if (conversationIdRef.current !== id) return;
 
       if (restoredMessages.length > 0) {
         prependAnchorRef.current = {

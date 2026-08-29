@@ -104,7 +104,7 @@ export function mergeCloudMessages<T extends SyncMessage>(
       .map((message) => [String(message.clientId), message]),
   );
   const claimedLocalMessages = new Set<T>();
-  const mergedByCloudId = new Map<string, T>();
+  const mergedByCloudId = new Map<string, T>(currentByCloudId);
 
   for (const cloudMessage of incoming) {
     const cloudId = String(cloudMessage.cloudId || cloudMessage.id);

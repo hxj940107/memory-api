@@ -19,6 +19,14 @@ const cloudMessage = (id, overrides = {}) => ({
   ...overrides,
 })
 
+const cloudPage = (start, count) =>
+  Array.from({ length: count }, (_, index) => {
+    const sequence = start + index
+    return cloudMessage(`message-${String(sequence).padStart(3, "0")}`, {
+      createdAt: new Date(Date.UTC(2026, 7, 20, 8, 0, sequence)).toISOString(),
+    })
+  })
+
 test("polling first and HTTP second keeps one assistant message", () => {
   const fromPolling = cloudMessage("assistant-1")
   let state = mergeCloudMessages([], [fromPolling])
@@ -107,6 +115,59 @@ test("focus refresh with the same cloud batch does not replace state", () => {
   const refreshed = mergeCloudMessages(initial, initial.map((message) => ({ ...message })))
 
   assert.equal(refreshed, initial)
+})
+
+test("history pages accumulate from 60 to 120 to 180 messages", () => {
+  const latest = cloudPage(120, 60)
+  const middle = cloudPage(60, 60)
+  const oldest = cloudPage(0, 60)
+
+  const firstPage = mergeCloudMessages([], latest)
+  const secondPage = mergeCloudMessages(firstPage, middle)
+  const thirdPage = mergeCloudMessages(secondPage, oldest)
+
+  assert.equal(firstPage.length, 60)
+  assert.equal(secondPage.length, 120)
+  assert.equal(thirdPage.length, 180)
+  assert.deepEqual(
+    thirdPage.map(getStableMessageId),
+    cloudPage(0, 180).map(getStableMessageId),
+  )
+})
+
+test("overlapping history page ids are deduplicated", () => {
+  const current = cloudPage(60, 60)
+  const overlappingOlderPage = cloudPage(30, 60)
+  const merged = mergeCloudMessages(current, overlappingOlderPage)
+
+  assert.equal(merged.length, 90)
+  assert.equal(new Set(merged.map(getStableMessageId)).size, 90)
+  assert.deepEqual(
+    merged.map(getStableMessageId),
+    cloudPage(30, 90).map(getStableMessageId),
+  )
+})
+
+test("a new message remains after older history is merged", () => {
+  const latest = cloudPage(60, 60)
+  const withNewMessage = upsertCloudMessage(
+    latest,
+    cloudMessage("message-120", {
+      createdAt: new Date(Date.UTC(2026, 7, 20, 8, 2, 0)).toISOString(),
+    }),
+  )
+  const merged = mergeCloudMessages(withNewMessage, cloudPage(0, 60))
+
+  assert.equal(merged.length, 121)
+  assert.equal(getStableMessageId(merged.at(-1)), "message-120")
+})
+
+test("an empty older page preserves the accumulated history", () => {
+  const current = cloudPage(0, 120)
+  const merged = mergeCloudMessages(current, [])
+
+  assert.equal(merged, current)
+  assert.equal(merged.length, 120)
 })
 
 test("local user message reconciles with a copy already seen by polling", () => {
@@ -229,4 +290,9 @@ test("chat history loads older messages with a stable cursor and manual pull", (
   assert.match(chatSource, /before_id: String\(oldestCloudMessage\.cloudId\)/)
   assert.match(chatSource, /prependAnchorRef\.current = \{/)
   assert.match(chatSource, /height - anchor\.contentHeight/)
+  assert.match(chatSource, /conversationIdRef\.current !== id/)
+  assert.match(
+    chatSource,
+    /silent\s*\? mergeCloudMessages\(current, restoredMessages\)\s*:\s*restoredMessages/,
+  )
 })
