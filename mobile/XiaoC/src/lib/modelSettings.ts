@@ -7,6 +7,14 @@ export type ChatModelOption = {
 
 export const AVAILABLE_CHAT_MODELS: ChatModelOption[] = [
   {
+    id: "anthropic/claude-sonnet-5",
+    name: "Claude Sonnet 5",
+  },
+  {
+    id: "anthropic/claude-opus-5",
+    name: "Claude Opus 5",
+  },
+  {
     id: "anthropic/claude-sonnet-4.6",
     name: "Claude Sonnet 4.6",
   },
@@ -22,7 +30,10 @@ export const AVAILABLE_CHAT_MODELS: ChatModelOption[] = [
 
 const SELECTED_CHAT_MODEL_KEY = "xiaoc:selected_chat_model";
 
-export const DEFAULT_CHAT_MODEL = AVAILABLE_CHAT_MODELS[0];
+export const DEFAULT_CHAT_MODEL =
+  AVAILABLE_CHAT_MODELS.find(
+    (model) => model.id === "anthropic/claude-sonnet-4.6",
+  ) || AVAILABLE_CHAT_MODELS[0];
 
 export function findChatModel(modelId?: string | null) {
   return (

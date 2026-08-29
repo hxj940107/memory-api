@@ -24,19 +24,39 @@ const MODEL_PRICING_PER_MILLION: Record<
   {
     input: number;
     output: number;
+    cacheRead: number;
+    cacheWrite1h: number;
   }
 > = {
+  "anthropic/claude-sonnet-5": {
+    input: 2,
+    output: 10,
+    cacheRead: 0.2,
+    cacheWrite1h: 4,
+  },
+  "anthropic/claude-opus-5": {
+    input: 5,
+    output: 25,
+    cacheRead: 0.5,
+    cacheWrite1h: 10,
+  },
   "anthropic/claude-sonnet-4.6": {
     input: 3,
     output: 15,
+    cacheRead: 0.3,
+    cacheWrite1h: 6,
   },
   "anthropic/claude-haiku-4.5": {
     input: 1,
     output: 5,
+    cacheRead: 0.1,
+    cacheWrite1h: 2,
   },
   "anthropic/claude-opus-4.1": {
     input: 15,
     output: 75,
+    cacheRead: 1.5,
+    cacheWrite1h: 30,
   },
 };
 
@@ -117,8 +137,21 @@ export async function saveChatUsageFromResponse({
     usage.estimated_cost;
   const costNumber = Number(rawCost);
   const price = model ? MODEL_PRICING_PER_MILLION[model] : null;
+  const promptTokenDetails = usage.prompt_tokens_details as
+    | Record<string, unknown>
+    | undefined;
+  const cacheReadTokens = toNumber(promptTokenDetails?.cached_tokens);
+  const cacheWriteTokens = toNumber(promptTokenDetails?.cache_write_tokens);
+  const uncachedInputTokens = Math.max(
+    0,
+    promptTokens - cacheReadTokens - cacheWriteTokens,
+  );
   const estimatedCostUsd = price
-    ? (promptTokens * price.input + completionTokens * price.output) / 1_000_000
+    ? (uncachedInputTokens * price.input +
+        cacheReadTokens * price.cacheRead +
+        cacheWriteTokens * price.cacheWrite1h +
+        completionTokens * price.output) /
+      1_000_000
     : null;
   const hasActualCost = Number.isFinite(costNumber);
   const costUsd = hasActualCost ? costNumber : estimatedCostUsd;
