@@ -109,6 +109,15 @@ import {
   completeJudgePrefilterShadow,
   evaluateJudgePrefilterShadow,
 } from "../lib/judgePrefilterShadow.js"
+import {
+  buildSharedContextUpdatePrompt,
+  formatSharedContextForPrompt,
+  getSharedContextDiagnostics,
+  normalizeSharedContext,
+  parseSharedContextUpdate,
+  selectPendingSharedContextMessages,
+  shouldUpdateSharedContext,
+} from "../lib/sharedContext.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2675,6 +2684,100 @@ async function callLLM(messages, model = AI_MODELS.chat, options = {}) {
     raw: data
   }
 }
+
+async function loadBoundSharedContext(userId, conversationId) {
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("shared_context_bound_at,shared_context:shared_contexts(id,title,kind,status,working_context,created_at,updated_at)")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle()
+  if (error) {
+    if (["42703", "42P01"].includes(error.code)) return null
+    throw error
+  }
+  const context = normalizeSharedContext(data?.shared_context)
+  return context?.status === "active"
+    ? { ...context, bound_at: data?.shared_context_bound_at || null }
+    : null
+}
+
+async function maybeUpdateBoundSharedContext({
+  userId,
+  conversationId,
+  sharedContext,
+  assistantMessageId,
+}) {
+  if (!sharedContext) return null
+  let recentMessagesQuery = supabase
+    .from("messages")
+    .select("id,role,content,created_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .in("role", ["user", "assistant"])
+  if (sharedContext.bound_at) {
+    recentMessagesQuery = recentMessagesQuery.gte("created_at", sharedContext.bound_at)
+  }
+  const { data: recentMessages, error } = await recentMessagesQuery
+    .order("created_at", { ascending: false })
+    .limit(80)
+  if (error) throw error
+  const pending = selectPendingSharedContextMessages(
+    [...(recentMessages || [])].reverse(),
+    sharedContext.working_context,
+    conversationId
+  )
+  const trigger = shouldUpdateSharedContext(pending)
+  if (!trigger.shouldUpdate) return { triggered: false, reason: trigger.reason, llmCalled: false }
+
+  const result = await callLLM([
+    { role: "user", content: buildSharedContextUpdatePrompt(sharedContext, pending) },
+  ], AI_MODELS.memoryJudge, {
+    max_tokens: 900,
+    temperature: 0,
+    response_format: { type: "json_object" },
+  })
+  const workingContext = parseSharedContextUpdate(
+    result.reply,
+    sharedContext.working_context,
+    pending,
+    conversationId
+  )
+  const update = {
+    triggered: true,
+    reason: workingContext ? trigger.reason : "parse_failed",
+    llmCalled: true,
+  }
+  if (workingContext) {
+    const { error: updateError } = await supabase
+      .from("shared_contexts")
+      .update({ working_context: workingContext, updated_at: new Date().toISOString() })
+      .eq("id", sharedContext.id)
+      .eq("user_id", userId)
+    if (updateError) throw updateError
+  }
+  console.log("AI TASK USAGE:", {
+    request_purpose: "shared_context_batch_update",
+    model: AI_MODELS.memoryJudge,
+    ...buildPromptCacheUsageLog(result.usage),
+  })
+  const { data: storedMessage } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("id", assistantMessageId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  await supabase.from("messages").update({
+    metadata: {
+      ...(storedMessage?.metadata || {}),
+      sharedContext: getSharedContextDiagnostics(sharedContext, {
+        injected: true,
+        update,
+      }),
+    },
+  }).eq("id", assistantMessageId).eq("user_id", userId)
+  return update
+}
 // --------------------
 // Main Handler
 // --------------------
@@ -2747,11 +2850,16 @@ const userMessageCreatedAt = historyCandidates.find(
 )?.created_at || new Date().toISOString()
 let activeConversationContext = { items: [] }
 let proactiveAttentionCandidates = []
+let sharedContext = null
 let canPersistActiveConversationContext = true
 try {
-  const continuity = await getLatestConversationContinuity(user_id, cid)
+  const [continuity, boundSharedContext] = await Promise.all([
+    getLatestConversationContinuity(user_id, cid),
+    loadBoundSharedContext(user_id, cid),
+  ])
   activeConversationContext = continuity.activeContext
   proactiveAttentionCandidates = continuity.proactiveCandidates
+  sharedContext = boundSharedContext
 } catch (err) {
   canPersistActiveConversationContext = false
   console.error("active conversation context read failed; using no context this turn:", err)
@@ -2761,6 +2869,7 @@ const expectsWebContext = /^\/搜(?:\s|$)/i.test(message)
 const dynamicContextBudget = allocateDynamicContextBudget({
   currentMessage: message,
   activeItems: activeConversationContext.items,
+  hasSharedContext: Boolean(sharedContext),
   hasMemoryHit: false,
   expectsWebContext,
   totalChars: CONTEXT_BUDGET.dynamicContextChars,
@@ -2788,6 +2897,10 @@ const activeConversationContextPrompt = trimText(
     recentMessageIds: history.map(item => item.id),
   }),
   dynamicContextBudget.active
+)
+const sharedContextPrompt = trimText(
+  formatSharedContextForPrompt(sharedContext, dynamicContextBudget.shared),
+  dynamicContextBudget.shared
 )
 const recentMessageLedger = trimText(
   buildRecentMessageLedger(history),
@@ -2855,18 +2968,28 @@ try {
   if (summaryTrust.trusted) {
     const segments = normalizeSummarySegments(data?.summary_segments)
     if (segments.length) {
-      summaryMemory = selectSummarySegmentsForPrompt(
+      const selectedSummary = selectSummarySegmentsForPrompt(
         segments,
         history.map(item => item.id),
         dynamicContextBudget.summary
       ).content
+      summaryMemory = buildHistoricalSummaryView(
+        selectedSummary,
+        [
+          ...history,
+          ...(sharedContextPrompt ? [{ content: sharedContextPrompt }] : []),
+        ]
+      )
     } else {
       const rawSummary = normalizeAssistantOutput({
         role: "assistant",
         content: data?.summary || "",
       })
       summaryMemory = trimText(
-        buildHistoricalSummaryView(rawSummary, history),
+        buildHistoricalSummaryView(rawSummary, [
+          ...history,
+          ...(sharedContextPrompt ? [{ content: sharedContextPrompt }] : []),
+        ]),
         dynamicContextBudget.summary
       );
     }
@@ -2898,7 +3021,8 @@ try {
       includePinned: false,
       recentTexts: history.map(item => item.content),
       activeTexts: activeConversationContext.items
-        .map(item => `${item.topic} ${item.context}`),
+        .map(item => `${item.topic} ${item.context}`)
+        .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
       summaryTexts: summaryMemory ? [summaryMemory] : [],
       coreTexts: [coreMemorySnapshot.snapshot],
       memoryBudget: memoryContextBudget,
@@ -2916,7 +3040,8 @@ const stableMemorySelection = selectStableMemoryContext({
     coreTexts: [coreMemorySnapshot.snapshot],
     recentTexts: history.map(item => item.content),
     activeTexts: activeConversationContext.items
-      .map(item => `${item.topic} ${item.context}`),
+      .map(item => `${item.topic} ${item.context}`)
+      .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
     summaryTexts: summaryMemory ? [summaryMemory] : [],
     currentMessage: message,
     currentConversationId: cid,
@@ -3035,6 +3160,8 @@ ${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
 Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。
 
 ${activeConversationContextPrompt}
+
+${sharedContextPrompt}
 
 ${diaryContext
   ? `【Diary Source｜本次写观察日记可参考的近期素材】
@@ -3228,7 +3355,12 @@ console.log("======================================\n")
       "assistant",
       reply,
       cid,
-      attachments.length ? { attachments } : {}
+      {
+        ...(attachments.length ? { attachments } : {}),
+        sharedContext: getSharedContextDiagnostics(sharedContext, {
+          injected: Boolean(sharedContextPrompt),
+        }),
+      }
     )
 
     if (userMessageId && normalizedImageUrls.length > 0) {
@@ -3469,6 +3601,15 @@ console.log("======================================\n")
     } catch (err) {
       console.error("inactivity reach-out enqueue failed:", err)
     }
+
+    waitUntil(maybeUpdateBoundSharedContext({
+      userId: user_id,
+      conversationId: cid,
+      sharedContext,
+      assistantMessageId,
+    }).catch(err => {
+      console.error("shared context batch update failed:", err)
+    }))
 
 return res.status(200).json({
   reply,

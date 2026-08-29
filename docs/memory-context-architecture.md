@@ -4,7 +4,7 @@
 
 ## 0. 当前交接状态
 
-截至本轮交接，Memory / Context P0、P1、P1.5 Batch 1、reliability cleanup、Batch 2A 与 Batch 2B 均已完成并 commit/push。Batch 2C limited production rollout safety 已在当前工作区实现，但服务器 feature flag 仍默认关闭，尚未 commit、部署或启用真实发送。下一台设备或新的 Codex 窗口应先核对 git 与部署状态，不要重新实现本节列出的能力。
+截至本轮交接，Memory / Context P0、P1 与 P1.5（Batch 1、reliability cleanup、Batch 2A、2B、2C）均已实现并进入生产观察。真实 proactive send rollout 继续受服务器开关、limited rollout 与 execution-time safety 控制；judge deterministic prefilter 仍为 Shadow，只收集可跳过比例与 dangerous false skip。P1.5 当前功能开发冻结，只在出现真实 production blocker 时回修，不再阻塞 P2 Shared Context。
 
 ### 0.1 已完成
 
@@ -32,7 +32,7 @@ P1 当前已完成：
 - P1.5 Batch 2A 已实现：accepted candidate 复用 `xiaoc_proactive_tasks` 按 event ID 维护 wake-up；到期后 reload 最新 candidate，重新执行 Gate、quiet hours、cooldown、daily limit、recent activity 与 inactivity arbitration，并只持久化 `execution_mode=shadow` / `would_send` diagnostics。不会生成或发送 event follow-up message。
 - P1.5 Batch 2B send path ready 已完成并 commit/push：只有 `PROACTIVE_ATTENTION_SEND_ENABLED=true` 才能进入生成与消息持久化；env 缺失或其他值均 fail closed。OFF 状态在 generation 前短路，不写 proactive assistant message，也不更新 `last_proactive_mention` 或消费 inactivity ownership。
 - Batch 2B ON 路径复用现有 assistant message persistence，并在生成后重新读取 candidate、最新 user message 与 execution constraints；task processing ownership 丢失、candidate/version 改变、新 user message、terminal/closed、quiet hours、cooldown、daily limit 或 arbitration 改变都会在写消息前停止。task ID message lookup 负责 retry 幂等恢复，成功消息携带完整 candidate snapshot 并推进目标 event 的 `last_proactive_mention`。
-- P1.5 Batch 2C limited rollout safety 已在当前工作区实现：首轮真实发送只接受具有完整 start/end、可靠 user-time grounding 和安全 lifecycle diagnostics 的 open candidate。wake-up 到达 start 时不会机械追问，而是确定性延后到至少 15 分钟后且不早于时间窗中点；start-only、缺失 window、歧义/异常 history 与 unsafe provenance 均 no-send。该层不增加 LLM、关键词表、schema 或 API Function。
+- P1.5 Batch 2C limited rollout safety 已实现：首轮真实发送只接受具有完整 start/end、可靠 user-time grounding 和安全 lifecycle diagnostics 的 open candidate。wake-up 到达 start 时不会机械追问，而是确定性延后到至少 15 分钟后且不早于时间窗中点；start-only、缺失 window、歧义/异常 history 与 unsafe provenance 均 no-send。该层不增加 LLM、关键词表、schema 或 API Function。
 - Contextual existing update bridge 支持紧邻 assistant 对唯一 open event 的明确问句或明确承接；用户可省略事件名，但 judge 仍必须输出当前 user 原文中的 structured update evidence。该 bridge 只允许更新 existing event，多个合理 referent、缺失 user evidence、terminal 无明确证据或 create proposal 继续拒绝。
 
 本轮 reliability cleanup 已完成、通过测试并 commit/push；下一步是确认或完成生产部署：
@@ -55,8 +55,7 @@ P1 当前已完成：
 
 以下项目尚未实施，不得与上述已完成状态混淆：
 
-- P1.5 Batch 2C commit、部署并在 flag OFF 下观察 rollout/send diagnostics；
-- P1.5 首次真实发送 activation（独立步骤，必须由用户显式开启服务器 flag）；
+- P1.5 real proactive send 与 judge prefilter 的生产观察 / controlled rollout；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。

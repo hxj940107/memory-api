@@ -76,6 +76,7 @@ import {
   normalizeGeneratedAttachments,
   type GeneratedAttachment,
 } from "../lib/generatedAttachments";
+import { SharedContextBar } from "../components/SharedContextBar";
 
 type Message = {
   id: string;
@@ -999,6 +1000,7 @@ export default function ChatScreen() {
   const latestCloudMessageIdRef = useRef<string | null>(null);
   const historyRefreshInFlightRef = useRef(false);
   const hasRestoredConversationRef = useRef(false);
+  const conversationTitleInitializedRef = useRef(false);
   const lastRestoreRouteKeyRef = useRef<string | null>(null);
 
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -1330,8 +1332,10 @@ export default function ChatScreen() {
       if (!silent) setLoadingHistory(true);
 
       if (shouldStartNewChat && !silent) {
-        setConversationId(null);
-        conversationIdRef.current = null;
+        const draftConversationId = `chat_${Date.now()}`;
+        setConversationId(draftConversationId);
+        conversationIdRef.current = draftConversationId;
+        conversationTitleInitializedRef.current = false;
         latestCloudMessageIdRef.current = null;
         setMessages([]);
         return;
@@ -1341,12 +1345,17 @@ export default function ChatScreen() {
       const id = incomingConversationId || (await getBestLastConversation());
 
       if (!id) {
+        const draftConversationId = `chat_${Date.now()}`;
+        setConversationId(draftConversationId);
+        conversationIdRef.current = draftConversationId;
+        conversationTitleInitializedRef.current = false;
         setLoadingHistory(false);
         return;
       }
 
       setConversationId(id);
       conversationIdRef.current = id;
+      conversationTitleInitializedRef.current = true;
 
       const data = await apiJson<HistoryItem[]>("/api/history", {
         query: {
@@ -1360,6 +1369,7 @@ export default function ChatScreen() {
         await clearLastConversation();
         setConversationId(null);
         conversationIdRef.current = null;
+        conversationTitleInitializedRef.current = false;
         latestCloudMessageIdRef.current = null;
         setMessages([]);
         return;
@@ -1577,12 +1587,13 @@ export default function ChatScreen() {
 
         await saveLastConversation(data.conversation_id);
 
-        if (!conversationId) {
+        if (!conversationTitleInitializedRef.current) {
           await postJson("/api/conversation-title", {
             user_id: APP_USER_ID,
             conversation_id: data.conversation_id,
             message: userText,
           });
+          conversationTitleInitializedRef.current = true;
         }
       }
 
@@ -1980,6 +1991,8 @@ export default function ChatScreen() {
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
         </View>
+
+        <SharedContextBar conversationId={conversationId} />
 
         <ScrollView
           ref={scrollRef}

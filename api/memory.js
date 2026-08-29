@@ -32,6 +32,14 @@ import {
   normalizeActiveConversationContext,
 } from "../lib/activeConversationContext.js"
 import {
+  buildSharedContextUpdatePrompt,
+  emptySharedWorkingContext,
+  normalizeSharedContext,
+  parseSharedContextUpdate,
+  selectPendingSharedContextMessages,
+  shouldUpdateSharedContext,
+} from "../lib/sharedContext.js"
+import {
   PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
   evaluateProactiveAttentionExecution,
   planProactiveAttentionWakeup,
@@ -3209,6 +3217,231 @@ async function checkPendingMomentsForXiaoC() {
   return { checked: pending.length, completed, deferred: 0, failed }
 }
 
+async function flushSharedContextForConversation({ userId, conversationId, sharedContext }) {
+  let messagesQuery = supabase
+    .from("messages")
+    .select("id,role,content,created_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .in("role", ["user", "assistant"])
+  if (sharedContext.bound_at) {
+    messagesQuery = messagesQuery.gte("created_at", sharedContext.bound_at)
+  }
+  const { data: messages, error } = await messagesQuery
+    .order("created_at", { ascending: false })
+    .limit(80)
+  if (error) throw error
+
+  const pending = selectPendingSharedContextMessages(
+    [...(messages || [])].reverse(),
+    sharedContext.working_context,
+    conversationId
+  )
+  const trigger = shouldUpdateSharedContext(pending, { force: true })
+  if (!trigger.shouldUpdate) return { triggered: false, reason: trigger.reason, llmCalled: false }
+
+  const raw = await callSmallLLM([
+    { role: "user", content: buildSharedContextUpdatePrompt(sharedContext, pending) },
+  ], {
+    model: AI_MODELS.memoryJudge,
+    max_tokens: 900,
+    temperature: 0,
+    response_format: { type: "json_object" },
+  })
+  const workingContext = parseSharedContextUpdate(
+    raw,
+    sharedContext.working_context,
+    pending,
+    conversationId
+  )
+  if (!workingContext) {
+    return { triggered: true, reason: "parse_failed", llmCalled: true }
+  }
+  const { error: updateError } = await supabase
+    .from("shared_contexts")
+    .update({ working_context: workingContext, updated_at: new Date().toISOString() })
+    .eq("id", sharedContext.id)
+    .eq("user_id", userId)
+  if (updateError) throw updateError
+  return {
+    triggered: true,
+    reason: trigger.reason,
+    llmCalled: true,
+    sourceMessageCount: workingContext.source_message_ids.length,
+  }
+}
+
+async function ensureSharedContextConversation(userId, conversationId) {
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("conversation_id")
+    .eq("user_id", userId)
+    .eq("conversation_id", conversationId)
+    .maybeSingle()
+  if (error) throw error
+  if (data?.conversation_id) return
+  const { error: insertError } = await supabase
+    .from("conversations")
+    .insert({ user_id: userId, conversation_id: conversationId, title: "新对话" })
+  if (insertError) throw insertError
+}
+
+async function handleSharedContextRequest(req, res, userId) {
+  const action = req.method === "GET" ? req.query.action || "list" : req.body.action
+  const conversationId = req.method === "GET"
+    ? req.query.conversation_id
+    : req.body.conversation_id
+
+  if (req.method === "GET" && action === "list") {
+    const { data, error } = await supabase
+      .from("shared_contexts")
+      .select("id,title,kind,status,working_context,created_at,updated_at")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(50)
+    if (error) throw error
+    return res.status(200).json((data || []).map(normalizeSharedContext).filter(Boolean))
+  }
+
+  if (req.method === "GET" && action === "current") {
+    if (!conversationId) return res.status(400).json({ error: "conversation_id required" })
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("shared_context_bound_at,shared_context:shared_contexts(id,title,kind,status,working_context,created_at,updated_at)")
+      .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
+      .maybeSingle()
+    if (error) throw error
+    return res.status(200).json({ shared_context: normalizeSharedContext(data?.shared_context) })
+  }
+
+  if (req.method !== "POST") return res.status(405).json({ error: "Unsupported method" })
+
+  if (action === "create") {
+    const title = trimText(req.body.title, 120)
+    const kind = ["reading", "article", "project", "discussion", "other"]
+      .includes(req.body.kind) ? req.body.kind : "other"
+    if (!title) return res.status(400).json({ error: "title required" })
+    const { data, error } = await supabase
+      .from("shared_contexts")
+      .insert({ user_id: userId, title, kind, working_context: emptySharedWorkingContext() })
+      .select("id,title,kind,status,working_context,created_at,updated_at")
+      .single()
+    if (error) throw error
+    const context = normalizeSharedContext(data)
+    if (conversationId) {
+      await ensureSharedContextConversation(userId, conversationId)
+      const { error: bindError } = await supabase
+        .from("conversations")
+        .update({ shared_context_id: context.id, shared_context_bound_at: new Date().toISOString() })
+        .eq("user_id", userId)
+        .eq("conversation_id", conversationId)
+      if (bindError) throw bindError
+    }
+    return res.status(200).json({ shared_context: context, bound: Boolean(conversationId) })
+  }
+
+  if (action === "bind") {
+    if (!conversationId || !req.body.shared_context_id) {
+      return res.status(400).json({ error: "conversation_id and shared_context_id required" })
+    }
+    await ensureSharedContextConversation(userId, conversationId)
+    const { data: contextData, error: contextError } = await supabase
+      .from("shared_contexts")
+      .select("id,title,kind,status,working_context,created_at,updated_at")
+      .eq("id", req.body.shared_context_id)
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .maybeSingle()
+    if (contextError) throw contextError
+    const context = normalizeSharedContext(contextData)
+    if (!context) return res.status(404).json({ error: "Shared Context not found" })
+    const { data: priorBindings, error: priorBindingsError } = await supabase
+      .from("conversations")
+      .select("conversation_id,shared_context_bound_at")
+      .eq("user_id", userId)
+      .eq("shared_context_id", context.id)
+      .neq("conversation_id", conversationId)
+      .order("shared_context_bound_at", { ascending: false })
+      .limit(5)
+    if (priorBindingsError) throw priorBindingsError
+    for (const binding of priorBindings || []) {
+      const { data: latestContextData, error: latestContextError } = await supabase
+        .from("shared_contexts")
+        .select("id,title,kind,status,working_context,created_at,updated_at")
+        .eq("id", context.id)
+        .eq("user_id", userId)
+        .single()
+      if (latestContextError) throw latestContextError
+      await flushSharedContextForConversation({
+        userId,
+        conversationId: binding.conversation_id,
+        sharedContext: {
+          ...normalizeSharedContext(latestContextData),
+          bound_at: binding.shared_context_bound_at || null,
+        },
+      })
+    }
+    const { data: refreshedContextData, error: refreshError } = await supabase
+      .from("shared_contexts")
+      .select("id,title,kind,status,working_context,created_at,updated_at")
+      .eq("id", context.id)
+      .eq("user_id", userId)
+      .single()
+    if (refreshError) throw refreshError
+    const refreshedContext = normalizeSharedContext(refreshedContextData)
+    const { error } = await supabase
+      .from("conversations")
+      .update({ shared_context_id: refreshedContext.id, shared_context_bound_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
+    if (error) throw error
+    return res.status(200).json({ shared_context: refreshedContext, bound: true })
+  }
+
+  if (action === "unbind") {
+    if (!conversationId) return res.status(400).json({ error: "conversation_id required" })
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("shared_context_bound_at,shared_context:shared_contexts(id,title,kind,status,working_context,created_at,updated_at)")
+      .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
+      .maybeSingle()
+    if (error) throw error
+    const normalizedContext = normalizeSharedContext(data?.shared_context)
+    const context = normalizedContext
+      ? { ...normalizedContext, bound_at: data?.shared_context_bound_at || null }
+      : null
+    const update = context
+      ? await flushSharedContextForConversation({ userId, conversationId, sharedContext: context })
+      : { triggered: false, reason: "not_bound", llmCalled: false }
+    const { error: unbindError } = await supabase
+      .from("conversations")
+      .update({ shared_context_id: null, shared_context_bound_at: null })
+      .eq("user_id", userId)
+      .eq("conversation_id", conversationId)
+    if (unbindError) throw unbindError
+    return res.status(200).json({ shared_context: null, bound: false, update })
+  }
+
+  if (action === "archive") {
+    if (!req.body.shared_context_id) return res.status(400).json({ error: "shared_context_id required" })
+    const { error } = await supabase
+      .from("shared_contexts")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", req.body.shared_context_id)
+      .eq("user_id", userId)
+    if (error) throw error
+    await supabase.from("conversations")
+      .update({ shared_context_id: null, shared_context_bound_at: null })
+      .eq("user_id", userId)
+      .eq("shared_context_id", req.body.shared_context_id)
+    return res.status(200).json({ archived: true })
+  }
+
+  return res.status(405).json({ error: "Unsupported action" })
+}
+
 export default async function handler(req, res) {
   try {
 
@@ -3221,6 +3454,10 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (type === "shared_context") {
+      return handleSharedContextRequest(req, res, user_id)
+    }
 
     if (req.method === "POST" && type === "generated_file") {
       if (req.body?.action !== "sign_download") {
