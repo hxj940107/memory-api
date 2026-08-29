@@ -2,7 +2,7 @@ import * as SecureStore from "expo-secure-store";
 
 export const API_BASE_URL = "https://memory-api-beta.vercel.app";
 export const APP_USER_ID = "user";
-const PRIVATE_APP_TOKEN_KEY = "xiaoc:private_api_token";
+const PRIVATE_APP_TOKEN_KEY = "xiaoc.private_api_token";
 
 let cachedPrivateAppToken: string | null | undefined;
 

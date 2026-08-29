@@ -12,7 +12,8 @@ export type AccountSettings = {
 };
 
 const ACCOUNT_DISPLAY_NAME_KEY = "xiaoc:account_display_name";
-const ACCOUNT_PASSWORD_KEY = "xiaoc:account_password";
+const LEGACY_ACCOUNT_PASSWORD_KEY = "xiaoc:account_password";
+const ACCOUNT_PASSWORD_SECURE_KEY = "xiaoc.account_password";
 const ACCOUNT_FACE_ID_KEY = "xiaoc:account_face_id";
 const ACCOUNT_USER_MOMENT_AVATAR_KEY = "xiaoc:user_moment_avatar";
 const ACCOUNT_XIAOC_MOMENT_AVATAR_KEY = "xiaoc:xiaoc_moment_avatar";
@@ -115,13 +116,15 @@ export async function getAccountSettings(): Promise<AccountSettings> {
 }
 
 export async function getAccountPassword() {
-  const securePassword = await SecureStore.getItemAsync(ACCOUNT_PASSWORD_KEY);
+  const securePassword = await SecureStore.getItemAsync(
+    ACCOUNT_PASSWORD_SECURE_KEY,
+  );
   if (securePassword) return securePassword;
 
-  const legacyPassword = await AsyncStorage.getItem(ACCOUNT_PASSWORD_KEY);
+  const legacyPassword = await AsyncStorage.getItem(LEGACY_ACCOUNT_PASSWORD_KEY);
   if (legacyPassword) {
-    await SecureStore.setItemAsync(ACCOUNT_PASSWORD_KEY, legacyPassword);
-    await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
+    await SecureStore.setItemAsync(ACCOUNT_PASSWORD_SECURE_KEY, legacyPassword);
+    await AsyncStorage.removeItem(LEGACY_ACCOUNT_PASSWORD_KEY);
   }
   return legacyPassword;
 }
@@ -138,21 +141,21 @@ export async function saveAccountPassword(password: string) {
   const normalizedPassword = password.replace(/[^0-9]/g, "").slice(0, 6);
 
   if (!normalizedPassword) {
-    await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_KEY);
-    await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
+    await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_SECURE_KEY);
+    await AsyncStorage.removeItem(LEGACY_ACCOUNT_PASSWORD_KEY);
     await AsyncStorage.removeItem(ACCOUNT_FACE_ID_KEY);
     return false;
   }
 
-  await SecureStore.setItemAsync(ACCOUNT_PASSWORD_KEY, normalizedPassword);
-  await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
+  await SecureStore.setItemAsync(ACCOUNT_PASSWORD_SECURE_KEY, normalizedPassword);
+  await AsyncStorage.removeItem(LEGACY_ACCOUNT_PASSWORD_KEY);
 
   return true;
 }
 
 export async function clearAccountPassword() {
-  await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_KEY);
-  await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
+  await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_SECURE_KEY);
+  await AsyncStorage.removeItem(LEGACY_ACCOUNT_PASSWORD_KEY);
   await AsyncStorage.removeItem(ACCOUNT_FACE_ID_KEY);
 }
 
