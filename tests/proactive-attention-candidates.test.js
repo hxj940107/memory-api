@@ -81,6 +81,49 @@ function proposal({
   }
 }
 
+// An explicit ongoing update advances the existing event instead of only
+// changing conversational context.
+{
+  const existing = apply([], {
+    id: 1,
+    text: "早上八点开始debug",
+    eventId: "event-debug",
+  })
+  const result = applyProactiveEventProposal({
+    candidates: existing.candidates,
+    proposal: {
+      ...proposal({
+        messageId: "message-debug-started",
+        description: "早上八点开始debug",
+        state: "ongoing",
+        matchedEventId: "event-debug",
+        evidenceText: "现在开始",
+        updateKind: "ongoing",
+      }),
+      source_evidence: "现在开始",
+    },
+    sourceMessage: {
+      id: "message-debug-started",
+      role: "user",
+      content: "被迫推迟了，现在开始✊🏻",
+      created_at: "2026-08-29T02:37:00.000Z",
+    },
+    contextualAssistantMessage: {
+      id: "assistant-debug-context",
+      role: "assistant",
+      content: "哈，8点debug计划",
+      created_at: "2026-08-29T02:36:00.000Z",
+      is_immediately_previous: true,
+    },
+    now: () => "2026-08-29T02:37:01.000Z",
+  })
+  assert.equal(result.diagnostics.admission_reason, "accepted_existing_update")
+  assert.equal(result.candidates[0].event_id, "event-debug")
+  assert.equal(result.candidates[0].state, "ongoing")
+  assert.equal(result.candidates[0].last_user_update.message_id, "message-debug-started")
+  assert.deepEqual(result.candidates[0].source_message_ids, ["message-1", "message-debug-started"])
+}
+
 {
   const ids = ["event-lunch", "event-facial"]
   const result = applyProactiveEventProposals({

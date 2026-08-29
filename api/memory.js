@@ -28,6 +28,10 @@ import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
 import { normalizeProactiveAttentionCandidates } from "../lib/proactiveAttentionCandidates.js"
 import {
+  formatMentionPreferences,
+  normalizeActiveConversationContext,
+} from "../lib/activeConversationContext.js"
+import {
   PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
   evaluateProactiveAttentionExecution,
   planProactiveAttentionWakeup,
@@ -1344,19 +1348,26 @@ async function getRecentInactivityContext(task) {
     .eq("conversation_id", task.conversation_id)
     .in("role", ["user", "assistant"])
     .order("created_at", { ascending: false })
-    .limit(6)
+    .limit(20)
 
   if (error) throw error
 
-  const messages = [...(data || [])].reverse().map(message => ({
+  const allMessages = [...(data || [])].reverse().map(message => ({
     ...message,
     content: normalizeAssistantOutput(message),
   }))
+  const messages = allMessages.slice(-6)
   const fallback = task.payload?.last_conversation_state || "open"
+  const latestActiveContext = [...allMessages].reverse()
+    .map(message => normalizeActiveConversationContext(
+      message.metadata?.activeConversationContext
+    ))
+    .find(Boolean) || { items: [] }
 
   return {
     messages,
     state: detectRecentConversationState(messages, fallback),
+    mentionPreferencesPrompt: formatMentionPreferences(latestActiveContext),
   }
 }
 
@@ -1429,6 +1440,11 @@ ${systemPrompt}
 - 不得为了营造关系感而否认、改写或补造可见历史。历史明确显示我说过或做过，就不能声称没有发生；历史没有证据时，也不要凭空声称过去发生过某个具体聊天行为。
 - 标记为“小C主动发送”的内容是我过去生成并实际发出的消息，但其中对更早历史的叙述不自动成为事实。若它与更早的真实消息行为或她的原话冲突，以真实消息行为和她的原话为准。
 - 不需要机械复述历史；只有产生明确历史断言时才应用这些约束。
+
+【她明确表达的提及边界】
+${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
+- 这些边界只限制小C主动把话题带回来或反复检查，不删除事实，也不妨碍她当前主动重提时正常回应。
+- 当前是 inactivity 主动靠近；若某主题处于 suppress，不要围绕它提问、检查状态，也不要换一种说法继续追问。没有合适话题时直接表达想念或靠近。
 
 要求：
 - 只输出消息内容，不要解释。
@@ -2615,7 +2631,7 @@ async function checkPendingProactiveTasks() {
 
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
-    .select("id,user_id,type,source_type,source_id,status,due_at,reason,payload,created_at")
+    .select("id,user_id,conversation_id,type,source_type,source_id,status,due_at,reason,payload,created_at")
     .eq("status", "pending")
     .lte("due_at", now.toISOString())
     .order("due_at", { ascending: true })

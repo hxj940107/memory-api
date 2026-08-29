@@ -248,7 +248,7 @@ async function judgeActiveConversationContext({
     "user_update":{"kind":"completed、cancelled、rescheduled、planned、ongoing、result或other","explicitness":"explicit、implicit或none","evidence_text":"当前用户原话中的直接状态证据","time_evidence_text":null},
     "follow_up_profile":{"result_expected":false,"result_uncertainty":"none、low或meaningful","significance":"low、medium或high","routine":false,"immediate_continuation":false}
   }],
-  "active_context":{"items":[]}
+  "active_context":{"items":[],"mention_preferences":[]}
 }
 
 必须先完整输出 proactive_event_proposals，再输出 active_context。不要改变这个字段顺序，不要输出解释或额外 diagnostics。
@@ -270,6 +270,10 @@ Active context 更新原则：
 - 小C的随口联想、玩笑、比喻、临时错误表达或主动消息自述，除非她明确确认或后续持续展开，否则不能升级为 active item。
 - 新增 active item 必须引用下方 user source ledger 中真实支持它的消息 ID，并提供该 user 原话中的简短连续片段作为 source_evidence。不能根据小C回复、旧摘要或推断创建 factual active item，也不能机械绑定当前消息 ID。
 - 已有事项沿用原 source_message_id。只有当前 user 原话明确引用或更新该事项时，last_referenced_message_id 才能改成当前消息 ID，并提供当前消息中的 source_evidence。
+- mention_preferences 记录她明确表达的“某话题不要再主动反复问/提”或“现在可以再聊”边界；每项格式：{"topic":"语义主题","action":"suppress或allow","scope":"unsolicited_check_in或all_mentions","strength":"soft或firm","source_message_id":"当前用户消息ID","evidence_text":"当前用户原话中的直接证据"}。
+- 不要把普通否定、一次不回答、话题切换或“没那么严重”单独解释为 suppress；必须有她对小C如何提及该话题的明确要求，例如“你别老问”“这个别再提了”。状态事实与 mention preference 可以在同一轮同时更新。
+- suppress 默认只约束无新证据的主动检查和反复追问，不代表删除事实或永久封禁。她主动重提、提供新事实或明确恢复讨论时应正常回应；action=allow 只在她当前明确解除同一 topic 边界时输出。
+- mention preference 的 evidence_text 必须逐字来自当前 user message，或来自下方 Recent user source ledger 中尚未结构化的明确边界原话；source_message_id 必须指向该条真实 user message。这样部署后无需她把仍在 Recent 的明确要求再说一次。不得从 assistant、Memory、Summary 推断边界，也不得用旧消息解除边界；action=allow 必须来自当前 user message。未被本轮改变的已有 preference 原样保留。
 
 Proactive event shadow proposals 原则：
 - 这只是结构化现实事件捕获，不会创建任务或发送主动消息；最多返回3项，没有符合条件的事件时返回空数组。
@@ -288,6 +292,7 @@ Proactive event shadow proposals 原则：
 - completed/cancelled 时 user_update.kind 必须分别为 completed/cancelled，explicitness 必须为 explicit。症状改善、感受变化、评价或背景变化本身不等于事件完成或取消；只有用户明确表达事件本身已经结束、完成或取消，才标 explicit terminal update。
 - terminal/closed candidate 仍用于 identity continuity 判断。没有新的明确 user 证据时，不得把同一事项静默创建成新 UUID；明确表达新的 occurrence 时才可新建。
 - 当前消息明确报告已有事件 completed、cancelled、ongoing 或 rescheduled 时，必须优先输出 matched_event_id 指向既有 candidate 的 update；不能因为 candidate 已满、expected window 已过、candidate age 或 attention_status 而省略 lifecycle proposal。capacity 只限制新事件。
+- 对“现在开始”“已经开始了”“还在做”等 existing-event ongoing 更新，同样必须输出 user_update，kind=ongoing，evidence_text 逐字引用当前 user 原话；不能只更新 Active Context 而漏掉 candidate lifecycle proposal。
 - “做好啦”“结束啦”“不去了”“弄完了”这类极短状态更新，只有近期真实 user context 中存在明确且唯一的事件指代时才匹配；多个 candidate 都合理时 matched_event_id 必须为 null，不要猜。带有明确事件身份的状态更新可以匹配较旧 candidate。
 - description 最多80字，只描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
 - local_interpreted_window 先按 Asia/Shanghai 写本地墙上时间，格式 YYYY-MM-DDTHH:mm:ss，不带 Z。相对时间必须锚定当前 user message 的真实发送时间；今天、明天、周五、上午、下午、三点半都先按上海时间理解。不得把上海本地钟点直接写成 Z 时间。

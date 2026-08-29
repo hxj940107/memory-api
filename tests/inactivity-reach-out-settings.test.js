@@ -43,6 +43,8 @@ test("task creation and execution both honor the user setting", () => {
   assert.match(chatSource, /reach_out_mode: reachOutMode/)
   assert.match(chatSource, /reachOutMode === "off"/)
   assert.match(memorySource, /用户已关闭主动联系/)
+  assert.match(memorySource, /formatMentionPreferences/)
+  assert.match(memorySource, /不要围绕它提问、检查状态/)
 })
 
 test("completed inactivity reach-outs schedule a guarded continuation", () => {

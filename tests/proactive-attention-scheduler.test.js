@@ -183,6 +183,10 @@ for (const [field, reason] of [
   assert.match(memoryApi, /if \(task\.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE\) \{\s*return executeProactiveAttentionWakeup\(task\)/)
   assert.match(memoryApi, /message_id: result\.shadowOnly \? null : result\.messageId/)
   assert.match(memoryApi, /onConflict: "user_id,type,source_type,source_id"/)
+  assert.match(
+    memoryApi,
+    /select\("id,user_id,conversation_id,type,source_type,source_id,status,due_at,reason,payload,created_at"\)/,
+  )
 }
 
 console.log("proactive attention scheduler tests passed")

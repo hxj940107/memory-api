@@ -131,6 +131,111 @@ const exam = {
 }
 
 {
+  const suppressed = resolveActiveConversationContext({ items: [exam] }, {
+    items: [exam],
+    mention_preferences: [{
+      topic: "右侧腰部疼痛近况",
+      action: "suppress",
+      scope: "unsolicited_check_in",
+      strength: "soft",
+      source_message_id: "message-boundary",
+      evidence_text: "你别老问",
+    }],
+  }, {
+    currentUserMessageId: "message-boundary",
+    userSourceLedger: [{
+      id: "message-boundary",
+      role: "user",
+      content: "没那么严重啦，你别老问",
+    }],
+  })
+  assert.equal(suppressed.mention_preferences.length, 1)
+  assert.equal(suppressed.mention_preferences[0].topic, "右侧腰部疼痛近况")
+  assert.doesNotMatch(JSON.stringify(suppressed), /evidence_text/)
+  assert.match(formatActiveConversationContext(suppressed), /不要把它作为无新证据的主动检查/)
+
+  const carried = resolveActiveConversationContext(suppressed, { items: [exam] })
+  assert.equal(carried.mention_preferences.length, 1)
+
+  const released = resolveActiveConversationContext(carried, {
+    items: [exam],
+    mention_preferences: [{
+      topic: "右侧腰部疼痛近况",
+      action: "allow",
+      scope: "unsolicited_check_in",
+      strength: "soft",
+      source_message_id: "message-release",
+      evidence_text: "这个可以聊了",
+    }],
+  }, {
+    currentUserMessageId: "message-release",
+    userSourceLedger: [{
+      id: "message-release",
+      role: "user",
+      content: "这个可以聊了",
+    }],
+  })
+  assert.equal(released.mention_preferences, undefined)
+}
+
+{
+  const invalid = resolveActiveConversationContext({ items: [exam] }, {
+    items: [exam],
+    mention_preferences: [{
+      topic: "右侧腰部疼痛近况",
+      action: "suppress",
+      source_message_id: "message-boundary",
+      evidence_text: "你别老问",
+    }],
+  }, {
+    currentUserMessageId: "message-boundary",
+    userSourceLedger: [{
+      id: "message-boundary",
+      role: "user",
+      content: "没那么严重啦",
+    }],
+  })
+  assert.equal(invalid.mention_preferences, undefined)
+}
+
+{
+  const backfilled = resolveActiveConversationContext({ items: [exam] }, {
+    items: [exam],
+    mention_preferences: [{
+      topic: "右侧腰部疼痛近况",
+      action: "suppress",
+      source_message_id: "message-recent-boundary",
+      evidence_text: "你别老问",
+    }],
+  }, {
+    currentUserMessageId: "message-current",
+    userSourceLedger: [
+      { id: "message-recent-boundary", role: "user", content: "没那么严重啦，你别老问" },
+      { id: "message-current", role: "user", content: "刚醒" },
+    ],
+  })
+  assert.equal(backfilled.mention_preferences.length, 1)
+  assert.equal(backfilled.mention_preferences[0].source_message_id, "message-recent-boundary")
+
+  const staleRelease = resolveActiveConversationContext(backfilled, {
+    items: [exam],
+    mention_preferences: [{
+      topic: "右侧腰部疼痛近况",
+      action: "allow",
+      source_message_id: "message-old-release",
+      evidence_text: "可以再聊",
+    }],
+  }, {
+    currentUserMessageId: "message-current",
+    userSourceLedger: [
+      { id: "message-old-release", role: "user", content: "可以再聊" },
+      { id: "message-current", role: "user", content: "刚醒" },
+    ],
+  })
+  assert.equal(staleRelease.mention_preferences.length, 1)
+}
+
+{
   const prompt = formatActiveConversationContext(
     { items: [exam] },
     { recentMessageIds: ["message-exam"] }
@@ -158,6 +263,8 @@ const exam = {
   assert.match(judgeSource, /response_format: \{ type: "json_object" \}/)
   assert.match(chat, /merge_action: "parse_failed"/)
   assert.match(chat, /raw_output_summary/)
+  assert.match(judgeSource, /mention_preferences/)
+  assert.match(judgeSource, /你别老问/)
   assert.doesNotMatch(judgeSource, /plan_follow_up|should_follow_up/)
   assert.doesNotMatch(chat, /enqueuePlanFollowUpTask|buildRuleBasedPlanFollowUp/)
 }
