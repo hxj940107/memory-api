@@ -1065,7 +1065,10 @@ ${trimText(recentChat, 1800) || "最近没有可用聊天上下文"}
   try {
     return parseMomentDecision(raw)
   } catch (err) {
-    console.error("moment decision parse failed, retrying:", trimText(raw, 300))
+    console.error("moment decision parse failed, retrying:", {
+      error: err?.message || "invalid_json",
+      outputLength: String(raw || "").length,
+    })
   }
 
   const retryRaw = await callSmallLLM(
@@ -1587,7 +1590,7 @@ ${recentContext.recentProactiveMessages?.length
       console.warn("PROACTIVE FACTUAL GROUNDING REJECTED:", {
         taskId: task.id || null,
         reason: factualGrounding.reason,
-        anchors: factualGrounding.anchors,
+        anchorCount: factualGrounding.anchors?.length || 0,
       })
     }
     return {
@@ -3959,7 +3962,7 @@ export default async function handler(req, res) {
       ])
       const result = { moments, proactive, momentCandidates }
 
-      console.log("MOMENT XIAOC CHECK:", result)
+      console.log("MOMENT XIAOC CHECK COMPLETED")
       return res.status(200).json({ success: true, ...result })
     }
 
@@ -3972,7 +3975,7 @@ export default async function handler(req, res) {
 
       const result = await checkPendingMomentsForXiaoC()
 
-      console.log("MOMENT INTERACTION EVENT CHECK:", result)
+      console.log("MOMENT INTERACTION EVENT CHECK COMPLETED")
       return res.status(200).json({ success: true, ...result })
     }
 
@@ -3989,7 +3992,7 @@ export default async function handler(req, res) {
       ])
       const result = { proactive, momentCandidates }
 
-      console.log("XIAOC BACKGROUND CHECK:", result)
+      console.log("XIAOC BACKGROUND CHECK COMPLETED")
       return res.status(200).json({ success: true, ...result })
     }
 
@@ -4002,7 +4005,7 @@ export default async function handler(req, res) {
 
       const result = await checkPendingProactiveTasks()
 
-      console.log("XIAOC PROACTIVE CHECK:", result)
+      console.log("XIAOC PROACTIVE CHECK COMPLETED")
       return res.status(200).json({ success: true, ...result })
     }
 

@@ -15,6 +15,7 @@ import {
   AppState,
   ActionSheetIOS,
   Alert,
+  RefreshControl,
   type GestureResponderEvent,
 } from "react-native";
 
@@ -165,6 +166,7 @@ type SignedAttachmentResponse = {
 
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_FILE_CHARS = 12000;
+const HISTORY_PAGE_SIZE = 60;
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -997,8 +999,17 @@ export default function ChatScreen() {
   const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
 
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
+  const [hasOlderHistory, setHasOlderHistory] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
+  const scrollOffsetYRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const prependAnchorRef = useRef<{
+    contentHeight: number;
+    scrollOffsetY: number;
+  } | null>(null);
+  const skipNextMessageAutoScrollRef = useRef(false);
   const inputRef = useRef<TextInput>(null);
   const keyboardVisibleRef = useRef(false);
   const sendButtonProgress = useRef(new RNAnimated.Value(0)).current;
@@ -1020,6 +1031,11 @@ export default function ChatScreen() {
   const isSendDisabled = !canSendMessage || isTyping;
 
   useEffect(() => {
+    if (skipNextMessageAutoScrollRef.current) {
+      skipNextMessageAutoScrollRef.current = false;
+      return;
+    }
+
     RNAnimated.timing(sendButtonProgress, {
       toValue: canSendMessage ? 1 : 0,
       duration: 160,
@@ -1049,6 +1065,76 @@ export default function ChatScreen() {
       clearTimeout(layoutTimer);
     };
   }, [messages.length, messages[messages.length - 1]?.text?.length, isTyping]);
+
+  const restoreHistoryItems = async (data: HistoryItem[]) => {
+    let savedDiaryKeys = new Set<string>();
+
+    if (
+      data.some(
+        (item) => item.role === "assistant" && isDiaryText(item.content),
+      )
+    ) {
+      try {
+        const cloudDiaries = await apiJson<ObservationDiaryEntry[]>(
+          "/api/memory",
+          {
+            query: {
+              type: "diary",
+              user_id: APP_USER_ID,
+            },
+          },
+        );
+
+        savedDiaryKeys = new Set(cloudDiaries.map(getDiaryEntryKey));
+      } catch (error) {
+        console.log("Saved diary status load failed:", error);
+      }
+    }
+
+    return Promise.all(
+      data.map(async (item) => {
+        const treeholeDraft =
+          item.role === "assistant" ? parseTreeholeDraft(item.content) : null;
+        const treeholeAlreadySaved = treeholeDraft
+          ? await isTreeholeDraftSaved(treeholeDraft)
+          : false;
+        const diaryEntry =
+          item.role === "assistant" && isDiaryText(item.content)
+            ? parseDiaryText(item.content)
+            : null;
+        const diaryAlreadySaved = diaryEntry
+          ? savedDiaryKeys.has(getDiaryEntryKey(diaryEntry))
+          : false;
+
+        return {
+          id: String(item.id),
+          cloudId: String(item.id),
+          clientId: item.metadata?.clientMessageId,
+          role: item.role,
+          imageUris: item.metadata?.imageUrls || (
+            item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
+          ),
+          fileName: item.metadata?.fileName,
+          fileMimeType: item.metadata?.fileMimeType,
+          fileSize: item.metadata?.fileSize,
+          attachments: normalizeGeneratedAttachments(item.metadata),
+          text: treeholeDraft || shouldHideImagePlaceholderText(
+            item.content,
+            item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
+          )
+            ? ""
+            : item.content,
+          treeholeDraft: treeholeDraft || undefined,
+          treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
+          diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
+          imageUri: item.metadata?.imageUrl,
+          createdAt: item.created_at,
+          metadata: item.metadata,
+          status: "sent",
+        } satisfies Message;
+      }),
+    );
+  };
 
   const openMessageMenu = (
     text: string,
@@ -1395,6 +1481,7 @@ export default function ChatScreen() {
         conversationIdRef.current = draftConversationId;
         conversationTitleInitializedRef.current = false;
         latestCloudMessageIdRef.current = null;
+        setHasOlderHistory(false);
         setMessages([]);
         return;
       }
@@ -1407,6 +1494,7 @@ export default function ChatScreen() {
         setConversationId(draftConversationId);
         conversationIdRef.current = draftConversationId;
         conversationTitleInitializedRef.current = false;
+        setHasOlderHistory(false);
         setLoadingHistory(false);
         return;
       }
@@ -1419,7 +1507,7 @@ export default function ChatScreen() {
         query: {
           user_id: APP_USER_ID,
           conversation_id: id,
-          limit: 150,
+          limit: HISTORY_PAGE_SIZE,
         },
       });
 
@@ -1429,77 +1517,12 @@ export default function ChatScreen() {
         conversationIdRef.current = null;
         conversationTitleInitializedRef.current = false;
         latestCloudMessageIdRef.current = null;
+        setHasOlderHistory(false);
         setMessages([]);
         return;
       }
 
-      let savedDiaryKeys = new Set<string>();
-
-      if (
-        data.some(
-          (item) => item.role === "assistant" && isDiaryText(item.content),
-        )
-      ) {
-        try {
-          const cloudDiaries = await apiJson<ObservationDiaryEntry[]>(
-            "/api/memory",
-            {
-              query: {
-                type: "diary",
-                user_id: APP_USER_ID,
-              },
-            },
-          );
-
-          savedDiaryKeys = new Set(cloudDiaries.map(getDiaryEntryKey));
-        } catch (error) {
-          console.log("Saved diary status load failed:", error);
-        }
-      }
-
-      const restoredMessages = await Promise.all(
-        data.map(async (item) => {
-          const treeholeDraft =
-            item.role === "assistant" ? parseTreeholeDraft(item.content) : null;
-          const treeholeAlreadySaved = treeholeDraft
-            ? await isTreeholeDraftSaved(treeholeDraft)
-            : false;
-          const diaryEntry =
-            item.role === "assistant" && isDiaryText(item.content)
-              ? parseDiaryText(item.content)
-              : null;
-          const diaryAlreadySaved = diaryEntry
-            ? savedDiaryKeys.has(getDiaryEntryKey(diaryEntry))
-            : false;
-
-          return {
-            id: String(item.id),
-            cloudId: String(item.id),
-            clientId: item.metadata?.clientMessageId,
-            role: item.role,
-            imageUris: item.metadata?.imageUrls || (
-              item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
-            ),
-            fileName: item.metadata?.fileName,
-            fileMimeType: item.metadata?.fileMimeType,
-            fileSize: item.metadata?.fileSize,
-            attachments: normalizeGeneratedAttachments(item.metadata),
-            text: treeholeDraft || shouldHideImagePlaceholderText(
-              item.content,
-              item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
-            )
-              ? ""
-              : item.content,
-            treeholeDraft: treeholeDraft || undefined,
-            treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
-            diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
-            imageUri: item.metadata?.imageUrl,
-            createdAt: item.created_at,
-            metadata: item.metadata,
-            status: "sent",
-          } satisfies Message;
-        }),
-      );
+      const restoredMessages = await restoreHistoryItems(data);
 
       const pendingReplyClientId = pendingReplyClientIdRef.current;
       if (
@@ -1520,6 +1543,7 @@ export default function ChatScreen() {
           ? mergeCloudMessages(current, restoredMessages)
           : restoredMessages,
       );
+      if (!silent) setHasOlderHistory(data.length === HISTORY_PAGE_SIZE);
       latestCloudMessageIdRef.current = data.length
         ? String(data[data.length - 1].id || "") || null
         : null;
@@ -1527,6 +1551,52 @@ export default function ChatScreen() {
       console.log(error);
     } finally {
       if (!silent) setLoadingHistory(false);
+    }
+  };
+
+  const loadOlderHistory = async () => {
+    const id = conversationIdRef.current;
+    const oldestCloudMessage = messages.find(
+      (item) => item.cloudId && item.createdAt,
+    );
+
+    if (
+      !id ||
+      !hasOlderHistory ||
+      loadingOlderHistory ||
+      !oldestCloudMessage?.createdAt
+    ) {
+      return;
+    }
+
+    setLoadingOlderHistory(true);
+
+    try {
+      const data = await apiJson<HistoryItem[]>("/api/history", {
+        query: {
+          user_id: APP_USER_ID,
+          conversation_id: id,
+          limit: HISTORY_PAGE_SIZE,
+          before_created_at: oldestCloudMessage.createdAt,
+          before_id: String(oldestCloudMessage.cloudId),
+        },
+      });
+      const restoredMessages = await restoreHistoryItems(data);
+
+      if (restoredMessages.length > 0) {
+        prependAnchorRef.current = {
+          contentHeight: contentHeightRef.current,
+          scrollOffsetY: scrollOffsetYRef.current,
+        };
+        skipNextMessageAutoScrollRef.current = true;
+        setMessages((current) => mergeCloudMessages(current, restoredMessages));
+      }
+
+      setHasOlderHistory(data.length === HISTORY_PAGE_SIZE);
+    } catch (error) {
+      console.log("Older chat history load failed:", error);
+    } finally {
+      setLoadingOlderHistory(false);
     }
   };
 
@@ -2132,11 +2202,34 @@ export default function ChatScreen() {
             messages.length === 0 && styles.empty,
           ]}
           keyboardShouldPersistTaps="handled"
-          onContentSizeChange={() =>
-            scrollRef.current?.scrollToEnd({
-              animated: true,
-            })
+          refreshControl={
+            hasOlderHistory ? (
+              <RefreshControl
+                refreshing={loadingOlderHistory}
+                onRefresh={loadOlderHistory}
+                tintColor="#A6A6AA"
+              />
+            ) : undefined
           }
+          onScroll={(event) => {
+            scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+          onContentSizeChange={(_width, height) => {
+            const anchor = prependAnchorRef.current;
+            contentHeightRef.current = height;
+
+            if (anchor) {
+              prependAnchorRef.current = null;
+              scrollRef.current?.scrollTo({
+                y: anchor.scrollOffsetY + Math.max(0, height - anchor.contentHeight),
+                animated: false,
+              });
+              return;
+            }
+
+            scrollRef.current?.scrollToEnd({ animated: true });
+          }}
         >
           {loadingHistory ? (
             <TypingDots />

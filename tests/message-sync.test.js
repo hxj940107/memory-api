@@ -213,3 +213,20 @@ test("history API adds message id as a stable secondary order", () => {
     /\.order\("created_at", \{ ascending: false \}\)\s*\.order\("id", \{ ascending: false \}\)/,
   )
 })
+
+test("chat history loads older messages with a stable cursor and manual pull", () => {
+  const apiSource = readFileSync("api/history.js", "utf8")
+  const chatSource = readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+
+  assert.match(apiSource, /before_created_at/)
+  assert.match(
+    apiSource,
+    /created_at\.lt\.\$\{cursorTime\},and\(created_at\.eq\.\$\{cursorTime\},id\.lt\.\$\{before_id\}\)/,
+  )
+  assert.match(chatSource, /const HISTORY_PAGE_SIZE = 60/)
+  assert.match(chatSource, /<RefreshControl[\s\S]*onRefresh=\{loadOlderHistory\}/)
+  assert.match(chatSource, /before_created_at: oldestCloudMessage\.createdAt/)
+  assert.match(chatSource, /before_id: String\(oldestCloudMessage\.cloudId\)/)
+  assert.match(chatSource, /prependAnchorRef\.current = \{/)
+  assert.match(chatSource, /height - anchor\.contentHeight/)
+})

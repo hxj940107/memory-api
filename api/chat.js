@@ -2031,7 +2031,10 @@ async function saveMomentCandidate({
   if (pendingError) throw pendingError
 
   if (isRecentMomentDuplicate(candidate.text, pendingCandidates || [])) {
-    console.log("MOMENT CANDIDATE SKIPPED: duplicate pending", candidate.text)
+    console.log("MOMENT CANDIDATE SKIPPED:", {
+      reason: "duplicate_pending",
+      textLength: candidate.text.length,
+    })
     return { created: false, candidateId: null, reason: "duplicate_pending" }
   }
 
@@ -2258,7 +2261,6 @@ async function maybeCreateMoment({
   console.log("MOMENT CONTEXT MESSAGE LIMIT:", momentContextLimit)
   console.log("MOMENT CONTEXT MESSAGE COUNT:", historyContextMessages.length)
   console.log("MOMENT CONTEXT CHAR COUNT:", context.length)
-  console.log("MOMENT CONTEXT PREVIEW:", context.slice(0, 500))
   console.log("MOMENT RECENT ENTRY COUNT:", recentMoments.length)
 
   const momentMessages = [
@@ -2470,7 +2472,15 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     const candidate = parseMomentCandidate(result.reply)
     const requestedImageId = candidate.image
 
-    console.log("MOMENT CANDIDATE:", candidate)
+    console.log("MOMENT CANDIDATE:", {
+      parseFailed: candidate.parseFailed,
+      shouldPost: candidate.shouldPost,
+      textLength: candidate.text?.length || 0,
+      requestedImage: Boolean(candidate.image),
+      priority: candidate.priority,
+      shareMode: candidate.shareMode,
+      hasEventTime: Boolean(candidate.eventTime),
+    })
 
     if (candidate.parseFailed) {
       console.error("MOMENT JSON PARSE FAILED:", candidate.errorSummary)
@@ -2542,7 +2552,10 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     })
 
     if (isInvalidMomentText(candidate.text)) {
-      console.log("MOMENT CHECK SKIPPED: invalid text", candidate.text)
+      console.log("MOMENT CHECK SKIPPED:", {
+        reason: "invalid_text",
+        textLength: candidate.text.length,
+      })
       await completeMomentAudit(auditId, {
         skip_reason: "invalid_text",
         outcome: "candidate_rejected",
@@ -2565,7 +2578,10 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     const momentSourceText = `${context}\n${message}\n${reply}`
 
     if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
-      console.log("MOMENT CHECK SKIPPED: duplicate", candidate.text)
+      console.log("MOMENT CHECK SKIPPED:", {
+        reason: "duplicate_recent",
+        textLength: candidate.text.length,
+      })
       await completeMomentAudit(auditId, {
         skip_reason: "duplicate_recent",
         outcome: "candidate_rejected",
@@ -2574,7 +2590,10 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     }
 
     if (hasUnsupportedMomentWeather(candidate.text, momentSourceText)) {
-      console.log("MOMENT CHECK SKIPPED: unsupported weather", candidate.text)
+      console.log("MOMENT CHECK SKIPPED:", {
+        reason: "unsupported_weather",
+        textLength: candidate.text.length,
+      })
       await completeMomentAudit(auditId, {
         skip_reason: "unsupported_weather",
         outcome: "candidate_rejected",
@@ -2718,7 +2737,7 @@ async function searchWeb(query, { automatic = false } = {}) {
   const cached = webSearchCache.get(cacheKey)
 
   if (cached && Date.now() - cached.createdAt < WEB_SEARCH_POLICY.cacheTtlMs) {
-    console.log("WEB SEARCH CACHE HIT:", normalizedQuery)
+    console.log("WEB SEARCH CACHE HIT:", { queryLength: normalizedQuery.length })
     return cached.result
   }
 
@@ -3250,7 +3269,7 @@ if (forcedWebSearch || automaticWebSearch) {
 
   console.log("WEB SEARCH:", {
     source: forcedWebSearch ? "forced" : "automatic_rule",
-    query
+    queryLength: query.length,
   })
 
   webSearch = trimText(
@@ -3469,7 +3488,7 @@ if (fallbackSearchQuery) {
   })
   console.log("WEB SEARCH:", {
     source: "model_uncertainty",
-    query: fallbackSearchQuery
+    queryLength: fallbackSearchQuery.length,
   })
 
   const fallbackWebSearch = trimText(
@@ -3559,7 +3578,7 @@ console.log("======================================\n")
             userMessageId,
             imageCount: normalizedImageUrls.length,
             imageLengths: normalizedImageUrls.map(url => url.length),
-            imageDescription
+            descriptionLength: imageDescription.length,
           })
           const { data: imageMessage } = await supabase
             .from("messages")
@@ -3680,7 +3699,12 @@ console.log("======================================\n")
             if (saved) {
               clearUserMemoryCache(user_id)
               clearConversationMemorySearchCache(cid)
-              console.log("Saved memory:", judgeResult.content)
+              console.log("MEMORY SAVED:", {
+                userMessageId,
+                conversationId: cid,
+                contentLength: judgeResult.content.length,
+                category: judgeResult.category || null,
+              })
 
               try {
                 const episodic = await saveEpisodicObservation({
