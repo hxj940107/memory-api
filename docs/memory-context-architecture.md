@@ -6,6 +6,8 @@
 
 截至本轮交接，Memory / Context P0、P1 与 P1.5（Batch 1、reliability cleanup、Batch 2A、2B、2C）均已实现并进入生产观察。真实 proactive send rollout 继续受服务器开关、limited rollout 与 execution-time safety 控制；judge deterministic prefilter 仍为 Shadow，只收集可跳过比例与 dangerous false skip。P1.5 当前功能开发冻结，只在出现真实 production blocker 时回修，不再阻塞 P2 Shared Context。
 
+2026-08-29 第一阶段全项目体检后的 reliability 修复已在当前工作树完成，但尚不能写成“生产已验证”：后台任务有限重试与 stale claim 回收、post-chat `waitUntil`、Shared Context checkpoint 越窗恢复与 parse-failure backoff、独立图片 provenance、Treehole 用户素材 admission、inactivity fallback diagnostics 均需先部署，再观察约 12–24 小时并做只读生产审计。审计通过前不启用 Judge prefilter real skip，也不开始新的 P2 功能 Batch。
+
 ### 0.1 已完成
 
 P0 已全部完成：
@@ -55,6 +57,7 @@ P1 当前已完成：
 以下项目需要继续观察或尚未实施，不得与上述已完成状态混淆：
 
 - P1.5 real proactive send 的持续生产观察，以及 judge prefilter Shadow 数据验证；
+- 第一阶段 reliability 修复的部署后生产验证；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。
@@ -78,6 +81,7 @@ P2 Shared Context MVP 已实现；完整 Artifact、周/月回顾和更深入的
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
 - `PROACTIVE_ATTENTION_SEND_ENABLED` 仍是生产 kill switch；无论开关状态，Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
 - 当前顺序固定为：稳定真实发送与成本 observability → 只修 production blocker → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
+- 当前近期顺序固定为：部署 Phase 1 health-check 修复 → 正常使用 12–24 小时 → 只读生产审计 → Judge prefilter readiness；审计通过前不得把工作树结果当成生产结论。
 
 ## 1. 当前核心设计原则
 

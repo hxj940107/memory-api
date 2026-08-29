@@ -123,6 +123,14 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 - 设置页 token 花费已改为优先读取 OpenRouter 当前 key 的真实月度 usage，同时保留本地统计作为降级路径。
 
+- 2026-08-29 Phase 1 全项目体检 reliability 修复已在当前工作树完成，尚待部署后验证：
+  - 已加入后台任务有限重试、15 分钟 stale `processing` 回收和 task/message 幂等；没有新增 schema。
+  - post-chat 图片描述持久化、Summary dispatch、conversation state 使用 `waitUntil`。
+  - Shared Context 支持 checkpoint 越窗恢复、missing fail-closed 和 parse-failure 30 分钟 backoff。
+  - 历史图片只信任独立 `imageDescription`；Treehole admission 使用真实 user 素材字符；inactivity fallback 记录原因。
+  - 本地验证为 134/134 Node tests、JS syntax 与 `git diff --check` 通过，API Function 仍为 12/12。
+  - 下一步不是新功能：先部署，正常使用约 12–24 小时，再做只读 production audit。通过后才评估 Judge prefilter real skip；在 30–50 个代表性 turn 且 dangerous false skip 为 0 前必须保持 Shadow。
+
 ## 伴侣人格
 
 XiaoC 应该是温柔、理性、成熟的。

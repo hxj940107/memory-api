@@ -8,9 +8,34 @@ This section is the current planning authority. Dated milestone sections below a
 - P2 Shared Context MVP is implemented. Only explicitly bound conversations inject its working context, and updates are batched rather than called every turn.
 - Summary debounce and the combined Active Context/proactive Judge cost reductions are implemented. Judge prefilter remains Shadow and must not skip real requests until production evidence shows it is safe.
 - Moments, delayed XiaoC interaction, private follow-up, autonomous Treehole, Observation Diary, shared album, and inactivity reach-out are active mobile capabilities rather than placeholders.
-- Background reliability uses bounded retries, stale `processing` recovery, and task/message idempotency. Independent image descriptions are the only trusted historical visual provenance.
+- Phase 1 health-check reliability changes are complete in the current working tree and awaiting deployment/production verification: bounded retries, stale `processing` recovery, task/message idempotency, protected post-chat continuations, Shared Context checkpoint recovery/backoff, and strict independent image provenance.
 - Vercel Hobby remains at the hard limit of 12 Serverless Functions; do not add a new `api/*.js` file without freeing a slot.
 - Current work is stabilization and production observation. Only confirmed production blockers should reopen frozen P1.5 semantics.
+
+## Current Delivery Gate — Phase 1 Health Check
+
+### Code complete
+
+- `xiaoc_proactive_tasks`, `moment_candidates`, and `moment_xiaoc_activity` no longer retry ordinary failures forever. Retry state reuses existing payload/error fields; no database migration is required.
+- A `processing` claim older than 15 minutes is recoverable, while task/message idempotency prevents a recovered proactive task from sending the same message twice.
+- Image-description persistence, Summary dispatch, and current-conversation state updates now use Vercel `waitUntil` instead of unprotected fire-and-forget promises.
+- Shared Context reloads an out-of-window checkpoint before selecting pending messages. A deleted checkpoint fails closed without an LLM call, and parse failures receive a 30-minute retry backoff.
+- Historical image context, Moment material, and Treehole material accept only independent `imageDescription`; an assistant chat reply is no longer reused as visual evidence.
+- Autonomous Treehole admission counts real user material for its character threshold. Inactivity generation records whether the safe fallback was used and why.
+- Regression baseline: `134/134` Node tests pass; all API/lib JavaScript syntax checks and `git diff --check` pass; API Function count remains `12/12`.
+
+### Not yet production-verified
+
+- The current working-tree changes must be deployed before they can be treated as production behavior.
+- After deployment, use XiaoC normally for approximately `12–24` hours, then perform one read-only production audit.
+- The audit must check stale `processing`, retry progression, terminal `failed` tasks, duplicate proactive/Moment output, Summary and image-description persistence, Shared Context checkpoint/backoff diagnostics, inactivity fallback frequency, and paid background requests without a visible or persisted result.
+
+### Next decision
+
+- If the production audit is clean, proceed to Judge prefilter production-readiness analysis using Shadow samples.
+- Do not enable real Judge skipping until there are at least `30–50` representative user turns and zero dangerous false skips, including protection for short updates such as “做完了”“没呢”“取消了”“三点再去”“改明天”.
+- If Shadow evidence is insufficient, keep the Judge unchanged and next address repeated Summary semantic-validation failures with bounded backoff.
+- Do not start a new P2 feature batch, prompt rewrite, or broad `api/chat.js` refactor before this delivery gate is closed.
 
 ## Current Phase
 
