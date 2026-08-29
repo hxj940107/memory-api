@@ -1004,6 +1004,7 @@ export default function ChatScreen() {
   const lastRestoreRouteKeyRef = useRef<string | null>(null);
 
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [sharedContextOpenRequestKey, setSharedContextOpenRequestKey] = useState(0);
 
   const canSendMessage =
     message.trim().length > 0 || selectedImages.length > 0 || !!selectedFile;
@@ -1962,6 +1963,9 @@ export default function ChatScreen() {
                 <ConversationList
                   currentConversationId={conversationId}
                   onNavigate={closeDrawer}
+                  onOpenSharedContext={() => {
+                    setSharedContextOpenRequestKey((value) => value + 1);
+                  }}
                 />
               </View>
             </Animated.View>
@@ -1992,7 +1996,10 @@ export default function ChatScreen() {
           </Pressable>
         </View>
 
-        <SharedContextBar conversationId={conversationId} />
+        <SharedContextBar
+          conversationId={conversationId}
+          openRequestKey={sharedContextOpenRequestKey}
+        />
 
         <ScrollView
           ref={scrollRef}

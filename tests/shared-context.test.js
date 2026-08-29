@@ -102,5 +102,23 @@ assert.match(memory, /ensureSharedContextConversation/)
 const mobileChat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
 assert.match(mobileChat, /const draftConversationId = `chat_\$\{Date\.now\(\)\}`/)
 assert.match(mobileChat, /conversationTitleInitializedRef/)
+assert.match(mobileChat, /openRequestKey=\{sharedContextOpenRequestKey\}/)
+
+const sharedContextBar = fs.readFileSync(
+  "mobile/XiaoC/src/components/SharedContextBar.tsx",
+  "utf8",
+)
+const conversationList = fs.readFileSync(
+  "mobile/XiaoC/src/components/ConversationList.tsx",
+  "utf8",
+)
+assert.match(sharedContextBar, /\{current && \(/)
+assert.match(sharedContextBar, /正在一起进行 · \{current\.title\}/)
+assert.doesNotMatch(sharedContextBar, /打开共同空间/)
+assert.doesNotMatch(sharedContextBar, /＋ 新建或打开/)
+assert.match(sharedContextBar, /const previous = current;\s+setCurrent\(null\);\s+setVisible\(false\);/)
+assert.match(conversationList, /id: "shared_context"/)
+assert.match(conversationList, /title: "共同空间"/)
+assert.match(conversationList, /onOpenSharedContext\?\.\(\)/)
 
 console.log("shared context tests passed")

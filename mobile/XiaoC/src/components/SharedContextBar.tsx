@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -31,17 +31,24 @@ const KIND_OPTIONS: Array<{ value: SharedContext["kind"]; label: string }> = [
   { value: "other", label: "其他" },
 ];
 
-export function SharedContextBar({ conversationId }: { conversationId: string | null }) {
+export function SharedContextBar({
+  conversationId,
+  openRequestKey = 0,
+}: {
+  conversationId: string | null;
+  openRequestKey?: number;
+}) {
   const [current, setCurrent] = useState<SharedContext | null>(null);
   const [items, setItems] = useState<SharedContext[]>([]);
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<SharedContext["kind"]>("reading");
+  const loadSequenceRef = useRef(0);
 
-  const loadCurrent = async () => {
+  const loadCurrent = async (sequence: number) => {
     if (!conversationId) {
-      setCurrent(null);
+      if (sequence === loadSequenceRef.current) setCurrent(null);
       return;
     }
     try {
@@ -53,15 +60,20 @@ export function SharedContextBar({ conversationId }: { conversationId: string | 
           conversation_id: conversationId,
         },
       });
-      setCurrent(result.shared_context);
+      if (sequence === loadSequenceRef.current) {
+        setCurrent(result.shared_context);
+      }
     } catch (error) {
       console.log("Shared Context current load failed:", error);
-      setCurrent(null);
+      if (sequence === loadSequenceRef.current) setCurrent(null);
     }
   };
 
   useEffect(() => {
-    loadCurrent();
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    setCurrent(null);
+    loadCurrent(sequence);
   }, [conversationId]);
 
   const openPicker = async () => {
@@ -79,6 +91,12 @@ export function SharedContextBar({ conversationId }: { conversationId: string | 
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (openRequestKey > 0) {
+      void openPicker();
+    }
+  }, [openRequestKey]);
 
   const createAndBind = async () => {
     if (!conversationId || !title.trim()) return;
@@ -124,6 +142,9 @@ export function SharedContextBar({ conversationId }: { conversationId: string | 
 
   const unbind = async () => {
     if (!conversationId) return;
+    const previous = current;
+    setCurrent(null);
+    setVisible(false);
     setLoading(true);
     try {
       await postJson("/api/memory", {
@@ -132,23 +153,21 @@ export function SharedContextBar({ conversationId }: { conversationId: string | 
         user_id: APP_USER_ID,
         conversation_id: conversationId,
       });
-      setCurrent(null);
-      setVisible(false);
     } catch (error) {
       console.log("Shared Context unbind failed:", error);
+      setCurrent(previous);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!conversationId) return null;
-
   return (
     <>
-      <Pressable style={styles.bar} onPress={openPicker}>
-        <Text style={styles.label}>{current ? "正在一起进行" : "打开共同空间"}</Text>
-        <Text style={styles.title} numberOfLines={1}>{current ? `「${current.title}」` : "＋ 新建或打开"}</Text>
-      </Pressable>
+      {current && (
+        <Pressable style={styles.bar} onPress={openPicker}>
+          <Text style={styles.title} numberOfLines={1}>正在一起进行 · {current.title}</Text>
+        </Pressable>
+      )}
 
       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
         <Pressable style={styles.backdrop} onPress={() => setVisible(false)} />
@@ -198,9 +217,8 @@ export function SharedContextBar({ conversationId }: { conversationId: string | 
 }
 
 const styles = StyleSheet.create({
-  bar: { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: XiaoCColors.navigationBackground, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: XiaoCColors.separator, flexDirection: "row", alignItems: "center", gap: 8 },
-  label: { fontSize: 11, color: XiaoCColors.textSecondary },
-  title: { flex: 1, fontSize: 13, color: XiaoCColors.textPrimary, fontWeight: "500" },
+  bar: { minHeight: 30, paddingHorizontal: 20, paddingVertical: 5, backgroundColor: XiaoCColors.navigationBackground, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: XiaoCColors.separator, alignItems: "center", justifyContent: "center" },
+  title: { maxWidth: "100%", fontSize: 12, lineHeight: 17, color: XiaoCColors.textSecondary, fontWeight: "500" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.24)" },
   sheet: { position: "absolute", left: 18, right: 18, top: "18%", maxHeight: "66%", padding: 20, borderRadius: 24, backgroundColor: XiaoCColors.background },
   sheetTitle: { fontSize: 20, fontWeight: "600", color: XiaoCColors.textPrimary, marginBottom: 16 },

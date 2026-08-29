@@ -43,7 +43,7 @@ type ConversationListRow =
     };
 
 type XiaoCSpace = {
-  id: "we" | "treehole" | "diary" | "favorites" | "moments" | "album";
+  id: "we" | "treehole" | "diary" | "favorites" | "moments" | "album" | "shared_context";
   iconName: string;
   title: string;
 };
@@ -73,6 +73,11 @@ const xiaoCSpaces: XiaoCSpace[] = [
     id: "album",
     iconName: "photo.on.rectangle",
     title: "共享相册",
+  },
+  {
+    id: "shared_context",
+    iconName: "square.stack.3d.up",
+    title: "共同空间",
   },
 ];
 
@@ -128,9 +133,11 @@ function ConversationItem({
 
 export default function ConversationList({
   onNavigate,
+  onOpenSharedContext,
   currentConversationId,
 }: {
   onNavigate?: () => void | Promise<void>;
+  onOpenSharedContext?: () => void;
   currentConversationId?: string | null;
 }) {
   const insets = useSafeAreaInsets();
@@ -427,6 +434,12 @@ export default function ConversationList({
   };
 
   const openSpace = async (space: XiaoCSpace) => {
+    if (space.id === "shared_context") {
+      await onNavigate?.();
+      onOpenSharedContext?.();
+      return;
+    }
+
     if (space.id === "treehole") {
       setHasUnreadTreehole(false);
 
