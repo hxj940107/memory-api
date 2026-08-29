@@ -840,7 +840,7 @@ const styles = StyleSheet.create({
   },
 
   itemTitle: {
-    fontSize: 16,
+    fontSize: 17,
     lineHeight: 21,
     color: XiaoCColors.sidebarText,
   },
