@@ -52,6 +52,7 @@ import {
   initialProactiveAttentionSendDiagnostics,
   validateFinalProactiveAttentionRecheck,
 } from "../lib/proactiveAttentionSend.js"
+import { buildPromptCacheUsageLog } from "../lib/promptCaching.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -586,6 +587,10 @@ function normalizeAlbumAsset(item, signedUrl) {
 }
 
 async function callSmallLLM(messages, options = {}) {
+  const {
+    requestPurpose = "small_llm_unattributed",
+    ...requestOptions
+  } = options
   const res = await fetch(AI_ENDPOINTS.openRouterChatCompletions, {
     method: "POST",
     headers: {
@@ -597,7 +602,7 @@ async function callSmallLLM(messages, options = {}) {
       messages,
       max_tokens: 90,
       temperature: 0.55,
-      ...options,
+      ...requestOptions,
     }),
   })
 
@@ -610,6 +615,12 @@ async function callSmallLLM(messages, options = {}) {
         `OpenRouter request failed: ${res.status}`
     )
   }
+
+  console.log("AI TASK USAGE:", {
+    request_purpose: requestPurpose,
+    model: requestOptions.model || AI_MODELS.memoryJudge,
+    ...buildPromptCacheUsageLog(data?.usage),
+  })
 
   return normalizeAssistantOutput(data?.choices?.[0]?.message).trim()
 }
@@ -729,7 +740,7 @@ ${commentContext || "暂无"}
 ${trimText(userComment, 160)}
 `
     }
-  ])
+  ], { requestPurpose: "moment_comment_reply" })
 
   const content = cleanMomentReply(rawReply)
 
@@ -786,7 +797,7 @@ async function createXiaoCCommentForUserMoment({ user_id, moment_id, text, image
           ]
         : `她发的文字：${trimText(text, 240)}`,
     },
-  ])
+  ], { requestPurpose: "moment_user_comment_generation" })
   const content = cleanMomentReply(rawReply)
 
   if (!content || isBadMomentReplyTone(content)) return null
@@ -1027,6 +1038,7 @@ ${trimText(recentChat, 1800) || "最近没有可用聊天上下文"}
     { role: "user", content: userContent },
   ]
   const decisionOptions = {
+    requestPurpose: "moment_activity_decision",
     max_tokens: 180,
     temperature: 0.35,
     response_format: { type: "json_object" },
@@ -1264,7 +1276,7 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
       },
       { role: "user", content: userContent },
     ],
-    { max_tokens: 90, temperature: 0.45 }
+    { requestPurpose: "moment_private_follow_up_generation", max_tokens: 90, temperature: 0.45 }
   )
   const message = cleanProactiveMessage(raw)
 
@@ -1314,7 +1326,7 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 `,
       },
     ],
-    { max_tokens: 80, temperature: 0.45 }
+    { requestPurpose: "plan_follow_up_generation", max_tokens: 80, temperature: 0.45 }
   )
   const message = cleanProactiveMessage(raw)
 
@@ -1493,7 +1505,7 @@ ${contextMessages}
 `,
       },
     ],
-    { max_tokens: 80, temperature: 0.6 }
+    { requestPurpose: "inactivity_generation", max_tokens: 80, temperature: 0.6 }
   )
   const message = cleanProactiveMessage(raw)
   const factualGrounding = validateProactiveHistoricalClaims(
@@ -1667,6 +1679,7 @@ ${treeholeContext}
       },
     ],
     {
+      requestPurpose: "treehole_generation",
       model: AI_MODELS.chat,
       max_tokens: 700,
       temperature: 0.65,
@@ -2217,6 +2230,7 @@ async function generateProactiveAttentionMessage(intent, now) {
     intent,
     localTime: `${local.date} ${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`,
   }), {
+    requestPurpose: "proactive_event_generation",
     model: AI_MODELS.chat,
     max_tokens: 90,
     temperature: 0.45,
@@ -3243,6 +3257,7 @@ async function flushSharedContextForConversation({ userId, conversationId, share
   const raw = await callSmallLLM([
     { role: "user", content: buildSharedContextUpdatePrompt(sharedContext, pending) },
   ], {
+    requestPurpose: "shared_context_batch_update_forced",
     model: AI_MODELS.memoryJudge,
     max_tokens: 900,
     temperature: 0,

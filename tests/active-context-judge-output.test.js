@@ -67,6 +67,71 @@ const validOutput = JSON.stringify({
 })
 
 {
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    p: [{
+      a: "u",
+      id: "event-exam",
+      d: "周五早上的公司知识考试",
+      s: "c",
+      w: ["2026-08-29T09:00:00", null],
+      g: "e",
+      src: "message-exam-completed",
+      ev: "考试已完成",
+      u: ["c", "e", "考试已完成", null],
+      f: [true, "n", "m", false, false],
+    }],
+    c: {
+      i: [{
+        t: "周五考试",
+        c: "她周五早上参加公司知识考试",
+        s: "r",
+        k: "p",
+        src: "message-exam",
+        ref: "message-exam-completed",
+        e: "考试已完成",
+      }],
+      m: [],
+    },
+  }))
+  assert.equal(parsed.diagnostics.status, "parsed")
+  assert.equal(parsed.diagnostics.output_format, "compact_v1")
+  assert.ok(parsed.diagnostics.raw_output_chars > 0)
+  assert.equal(parsed.proactiveEventProposals[0].action, "create_or_update")
+  assert.equal(parsed.proactiveEventProposals[0].raw_action, "update")
+  assert.equal(parsed.proactiveEventProposals[0].state, "completed")
+  assert.equal(parsed.proactiveEventProposals[0].matched_event_id, "event-exam")
+  assert.equal(parsed.proactiveEventProposals[0].user_update.kind, "completed")
+  assert.equal(parsed.proactiveEventProposals[0].user_update.explicitness, "explicit")
+  assert.equal(parsed.proactiveEventProposals[0].local_interpreted_window.start, "2026-08-29T09:00:00")
+  assert.equal(parsed.activeContext.items[0].status, "resolved")
+}
+
+{
+  const parsed = parseActiveContextJudgeOutput(JSON.stringify({
+    p: [{
+      a: "u",
+      id: "event-exam",
+      s: "c",
+      w: [null, null],
+      g: "i",
+      u: ["c", "e", "做完了", null],
+      f: [true, "n", "m", false, false],
+    }],
+    c: { i: [], m: [] },
+  }), {
+    sourceMessageId: "message-current",
+    existingCandidates: [{
+      event_id: "event-exam",
+      description: "周五早上的公司知识考试",
+    }],
+  })
+  assert.equal(parsed.diagnostics.status, "parsed")
+  assert.equal(parsed.proactiveEventProposals[0].source_message_id, "message-current")
+  assert.equal(parsed.proactiveEventProposals[0].description, "周五早上的公司知识考试")
+  assert.equal(parsed.proactiveEventProposals[0].source_evidence, "做完了")
+}
+
+{
   const parsed = parseActiveContextJudgeOutput(validOutput)
   assert.equal(parsed.diagnostics.status, "parsed")
   assert.equal(parsed.activeContext.items[0].topic, "周五考试")

@@ -243,33 +243,27 @@ async function judgeActiveConversationContext({
         content: `
 你是 XiaoC 的对话连续性判断器。只解释当前用户消息的语义，并更新短期上下文和现实事件候选；不要判断事件是否值得主动回访。
 
-只输出 JSON：
-{
-  "proactive_event_proposals":[{
-    "action":"create_or_update",
-    "matched_event_id":null,
-    "description":"现实事件本身",
-    "state":"planned",
-    "local_interpreted_window":{"start":null,"end":null},
-    "time_grounding_source":"user_explicit_time、relative_to_user_message或insufficient_time_evidence",
-    "source_message_id":"当前用户消息ID",
-    "source_evidence":"当前用户原话中直接支持该事件或状态变化的简短连续片段",
-    "user_update":{"kind":"completed、cancelled、rescheduled、planned、ongoing、result或other","explicitness":"explicit、implicit或none","evidence_text":"当前用户原话中的直接状态证据","time_evidence_text":null},
-    "follow_up_profile":{"result_expected":false,"result_uncertainty":"none、low或meaningful","significance":"low、medium或high","routine":false,"immediate_continuation":false}
-  }],
-  "active_context":{"items":[],"mention_preferences":[]}
-}
+只输出无空格 compact JSON：{"p":[],"c":{"i":[],"m":[]}}。p 是 proactive_event_proposals 的短格式，c 是 active_context 的短格式；先 p 后 c，不输出解释。
 
-先完整输出 proactive_event_proposals，再输出 active_context；保持字段顺序，不输出解释或额外字段。
+p proposal 格式：{"a":"c|u","id":null,"d":"事件","s":"p|w|o|c|x|u","w":[null,null],"g":"e|r|i","ev":"原文","u":null,"f":[false,"n|l|m","l|m|h",false,false]}
+- a：c=create，u=update；id=matched_event_id；s：p=planned,w=waiting,o=ongoing,c=completed,x=cancelled,u=unknown。
+- w=[local start,local end]；g：e=user_explicit_time,r=relative_to_user_message,i=insufficient_time_evidence。
+- matched update 的 u=[kind,explicitness,evidence_text,time_evidence_text]；kind：c=completed,x=cancelled,r=rescheduled,p=planned,o=ongoing,g=result,h=other；explicitness：e=explicit,i=implicit,n=none。create 时 u=null。
+- f=[result_expected,result_uncertainty,significance,routine,immediate_continuation]；uncertainty n/l/m，significance l/m/h。
+
+c 格式：{"i":[{"t":"topic","c":"context","s":"a|w|r","k":"t|p|w|u","src":"source ID","ref":"last referenced ID","e":"原文"}],"m":[]}
+- item s：a=active,w=waiting,r=resolved；k：t=transient,p=plan,w=waiting,u=unresolved。
+- mention preference：{"t":"topic","a":"s|a","q":"u|a","g":"s|f","src":"消息ID","e":"原文"}；a=suppress/allow，q=unsolicited_check_in/all_mentions，g=soft/firm。
+- proposal 的 source_message_id 固定由代码补成当前用户消息ID，不要输出 src。create 必须输出 d、ev；matched update 可省略 d、ev，代码分别沿用 existing description 与 u 的 evidence。没有 proposal/item/preference 就用空数组；其他无意义的空字段不要添加。
 
 Active Context：
-- items 是更新后的完整状态而非增量，最多4项；每项格式：{"topic":"简短主题","context":"必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
+- c.i 是更新后的完整状态而非增量，最多4项；src 是最初来源 user 消息，ref 是她最近一次明确提到该事项的消息。
 - topic≤24字、context≤90字、source_evidence≤36字；不要复述整条消息。只保留正在进行、近期计划、等待结果或未解决且短期仍会继续聊的具体事项。寒暄、已聊完的生活碎片、长期事实、总结和纯评价不加入。
 - 暂时换题不等于结束：未完成旧项原样保留。仅当用户明确完成/取消/不再需要、得到结果、新事实覆盖旧事实或事项明显失去短期价值时删除或替换；本轮明确结束可标 resolved。
 - 新增项只能引用 user source ledger 中真实 user 消息及连续原文。assistant、Memory、Summary、推断、玩笑或自述不能创建事实。已有项沿用 source_message_id；只有当前用户明确提及或更新时，才推进 last_referenced_message_id 并引用当前证据。
 - 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述写入“小C以前说过/做过”的事实，除非真实 user 消息明确确认。
 - 保留事项不等于允许主动提及；没有事项返回空数组，不凑数。
-- mention_preferences 记录用户明确要求“不再主动反复问/提”或明确恢复讨论：{"topic":"语义主题","action":"suppress或allow","scope":"unsolicited_check_in或all_mentions","strength":"soft或firm","source_message_id":"证据消息ID","evidence_text":"逐字证据"}。
+- c.m 记录用户明确要求“不再主动反复问/提”或明确恢复讨论。
 - 普通否定、不回答、换题或感受改善不构成 suppress；必须是“你别老问”这类对小C提及方式的明确要求。suppress 默认只约束无新证据的主动检查，不删除事实或永久禁聊；用户主动重提仍正常回应。证据只能来自当前消息，或 ledger 中尚未结构化的明确边界；allow 只能来自当前消息。未改变的 preference 原样保留。
 
 Proactive event proposals：
@@ -294,17 +288,37 @@ Proactive event proposals：
 
 小C刚刚回复：${trimText(reply, 600)}
 
-上一版 active context：
-${JSON.stringify(normalizeActiveConversationContext(previousActiveContext) || { items: [] })}
+上一版 active context（同上 c 短键；旧项没有 e 时直接沿用）：
+${JSON.stringify((() => {
+  const context = normalizeActiveConversationContext(previousActiveContext) || { items: [] }
+  return {
+    i: context.items.map(item => ({
+      t: item.topic,
+      c: item.context,
+      s: ({ active: "a", waiting: "w", resolved: "r" })[item.status] || "a",
+      k: ({ transient: "t", plan: "p", waiting: "w", unresolved: "u" })[item.kind] || "t",
+      src: item.source_message_id,
+      ref: item.last_referenced_message_id,
+    })),
+    m: (context.mention_preferences || []).map(item => ({
+      t: item.topic,
+      a: item.action === "allow" ? "a" : "s",
+      q: item.scope === "all_mentions" ? "a" : "u",
+      g: item.strength === "firm" ? "f" : "s",
+      src: item.source_message_id,
+    })),
+  }
+})())}
 
-已有 structured proactive event candidates：
+已有 candidates（id,d=description,s=state,a=attention,w=expected UTC,m=last user message,at=last user time）：
 ${JSON.stringify(normalizeProactiveAttentionCandidates(previousProactiveCandidates).map(candidate => ({
-  event_id: candidate.event_id,
-  description: candidate.description,
-  state: candidate.state,
-  attention_status: candidate.attention_status,
-  expected_window: candidate.expected_window,
-  last_user_update_message_id: candidate.last_user_update?.message_id || null,
+  id: candidate.event_id,
+  d: trimText(candidate.description, 100),
+  s: candidate.state,
+  a: candidate.attention_status,
+  w: [candidate.expected_window?.start || null, candidate.expected_window?.end || null],
+  m: candidate.last_user_update?.message_id || null,
+  at: candidate.last_user_update?.created_at || null,
 })))}
 
 当前用户消息ID：${userMessageId || "unknown"}
@@ -329,6 +343,8 @@ ${JSON.stringify(recentUserSourceLedger)}
   )
   const parsed = parseActiveContextJudgeOutput(raw.reply, {
     finishReason: raw.finishReason,
+    sourceMessageId: userMessageId,
+    existingCandidates: normalizeProactiveAttentionCandidates(previousProactiveCandidates),
   })
   parsed.diagnostics.usage = {
     request_purpose: "active_context_and_proactive_event_judge",
@@ -2331,6 +2347,11 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       max_tokens: 220,
       temperature: 0.35,
     })
+    console.log("AI TASK USAGE:", {
+      request_purpose: "moment_candidate",
+      model: AI_MODELS.memoryJudge,
+      ...buildPromptCacheUsageLog(result.usage),
+    })
     const candidate = parseMomentCandidate(result.reply)
     const requestedImageId = candidate.image
 
@@ -3247,7 +3268,14 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       AI_MODELS.imageDescription,
       { max_tokens: 220 }
     )
-      .then(result => String(result.reply || "").trim().slice(0, 180))
+      .then(result => {
+        console.log("AI TASK USAGE:", {
+          request_purpose: "image_description",
+          model: AI_MODELS.imageDescription,
+          ...buildPromptCacheUsageLog(result.usage),
+        })
+        return String(result.reply || "").trim().slice(0, 180)
+      })
       .catch(err => {
         console.error("image description failed:", err)
         return ""
@@ -3260,6 +3288,11 @@ let reply = llm.reply
 const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
 
 if (fallbackSearchQuery) {
+  console.log("AI TASK USAGE:", {
+    request_purpose: "normal_chat_pre_web_search",
+    model: selectedChatModel,
+    ...buildPromptCacheUsageLog(llm.usage),
+  })
   console.log("WEB SEARCH:", {
     source: "model_uncertainty",
     query: fallbackSearchQuery
@@ -3485,11 +3518,19 @@ console.log("======================================\n")
                     supabase,
                     userId: user_id,
                     newMemoryId: episodic.id,
-                    callSmallModel: async prompt => callLLM(
-                      [{ role: "user", content: prompt }],
-                      AI_MODELS.memoryJudge,
-                      { max_tokens: 420, temperature: 0 }
-                    ),
+                    callSmallModel: async prompt => {
+                      const result = await callLLM(
+                        [{ role: "user", content: prompt }],
+                        AI_MODELS.memoryJudge,
+                        { max_tokens: 420, temperature: 0 }
+                      )
+                      console.log("AI TASK USAGE:", {
+                        request_purpose: "stable_memory_consolidation",
+                        model: AI_MODELS.memoryJudge,
+                        ...buildPromptCacheUsageLog(result.usage),
+                      })
+                      return result
+                    },
                   })
                 }
               } catch (consolidationError) {
