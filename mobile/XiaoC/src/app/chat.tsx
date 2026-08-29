@@ -26,7 +26,7 @@ import Animated, {
   ReduceMotion,
 } from "react-native-reanimated";
 
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
@@ -77,6 +77,7 @@ import {
   type GeneratedAttachment,
 } from "../lib/generatedAttachments";
 import { SharedContextBar } from "../components/SharedContextBar";
+import { stageSharedAlbumImport } from "../lib/sharedAlbumImportDraft";
 
 type Message = {
   id: string;
@@ -1064,6 +1065,54 @@ export default function ChatScreen() {
     setTimeout(() => {
       setMessageMenu(null);
     }, 180);
+  };
+
+  const saveImageToSharedAlbum = (
+    messageItem: Message,
+    imageUri: string,
+    imageIndex: number,
+  ) => {
+    const imageAsset =
+      messageItem.imageAssets?.[imageIndex] ||
+      (imageIndex === 0 ? messageItem.imageAsset : undefined);
+
+    stageSharedAlbumImport({
+      uri: imageUri,
+      width: imageAsset?.width,
+      height: imageAsset?.height,
+    });
+    router.push("/album");
+  };
+
+  const openImageMenu = (
+    messageItem: Message,
+    imageUri: string,
+    imageIndex: number,
+  ) => {
+    if (messageItem.status === "sending" || messageItem.status === "failed") {
+      return;
+    }
+
+    const save = () =>
+      saveImageToSharedAlbum(messageItem, imageUri, imageIndex);
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["取消", "保存至共享相册"],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) save();
+        },
+      );
+      return;
+    }
+
+    Alert.alert("图片", undefined, [
+      { text: "取消", style: "cancel" },
+      { text: "保存至共享相册", onPress: save },
+    ]);
   };
 
   const copyMenuText = async () => {
@@ -2066,6 +2115,9 @@ export default function ChatScreen() {
                                 onPress={() =>
                                   item.status !== "sending" &&
                                   setPreviewImageUri(imageUri)
+                                }
+                                onLongPress={() =>
+                                  openImageMenu(item, imageUri, imageIndex)
                                 }
                               >
                                 <ChatMessageImage

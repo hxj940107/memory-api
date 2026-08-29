@@ -36,6 +36,22 @@ test("does not confuse Moment product discussion with a publishing request", () 
   }
 })
 
+test("distinguishes lived technical work from technical product discussion", () => {
+  const livedMoments = [
+    "我还在 debug",
+    "今晚在排查成本问题",
+    "半夜 debug 中",
+    "小天使正在写代码",
+  ]
+
+  for (const message of livedMoments) {
+    assert.equal(isMomentTechnicalDiscussion(message), false, message)
+  }
+
+  assert.equal(isMomentTechnicalDiscussion("帮我修一下朋友圈代码"), true)
+  assert.equal(isMomentTechnicalDiscussion("检查 API 的触发逻辑"), true)
+})
+
 test("rejects classifier labels and structured output fragments as Moment text", () => {
   assert.equal(isInvalidMomentText("real person"), true)
   assert.equal(isInvalidMomentText('<thinking>判断是否发布</thinking>'), true)
@@ -70,6 +86,9 @@ test("automatic Moment prompt encourages concrete life moments without default d
   assert.match(source, /事件时间不够精确时，不要仅因此拒绝/)
   assert.match(source, /source_message_created_at_utc/)
   assert.match(source, /source_message_created_at_shanghai/)
+  assert.match(source, /散步可以匹配普通街景，debug 可以匹配电脑、代码或书桌场景/)
+  assert.match(source, /强叙事元素必须有当前对话证据/)
+  assert.match(source, /getLocalDateTimeParts\(new Date\(candidate\.eventTime\)\)\.hour/)
 })
 
 test("pending candidate worker validates text before publishing", () => {

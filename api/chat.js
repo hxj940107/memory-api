@@ -1618,10 +1618,6 @@ function shouldConsiderMoment({
     return { eligible: false, reason: "moment_meta_command", contextText }
   }
 
-  if (/UI|界面|按钮|气泡|侧边栏|字体|图标|布局|留白|前端|后端|API|token|OpenRouter|Vercel|Railway|Expo|EAS|GitHub|push|pull|部署|日志|报错|bug|测试|代码/.test(text)) {
-    return { eligible: false, reason: "technical_context", contextText }
-  }
-
   if (contextText.trim().length < 6) {
     return { eligible: false, reason: "text_too_short", contextText }
   }
@@ -2325,6 +2321,9 @@ ${momentImageCatalog}
 
 配图规则：
 - 图片不是必须存在。没有完全匹配的素材时必须返回 null。
+- 先从当前真实生活事件理解场景，再判断素材是否自然兼容；不要求用户原话与素材描述逐字相同。例如散步可以匹配普通街景，debug 可以匹配电脑、代码或书桌场景。
+- 区分“正在经历技术工作”与“讨论技术系统”：她正在 debug、排查问题或写代码可以是生活场景；讨论 API、prompt、部署规则或让你修改功能本身不是朋友圈素材。
+- 环境型素材可以补足画面，但强叙事元素必须有当前对话证据。普通街景可以表现散步；猫、狗、特定人物、餐食、地点等明显主体只有在当前来源提到时才能出现。
 - 只有素材与这条正文表达的真实生活场景自然吻合时，才选择对应素材 id。
 - 不要为了有图而硬配图；关系感、情绪或聊天感为主的正文通常应返回 null。
 - 不要把素材中没有发生的事写进正文，也不要为了匹配素材改写正文。
@@ -2519,7 +2518,9 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     if (candidate.image && !isMomentImageCompatible(
       candidate.image,
       candidate.text,
-      localNow.hour,
+      candidate.eventTime
+        ? getLocalDateTimeParts(new Date(candidate.eventTime)).hour
+        : expectedPublishLocal.hour,
       availableMomentImages,
       momentSourceText
     )) {

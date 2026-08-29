@@ -1,13 +1,14 @@
 import { Image } from "expo-image";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiJson, APP_USER_ID } from "../config/api";
+import { consumeSharedAlbumImport } from "../lib/sharedAlbumImportDraft";
 
 type AlbumAsset = {
   id: number;
@@ -133,7 +134,7 @@ export default function AlbumScreen() {
     );
   };
 
-  const resetEditor = () => {
+  const resetEditor = useCallback(() => {
     setEditingAsset(null);
     setPickedImage(null);
     setDescription("");
@@ -142,7 +143,20 @@ export default function AlbumScreen() {
     setWeather(null);
     setRelations([]);
     setAccessScope("shared");
-  };
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    const importedImage = consumeSharedAlbumImport();
+    if (!importedImage) return;
+
+    resetEditor();
+    setPickedImage({
+      uri: importedImage.uri,
+      width: importedImage.width || 1,
+      height: importedImage.height || 1,
+    });
+    setEditorVisible(true);
+  }, [resetEditor]));
 
   const openNewAsset = () => {
     resetEditor();
