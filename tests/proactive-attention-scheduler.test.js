@@ -4,6 +4,7 @@ import {
   evaluateProactiveAttentionExecution,
   planProactiveAttentionWakeup,
 } from "../lib/proactiveAttentionScheduler.js"
+import { planExistingCandidateWakeupReconciliation } from "../lib/proactiveAttentionReconciliation.js"
 
 function candidate(overrides = {}) {
   return {
@@ -187,6 +188,151 @@ for (const [field, reason] of [
     memoryApi,
     /select\("id,user_id,conversation_id,type,source_type,source_id,status,due_at,reason,payload,created_at"\)/,
   )
+}
+
+// Existing open candidates are reconciled without changing scheduler admission.
+{
+  const future = candidate()
+  const missing = planExistingCandidateWakeupReconciliation({
+    candidate: future,
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(missing.action, "upsert")
+  assert.equal(missing.scheduled_for, future.expected_window.start)
+
+  const pendingTask = {
+    status: "pending",
+    due_at: missing.scheduled_for,
+    payload: { candidate_updated_at: future.updated_at },
+  }
+  const duplicate = planExistingCandidateWakeupReconciliation({
+    candidate: future,
+    existingTask: pendingTask,
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(duplicate.action, "none")
+  assert.equal(duplicate.reason, "existing_pending_task")
+  assert.deepEqual(
+    planExistingCandidateWakeupReconciliation({
+      candidate: future,
+      existingTask: pendingTask,
+      sourceMessageValid: true,
+      now: "2026-08-28T07:00:00.000Z",
+    }),
+    duplicate,
+  )
+
+  for (const status of ["processing", "completed"]) {
+    const existing = planExistingCandidateWakeupReconciliation({
+      candidate: future,
+      existingTask: {
+        ...pendingTask,
+        status,
+        completed_at: status === "completed" ? "2026-08-28T07:05:00.000Z" : null,
+      },
+      sourceMessageValid: true,
+      now: "2026-08-28T07:00:00.000Z",
+    })
+    assert.equal(existing.action, "none")
+    assert.equal(existing.reason, `existing_${status}_task`)
+  }
+}
+
+for (const blocked of [
+  candidate({ state: "completed", attention_status: "closed" }),
+  candidate({ state: "planned", attention_status: "closed" }),
+  candidate({
+    expected_window: {
+      start: "2026-08-27T07:00:00.000Z",
+      end: "2026-08-27T10:00:00.000Z",
+    },
+  }),
+]) {
+  const result = planExistingCandidateWakeupReconciliation({
+    candidate: blocked,
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(result.action, "none")
+}
+
+{
+  const invalidProvenance = planExistingCandidateWakeupReconciliation({
+    candidate: candidate(),
+    sourceMessageValid: false,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(invalidProvenance.action, "none")
+  assert.equal(invalidProvenance.reason, "invalid_source_message")
+
+  const invalidCandidateProvenance = planExistingCandidateWakeupReconciliation({
+    candidate: candidate({ source_message_ids: ["different-message"] }),
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(invalidCandidateProvenance.action, "none")
+  assert.equal(invalidCandidateProvenance.reason, "invalid_candidate")
+
+  const incompleteWindow = planExistingCandidateWakeupReconciliation({
+    candidate: candidate({ expected_window: { start: "2026-08-29T07:00:00.000Z", end: null } }),
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(incompleteWindow.action, "none")
+  assert.equal(incompleteWindow.reason, "incomplete_expected_window")
+
+  const lowValue = planExistingCandidateWakeupReconciliation({
+    candidate: candidate({
+      follow_up_profile: {
+        result_expected: false,
+        result_uncertainty: "none",
+        significance: "medium",
+        routine: false,
+        immediate_continuation: false,
+      },
+    }),
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(lowValue.action, "none")
+  assert.equal(lowValue.reason, "not_worth_interrupting_silence")
+}
+
+{
+  const rescheduled = candidate({
+    updated_at: "2026-08-28T08:00:00.000Z",
+    expected_window: {
+      start: "2026-08-30T08:00:00.000Z",
+      end: "2026-08-30T10:00:00.000Z",
+    },
+  })
+  const result = planExistingCandidateWakeupReconciliation({
+    candidate: rescheduled,
+    existingTask: {
+      status: "pending",
+      due_at: "2026-08-29T07:00:00.000Z",
+      payload: { candidate_updated_at: "2026-08-28T06:00:00.000Z" },
+    },
+    sourceMessageValid: true,
+    now: "2026-08-29T07:00:00.000Z",
+  })
+  assert.equal(result.action, "reschedule")
+  assert.equal(result.scheduled_for, "2026-08-30T08:00:00.000Z")
+
+  const alreadyMentioned = planExistingCandidateWakeupReconciliation({
+    candidate: candidate({
+      last_proactive_mention: {
+        message_id: "assistant-proactive-1",
+        created_at: "2026-08-28T08:00:00.000Z",
+      },
+    }),
+    sourceMessageValid: true,
+    now: "2026-08-28T07:00:00.000Z",
+  })
+  assert.equal(alreadyMentioned.action, "none")
+  assert.equal(alreadyMentioned.reason, "already_proactively_mentioned")
 }
 
 console.log("proactive attention scheduler tests passed")

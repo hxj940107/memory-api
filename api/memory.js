@@ -40,10 +40,12 @@ import {
   shouldUpdateSharedContext,
 } from "../lib/sharedContext.js"
 import {
+  PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE,
   PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
   evaluateProactiveAttentionExecution,
   planProactiveAttentionWakeup,
 } from "../lib/proactiveAttentionScheduler.js"
+import { planExistingCandidateWakeupReconciliation } from "../lib/proactiveAttentionReconciliation.js"
 import {
   buildProactiveAttentionIntent,
   buildProactiveAttentionPrompt,
@@ -2156,6 +2158,155 @@ async function loadLatestProactiveAttentionCandidate(task) {
   return null
 }
 
+const PROACTIVE_RECONCILIATION_LOOKBACK_MS = 8 * 24 * 60 * 60 * 1000
+const PROACTIVE_RECONCILIATION_SNAPSHOT_LIMIT = 120
+
+async function reconcileExistingProactiveAttentionWakeups({
+  userId = APP_USER.defaultUserId,
+  now = new Date().toISOString(),
+} = {}) {
+  const cutoff = new Date(
+    new Date(now).getTime() - PROACTIVE_RECONCILIATION_LOOKBACK_MS
+  ).toISOString()
+  const { data: messages, error: messagesError } = await supabase
+    .from("messages")
+    .select("id,conversation_id,metadata,created_at")
+    .eq("user_id", userId)
+    .eq("role", "assistant")
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(PROACTIVE_RECONCILIATION_SNAPSHOT_LIMIT)
+  if (messagesError) throw messagesError
+
+  const latestSnapshots = new Map()
+  for (const message of messages || []) {
+    if (latestSnapshots.has(message.conversation_id)) continue
+    if (!Array.isArray(message.metadata?.proactiveAttentionCandidates)) continue
+    latestSnapshots.set(message.conversation_id, message)
+  }
+
+  const candidates = []
+  for (const [conversationId, message] of latestSnapshots) {
+    for (const candidate of normalizeProactiveAttentionCandidates(
+      message.metadata.proactiveAttentionCandidates
+    )) {
+      candidates.push({ candidate, conversationId, snapshotMessageId: message.id })
+    }
+  }
+  if (!candidates.length) {
+    return { scanned_snapshots: latestSnapshots.size, candidates: 0, created: 0, rescheduled: 0, unchanged: 0, rejected: 0 }
+  }
+
+  const eventIds = [...new Set(candidates.map(item => item.candidate.event_id).filter(Boolean))]
+  const sourceIds = [...new Set(candidates
+    .map(item => item.candidate.last_user_update?.message_id)
+    .filter(Boolean)
+    .map(String))]
+  const [{ data: tasks, error: tasksError }, { data: sources, error: sourcesError }] = await Promise.all([
+    supabase
+      .from("xiaoc_proactive_tasks")
+      .select("id,source_id,status,due_at,completed_at,updated_at,payload")
+      .eq("user_id", userId)
+      .eq("type", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+      .eq("source_type", PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE)
+      .in("source_id", eventIds),
+    sourceIds.length
+      ? supabase
+          .from("messages")
+          .select("id,conversation_id,role")
+          .eq("user_id", userId)
+          .eq("role", "user")
+          .in("id", sourceIds)
+      : Promise.resolve({ data: [], error: null }),
+  ])
+  if (tasksError) throw tasksError
+  if (sourcesError) throw sourcesError
+
+  const tasksByEvent = new Map((tasks || []).map(task => [String(task.source_id), task]))
+  const validSources = new Set((sources || []).map(source => (
+    `${source.conversation_id}\u001f${source.id}`
+  )))
+  const result = {
+    scanned_snapshots: latestSnapshots.size,
+    candidates: candidates.length,
+    created: 0,
+    rescheduled: 0,
+    unchanged: 0,
+    rejected: 0,
+    reasons: {},
+  }
+
+  for (const item of candidates) {
+    const candidate = item.candidate
+    const existingTask = tasksByEvent.get(String(candidate.event_id)) || null
+    const sourceMessageValid = validSources.has(
+      `${item.conversationId}\u001f${candidate.last_user_update?.message_id}`
+    )
+    const plan = planExistingCandidateWakeupReconciliation({
+      candidate,
+      existingTask,
+      sourceMessageValid,
+      now,
+    })
+
+    result.reasons[plan.reason] = (result.reasons[plan.reason] || 0) + 1
+    if (plan.action === "none") {
+      if (
+        existingTask?.status === "pending"
+        && !["existing_pending_task", "existing_processing_task", "existing_completed_task"].includes(plan.reason)
+      ) {
+        const { error } = await supabase
+          .from("xiaoc_proactive_tasks")
+          .update({ status: "skipped", last_error: plan.reason, updated_at: now })
+          .eq("id", existingTask.id)
+          .eq("status", "pending")
+        if (error) throw error
+      }
+      if (["existing_pending_task", "existing_processing_task", "existing_completed_task"].includes(plan.reason)) {
+        result.unchanged += 1
+      } else {
+        result.rejected += 1
+      }
+      continue
+    }
+
+    const taskRecord = {
+      user_id: userId,
+      type: PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE,
+      source_type: PROACTIVE_ATTENTION_WAKEUP_SOURCE_TYPE,
+      source_id: candidate.event_id,
+      status: "pending",
+      due_at: plan.scheduled_for,
+      conversation_id: item.conversationId,
+      reason: "恢复既存候选事件缺失的 Proactive Attention wake-up。",
+      payload: {
+        execution_mode: "shadow",
+        event_id: candidate.event_id,
+        candidate_updated_at: candidate.updated_at,
+        scheduled_for: plan.scheduled_for,
+        reconciled_from_snapshot_message_id: item.snapshotMessageId,
+        reconciled_at: now,
+      },
+      completed_at: null,
+      message_id: null,
+      last_error: null,
+      updated_at: now,
+    }
+    const { data, error } = await supabase
+      .from("xiaoc_proactive_tasks")
+      .upsert(taskRecord, { onConflict: "user_id,type,source_type,source_id" })
+      .select("id,source_id,status,due_at,payload")
+      .single()
+    if (error) throw error
+    tasksByEvent.set(String(candidate.event_id), data)
+    if (plan.action === "reschedule") result.rescheduled += 1
+    else result.created += 1
+  }
+
+  return result
+}
+
 async function findExistingProactiveAttentionMessage(task) {
   const { data, error } = await supabase
     .from("messages")
@@ -2650,6 +2801,19 @@ async function executeProactiveTask(task) {
 async function checkPendingProactiveTasks() {
   const now = new Date()
   await ensureAutonomousTreeholeTask(APP_USER.defaultUserId)
+  let reconciliation
+  try {
+    reconciliation = await reconcileExistingProactiveAttentionWakeups({
+      userId: APP_USER.defaultUserId,
+      now: now.toISOString(),
+    })
+  } catch (error) {
+    console.error("proactive attention reconciliation failed:", error)
+    reconciliation = {
+      failed: true,
+      error: trimText(error?.message || "reconciliation failed", 180),
+    }
+  }
 
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
@@ -2664,7 +2828,7 @@ async function checkPendingProactiveTasks() {
   }
 
   if (error) throw error
-  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0 }
+  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0, reconciliation }
 
   const shadowWakeups = pending.filter(item => item.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
   const quietDeferred = pending.filter(item => item.type !== PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
@@ -2679,7 +2843,7 @@ async function checkPendingProactiveTasks() {
     if (deferError) throw deferError
 
     if (!shadowWakeups.length) {
-      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt }
+      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt, reconciliation }
     }
   }
 
@@ -2796,7 +2960,7 @@ async function checkPendingProactiveTasks() {
     }
   }
 
-  return { checked: pending.length, completed, deferred, failed }
+  return { checked: pending.length, completed, deferred, failed, reconciliation }
 }
 
 function normalizeMomentCandidateText(value) {
