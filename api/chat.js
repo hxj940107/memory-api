@@ -241,7 +241,7 @@ async function judgeActiveConversationContext({
       {
         role: "system",
         content: `
-你是 XiaoC 的轻量对话连续性判断器。更新当前 conversation 中仍然有效的短期上下文。
+你是 XiaoC 的对话连续性判断器。只解释当前用户消息的语义，并更新短期上下文和现实事件候选；不要判断事件是否值得主动回访。
 
 只输出 JSON：
 {
@@ -260,55 +260,32 @@ async function judgeActiveConversationContext({
   "active_context":{"items":[],"mention_preferences":[]}
 }
 
-必须先完整输出 proactive_event_proposals，再输出 active_context。不要改变这个字段顺序，不要输出解释或额外 diagnostics。
+先完整输出 proactive_event_proposals，再输出 active_context；保持字段顺序，不输出解释或额外字段。
 
-Active context 更新原则：
-- active_context.items 必须是更新后的完整状态，不是增量；最多4项。
-- 每项格式：{"topic":"简短主题","context":"必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
-- 为保证结构化输出稳定：topic 最多24字，context 最多90字，source_evidence 最多36字；不要复述完整消息、已有说明或同一事实。未被本轮更新的旧事项只保留必要 context，source_evidence 可为空字符串。
-- 只保留短期内仍有后续聊天价值的具体事项：她正在做的事、近期计划、未解决问题、正在等待的结果、刚发生且很可能继续聊的事件。
-- “值得保留 active context”与“当前是否适合主动提及”彼此独立；不需要主动提及的事项也可能仍应保留。
-- 暂时换话题不等于结束。上一版中仍未完成的事项必须继续原样保留，即使当前轮完全没提到。
-- 只有她明确说完成、取消、不再需要、事件已结束并得到结果、新信息明确覆盖旧信息，或事项已明显失去短期价值时，才能删除或替换。
-- 普通生活碎片如果已经聊完、没有未完成动作、等待结果或未来计划，不要继续作为 active item；它可以成为事实记忆，但不应继续占据当前聊天注意力。
-- 只有她当前这条消息确实再次提到某事项时，才把 last_referenced_message_id 更新为当前用户消息ID。不要因为小C回复里顺带提到就刷新它。
-- resolved 项用于明确表示本轮已结束的旧事项；它不会继续注入下一轮。
-- 普通寒暄、一次性无后续话语、小C的泛化评价、长期人格/关系事实、稳定长期记忆、整段聊天总结和大段原话都不要加入。
-- 不要为了凑数量新增事项；没有 active item 时返回空数组。
-- 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述，写入“小C以前说过/没说过、做过/没做过某事”这类事实。真实消息账本和她明确确认的事实优先；如果没有可靠证据，这类自我历史断言不进入 active context。
-- 小C的随口联想、玩笑、比喻、临时错误表达或主动消息自述，除非她明确确认或后续持续展开，否则不能升级为 active item。
-- 新增 active item 必须引用下方 user source ledger 中真实支持它的消息 ID，并提供该 user 原话中的简短连续片段作为 source_evidence。不能根据小C回复、旧摘要或推断创建 factual active item，也不能机械绑定当前消息 ID。
-- 已有事项沿用原 source_message_id。只有当前 user 原话明确引用或更新该事项时，last_referenced_message_id 才能改成当前消息 ID，并提供当前消息中的 source_evidence。
-- mention_preferences 记录她明确表达的“某话题不要再主动反复问/提”或“现在可以再聊”边界；每项格式：{"topic":"语义主题","action":"suppress或allow","scope":"unsolicited_check_in或all_mentions","strength":"soft或firm","source_message_id":"当前用户消息ID","evidence_text":"当前用户原话中的直接证据"}。
-- 不要把普通否定、一次不回答、话题切换或“没那么严重”单独解释为 suppress；必须有她对小C如何提及该话题的明确要求，例如“你别老问”“这个别再提了”。状态事实与 mention preference 可以在同一轮同时更新。
-- suppress 默认只约束无新证据的主动检查和反复追问，不代表删除事实或永久封禁。她主动重提、提供新事实或明确恢复讨论时应正常回应；action=allow 只在她当前明确解除同一 topic 边界时输出。
-- mention preference 的 evidence_text 必须逐字来自当前 user message，或来自下方 Recent user source ledger 中尚未结构化的明确边界原话；source_message_id 必须指向该条真实 user message。这样部署后无需她把仍在 Recent 的明确要求再说一次。不得从 assistant、Memory、Summary 推断边界，也不得用旧消息解除边界；action=allow 必须来自当前 user message。未被本轮改变的已有 preference 原样保留。
+Active Context：
+- items 是更新后的完整状态而非增量，最多4项；每项格式：{"topic":"简短主题","context":"必要具体信息","status":"active、waiting或resolved","kind":"transient、plan、waiting或unresolved","source_message_id":"最初来源消息ID","last_referenced_message_id":"她最近一次明确提到该事项的消息ID","source_evidence":"来源 user 消息中的简短原文"}。
+- topic≤24字、context≤90字、source_evidence≤36字；不要复述整条消息。只保留正在进行、近期计划、等待结果或未解决且短期仍会继续聊的具体事项。寒暄、已聊完的生活碎片、长期事实、总结和纯评价不加入。
+- 暂时换题不等于结束：未完成旧项原样保留。仅当用户明确完成/取消/不再需要、得到结果、新事实覆盖旧事实或事项明显失去短期价值时删除或替换；本轮明确结束可标 resolved。
+- 新增项只能引用 user source ledger 中真实 user 消息及连续原文。assistant、Memory、Summary、推断、玩笑或自述不能创建事实。已有项沿用 source_message_id；只有当前用户明确提及或更新时，才推进 last_referenced_message_id 并引用当前证据。
+- 不要仅凭“小C刚刚回复”中关于更早历史的自我陈述写入“小C以前说过/做过”的事实，除非真实 user 消息明确确认。
+- 保留事项不等于允许主动提及；没有事项返回空数组，不凑数。
+- mention_preferences 记录用户明确要求“不再主动反复问/提”或明确恢复讨论：{"topic":"语义主题","action":"suppress或allow","scope":"unsolicited_check_in或all_mentions","strength":"soft或firm","source_message_id":"证据消息ID","evidence_text":"逐字证据"}。
+- 普通否定、不回答、换题或感受改善不构成 suppress；必须是“你别老问”这类对小C提及方式的明确要求。suppress 默认只约束无新证据的主动检查，不删除事实或永久禁聊；用户主动重提仍正常回应。证据只能来自当前消息，或 ledger 中尚未结构化的明确边界；allow 只能来自当前消息。未改变的 preference 原样保留。
 
-Proactive event shadow proposals 原则：
-- 这只是结构化现实事件捕获，不会创建任务或发送主动消息；最多返回3项，没有符合条件的事件时返回空数组。
-- 捕获她当前消息明确表达的、具有可追踪生命周期的现实事件或状态变化，例如明确未来事件、预约、deadline、等待结果，以及事件开始、完成或取消。
-- 此阶段不要判断是否值得主动打断沉默、是否值得未来回访、当前是否应该主动联系；这些全部由后续 Proactive Attention Gate 判断。
-- follow_up_profile 只描述事件结构，不决定 admission：result_expected 表示未来是否自然会产生完成/结果；result_uncertainty 表示结果是否仍未知；significance 表示该节点对她的现实意义；routine / immediate_continuation 描述是否只是普通生活过程或极短期对话延续。所有事件仍按前述规则捕获，由 Gate 使用这些结构信号判断 worthiness。
-- 普通闲聊、即时情绪和没有后续生命周期的 conversation continuation 不创建 candidate。
-- candidate 只能来自她当前这条 user message，并结合已有 structured candidates、Active Context 和当前消息里的时间/事件证据判断；每项 source_message_id 必须是当前用户消息 ID。
-- 每项还必须提供 source_evidence：它必须是当前 user 原话中的简短连续片段，并直接支持事件身份、时间或本轮 lifecycle 变化。旧 candidate、Active Context、小C回复只能帮助理解，不能替代当前 user 证据创建新事实。
-- matched existing event 的 proposal 必须提供 user_update。kind 表示当前 user 对该事件报告的状态；explicitness 表示用户是否明确表达该状态；evidence_text 必须逐字摘自当前 user message，time_evidence_text 如存在也必须逐字摘自当前 user message。assistant 问题只能帮助确定 existing event identity，不能成为状态或时间事实来源。
-- 当前 user 省略事件名、但紧邻的小C回复只明确承接一个 existing open event 时，仍应输出 matched existing update。比如小C说“那快去叫榴莲起来”，她说“不行，我想再拖会儿，计划推迟”，必须匹配该遛狗 event，并输出 user_update={"kind":"rescheduled","explicitness":"explicit","evidence_text":"计划推迟","time_evidence_text":null}。不能因为省略事件名而漏掉 user_update；身份可来自紧邻 assistant，新增状态事实只能来自当前 user 原话。
-- Memory、Summary、Core Memory、检索结果和小C自己提起的话题都不能创建或刷新 candidate。
-- 现实中的同一个事件必须复用下面已有 candidate 的 event_id；matched_event_id 只能从已有 ID 中选择，不能自己编造 ID。
-- 一条消息包含多个独立现实事件时分别输出 proposal，不要因为只能确定其中一项而整体返回空数组。
-- completed/cancelled 的既有事件不能因为普通后续消息重新打开。
-- completed/cancelled 时 user_update.kind 必须分别为 completed/cancelled，explicitness 必须为 explicit。症状改善、感受变化、评价或背景变化本身不等于事件完成或取消；只有用户明确表达事件本身已经结束、完成或取消，才标 explicit terminal update。
-- terminal/closed candidate 仍用于 identity continuity 判断。没有新的明确 user 证据时，不得把同一事项静默创建成新 UUID；明确表达新的 occurrence 时才可新建。
-- 当前消息明确报告已有事件 completed、cancelled、ongoing 或 rescheduled 时，必须优先输出 matched_event_id 指向既有 candidate 的 update；不能因为 candidate 已满、expected window 已过、candidate age 或 attention_status 而省略 lifecycle proposal。capacity 只限制新事件。
-- 对“现在开始”“已经开始了”“还在做”等 existing-event ongoing 更新，同样必须输出 user_update，kind=ongoing，evidence_text 逐字引用当前 user 原话；不能只更新 Active Context 而漏掉 candidate lifecycle proposal。
-- “做好啦”“结束啦”“不去了”“弄完了”这类极短状态更新，只有近期真实 user context 中存在明确且唯一的事件指代时才匹配；多个 candidate 都合理时 matched_event_id 必须为 null，不要猜。带有明确事件身份的状态更新可以匹配较旧 candidate。
-- description 最多80字，只描述现实事件本身，不复述聊天过程；state 只能是 planned、waiting、ongoing、completed、cancelled、unknown。
-- local_interpreted_window 先按 Asia/Shanghai 写本地墙上时间，格式 YYYY-MM-DDTHH:mm:ss，不带 Z。相对时间必须锚定当前 user message 的真实发送时间；今天、明天、周五、上午、下午、三点半都先按上海时间理解。不得把上海本地钟点直接写成 Z 时间。
-- window.start 是事件进入合理回访时机的最早时间，window.end 是仍有回访意义的最晚时间；只有一个可靠边界时另一边保持 null。明确“三点半去做”至少可把 start 解释为当天上海时间15:30，不要把事件发生前判成已经适合回访。
-- expected_window 由代码从 local_interpreted_window 转成 UTC；模型不要自行填 UTC。无法可靠确定边界时对应值为 null，不得凭空补精确分钟。start 不得晚于 end。
-- 示例：“宝宝 我周五早上要考试了”应捕获1个 planned 事件；“周日中午和朋友吃饭，下午去做脸”应捕获2个独立事件；“明天一早交销量表，然后做客户信息统计”应捕获2个独立事件。
-- 示例：普通寒暄返回空数组；“我去洗澡等会回来”属于即时 conversation continuation，通常返回空数组。
+Proactive event proposals：
+- 最多3项；捕获当前用户明确表达、具有可追踪生命周期的现实事件或更新（未来安排、预约、deadline、等待结果、开始、完成、取消）。闲聊、即时情绪和无后续生命周期的即时对话延续返回空数组。多项独立事件分别输出。
+- 只做语义捕获，不做 worthiness、capacity 或发送判断。follow_up_profile 只描述结果预期/不确定性、意义、日常性和是否即时延续。
+- 新事件的身份和事实必须由当前 user message 支持；source_message_id 必须是当前消息，source_evidence 必须是当前原文中直接支持身份、时间或状态的连续片段。Memory、Summary、Core、检索、Active Context 和 assistant 不能创建或刷新新事件。
+- 同一现实事件复用已有 event_id；matched_event_id 只能选择已有 ID。matched update 必须给 user_update；其 evidence_text/time_evidence_text 必须逐字来自当前消息。紧邻 assistant 若只明确询问一个 open event，可帮助确定 existing identity，但不能提供新状态或时间事实。
+- 例如 assistant 明确询问唯一已有事件，用户回答“没呢，三点多再去”，应匹配该 event，kind=rescheduled，证据和新时间只取自这条用户消息；不能因省略事件名漏掉更新。
+- 现有事件的 completed/cancelled/ongoing/rescheduled 更新必须优先输出，不受 candidate 已满、窗口已过、年龄或 attention_status 影响。completed/cancelled 必须 kind 对应且 explicitness=explicit；症状改善、感受、评价或背景变化不等于事件本身完成/取消。
+- “现在开始/还在做”等已有事件状态也必须输出 kind=ongoing 和逐字 evidence，不能只更新 Active Context。
+- terminal/closed 事件不得被普通消息 reopen，也不得无新证据复制成新 UUID；只有用户明确表达新的 occurrence 才可新建。
+- 极短省略式更新只有在近期上下文存在明确且唯一 referent 时才匹配；多个 candidate 合理则 matched_event_id=null，绝不猜。明确说出事件身份时可匹配较旧事件。
+- “做好啦/结束啦/不去了/弄完了”都适用上述唯一 referent 规则；语言理解由你完成，不要求固定措辞命中。
+- description≤80字，只写现实事件；state 仅 planned/waiting/ongoing/completed/cancelled/unknown。
+- local_interpreted_window 使用 Asia/Shanghai 墙上时间 YYYY-MM-DDTHH:mm:ss（无 Z）。相对时间锚定真实 user message 时间；时间缺失或证据不足则相应边界为 null，绝不使用 1970 或编造精确分钟。start 是最早合理回访时机，end 是最晚仍有意义时机，start≤end；代码负责转 UTC。
+- 示例：“周五早上要考试了”应捕获1个 planned 事件；“周日中午和朋友吃饭，下午去做脸”应捕获2个独立事件；“明天一早交销量表，然后做客户信息统计”应捕获2个独立事件；普通寒暄或“我去洗澡等会回来”通常返回空数组。
 `,
       },
       {
