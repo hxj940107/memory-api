@@ -11,12 +11,14 @@ import {
 import { useEffect, useState, useRef } from 'react';
 import { router } from 'expo-router';
 import { Image } from 'expo-image';
+import * as LocalAuthentication from 'expo-local-authentication';
 
 import {
   DEFAULT_ACCOUNT_NAME,
   getAccountPassword,
   getAccountSettings,
 } from "../lib/accountSettings";
+import { consumePendingNotificationConversation } from "../lib/pushNotifications";
 
 
 export default function Index() {
@@ -27,6 +29,7 @@ export default function Index() {
   const [displayName, setDisplayName] = useState(DEFAULT_ACCOUNT_NAME);
   const [error, setError] = useState('');
   const [isWelcoming, setIsWelcoming] = useState(false);
+  const [faceIdAttempting, setFaceIdAttempting] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
   const passcodeOpacity = useRef(new Animated.Value(1)).current;
@@ -43,6 +46,15 @@ export default function Index() {
     />
   );
 
+  const enterChat = async () => {
+    const conversationId = await consumePendingNotificationConversation();
+    if (conversationId) {
+      router.replace({ pathname: "/chat", params: { conversation_id: conversationId } });
+      return;
+    }
+    router.replace("/chat");
+  };
+
   useEffect(() => {
     let isActive = true;
 
@@ -58,7 +70,23 @@ export default function Index() {
       setSavedPassword(accountPassword);
 
       if (!accountPassword) {
-        router.replace('/chat');
+        enterChat();
+        return;
+      }
+
+      if (account.faceIdEnabled) {
+        setFaceIdAttempting(true);
+        LocalAuthentication.authenticateAsync({
+          promptMessage: "解锁小C",
+          cancelLabel: "使用密码",
+          fallbackLabel: "使用设备密码",
+        })
+          .then((result) => {
+            if (isActive && result.success) enterChat();
+          })
+          .finally(() => {
+            if (isActive) setFaceIdAttempting(false);
+          });
       }
     });
 
@@ -125,7 +153,7 @@ export default function Index() {
             ]),
             Animated.delay(620),
           ]).start(() => {
-            router.replace('/chat');
+            enterChat();
           });
 
           return;
@@ -259,7 +287,7 @@ export default function Index() {
 
           onChangeText={handleChange}
 
-          autoFocus={!isWelcoming}
+          autoFocus={!isWelcoming && !faceIdAttempting}
 
           editable={!isWelcoming}
 

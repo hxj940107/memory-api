@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 
 export type AccountSettings = {
   displayName: string;
@@ -88,7 +89,7 @@ export async function getAccountSettings(): Promise<AccountSettings> {
     xiaocMomentAvatarUri,
   ] = await Promise.all([
     AsyncStorage.getItem(ACCOUNT_DISPLAY_NAME_KEY),
-    AsyncStorage.getItem(ACCOUNT_PASSWORD_KEY),
+    getAccountPassword(),
     AsyncStorage.getItem(ACCOUNT_FACE_ID_KEY),
     AsyncStorage.getItem(ACCOUNT_USER_MOMENT_AVATAR_KEY),
     AsyncStorage.getItem(ACCOUNT_XIAOC_MOMENT_AVATAR_KEY),
@@ -114,7 +115,15 @@ export async function getAccountSettings(): Promise<AccountSettings> {
 }
 
 export async function getAccountPassword() {
-  return AsyncStorage.getItem(ACCOUNT_PASSWORD_KEY);
+  const securePassword = await SecureStore.getItemAsync(ACCOUNT_PASSWORD_KEY);
+  if (securePassword) return securePassword;
+
+  const legacyPassword = await AsyncStorage.getItem(ACCOUNT_PASSWORD_KEY);
+  if (legacyPassword) {
+    await SecureStore.setItemAsync(ACCOUNT_PASSWORD_KEY, legacyPassword);
+    await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
+  }
+  return legacyPassword;
 }
 
 export async function saveAccountDisplayName(displayName: string) {
@@ -129,19 +138,27 @@ export async function saveAccountPassword(password: string) {
   const normalizedPassword = password.replace(/[^0-9]/g, "").slice(0, 6);
 
   if (!normalizedPassword) {
+    await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_KEY);
     await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
     await AsyncStorage.removeItem(ACCOUNT_FACE_ID_KEY);
     return false;
   }
 
-  await AsyncStorage.setItem(ACCOUNT_PASSWORD_KEY, normalizedPassword);
+  await SecureStore.setItemAsync(ACCOUNT_PASSWORD_KEY, normalizedPassword);
+  await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
 
   return true;
 }
 
 export async function clearAccountPassword() {
+  await SecureStore.deleteItemAsync(ACCOUNT_PASSWORD_KEY);
   await AsyncStorage.removeItem(ACCOUNT_PASSWORD_KEY);
   await AsyncStorage.removeItem(ACCOUNT_FACE_ID_KEY);
+}
+
+export async function saveAccountFaceIdEnabled(enabled: boolean) {
+  await AsyncStorage.setItem(ACCOUNT_FACE_ID_KEY, enabled ? "1" : "0");
+  return enabled;
 }
 
 export async function saveUserMomentAvatar(avatar: MomentAvatarId) {

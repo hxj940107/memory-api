@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from "fs"
 import path from "path"
+import { requirePrivateAppRequest } from '../lib/privateAppAuth.js'
 import {
   AI_ENDPOINTS,
   AI_MODELS,
@@ -55,6 +56,10 @@ import {
   validateFinalProactiveAttentionRecheck,
 } from "../lib/proactiveAttentionSend.js"
 import { buildPromptCacheUsageLog } from "../lib/promptCaching.js"
+import {
+  buildProactivePushMessage,
+  sendExpoPushMessage,
+} from "../lib/pushNotifications.js"
 import { normalizeMomentCandidateForPublish } from "../lib/momentEventTime.js"
 import {
   BACKGROUND_PROCESSING_STALE_MS,
@@ -2052,6 +2057,72 @@ async function saveProactiveMessage({ user_id, conversation_id, content, task, m
       updated_at: new Date().toISOString(),
     })
 
+  let pushDiagnostics = {
+    attempted: false,
+    delivered_to_expo: false,
+    reason: "push_not_configured",
+  }
+  try {
+    const { data: pushState, error: pushStateError } = await supabase
+      .from("user_state")
+      .select("push_token,push_notifications_enabled,push_preview_enabled")
+      .eq("user_id", user_id)
+      .maybeSingle()
+
+    if (pushStateError?.code === "42703") {
+      pushDiagnostics = { ...pushDiagnostics, reason: "push_schema_missing" }
+    } else if (pushStateError) {
+      throw pushStateError
+    } else if (!pushState?.push_notifications_enabled || !pushState?.push_token) {
+      pushDiagnostics = { ...pushDiagnostics, reason: "push_disabled_or_unregistered" }
+    } else {
+      pushDiagnostics = await sendExpoPushMessage(
+        buildProactivePushMessage({
+          token: pushState.push_token,
+          content,
+          previewEnabled: pushState.push_preview_enabled !== false,
+          data: {
+            conversationId: conversation_id,
+            messageId: String(message.id),
+            proactiveType: task.type,
+          },
+        }),
+        { accessToken: process.env.EXPO_ACCESS_TOKEN || "" },
+      )
+    }
+  } catch (error) {
+    pushDiagnostics = {
+      attempted: true,
+      delivered_to_expo: false,
+      reason: "push_diagnostics_failed",
+      error: trimText(error?.message, 240),
+    }
+  }
+
+  const { data: storedMessage } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("id", message.id)
+    .maybeSingle()
+  await supabase
+    .from("messages")
+    .update({
+      metadata: {
+        ...(storedMessage?.metadata || {}),
+        pushNotification: {
+          ...pushDiagnostics,
+          evaluated_at: new Date().toISOString(),
+        },
+      },
+    })
+    .eq("id", message.id)
+
+  console.log("PROACTIVE PUSH NOTIFICATION:", {
+    message_id: message.id,
+    proactive_type: task.type,
+    ...pushDiagnostics,
+  })
+
   return message.id
 }
 
@@ -3828,6 +3899,7 @@ async function handleSharedContextRequest(req, res, userId) {
 }
 
 export default async function handler(req, res) {
+  if (!requirePrivateAppRequest(req, res)) return
   try {
 
     const user_id =

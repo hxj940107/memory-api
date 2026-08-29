@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js"
 import { waitUntil } from "@vercel/functions"
 import {
+  privateAppInternalHeaders,
+  requirePrivateAppRequest,
+} from "../lib/privateAppAuth.js"
+import {
   isInvalidMomentText,
   isMomentTechnicalDiscussion,
   isMomentWritingRequest,
@@ -770,7 +774,10 @@ async function enqueueInactivityReachOutTask({
 async function saveMessage(user_id, role, content, conversation_id, metadata = {}) {
   const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...privateAppInternalHeaders(),
+    },
     body: JSON.stringify({
       user_id,
       role,
@@ -906,7 +913,10 @@ async function saveUserMessage(
 
   const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...privateAppInternalHeaders(),
+    },
     body: JSON.stringify({
       user_id,
       role: "user",
@@ -2905,6 +2915,7 @@ async function maybeUpdateBoundSharedContext({
 // Main Handler
 // --------------------
 export default async function handler(req, res) {
+  if (!requirePrivateAppRequest(req, res)) return
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })
@@ -3592,7 +3603,8 @@ console.log("======================================\n")
             {
               method: "POST",
               headers: {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                ...privateAppInternalHeaders(),
               },
               body: JSON.stringify({
                 conversation_id: cid,

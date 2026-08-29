@@ -1,5 +1,23 @@
+import * as SecureStore from "expo-secure-store";
+
 export const API_BASE_URL = "https://memory-api-beta.vercel.app";
 export const APP_USER_ID = "user";
+const PRIVATE_APP_TOKEN_KEY = "xiaoc:private_api_token";
+
+let cachedPrivateAppToken: string | null | undefined;
+
+async function getPrivateAppToken() {
+  const buildToken = String(process.env.EXPO_PUBLIC_XIAOC_APP_TOKEN || "").trim();
+  if (buildToken.length >= 32) {
+    cachedPrivateAppToken = buildToken;
+    SecureStore.setItemAsync(PRIVATE_APP_TOKEN_KEY, buildToken).catch(() => {});
+    return buildToken;
+  }
+
+  if (cachedPrivateAppToken !== undefined) return cachedPrivateAppToken;
+  cachedPrivateAppToken = await SecureStore.getItemAsync(PRIVATE_APP_TOKEN_KEY);
+  return cachedPrivateAppToken;
+}
 
 type QueryValue = string | number | boolean | null | undefined;
 
@@ -40,8 +58,13 @@ export async function apiJson<T>(
   let response: Response;
 
   try {
+    const headers = new Headers(fetchOptions.headers);
+    const privateAppToken = await getPrivateAppToken();
+    if (privateAppToken) headers.set("X-XiaoC-App-Token", privateAppToken);
+
     response = await fetch(apiUrl(path, query), {
       ...fetchOptions,
+      headers,
       signal: controller.signal,
     });
   } catch (error) {

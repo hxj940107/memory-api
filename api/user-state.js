@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { requirePrivateAppRequest } from "../lib/privateAppAuth.js"
 import {
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   INACTIVITY_REACH_OUT_MODES,
@@ -11,6 +12,7 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
+  if (!requirePrivateAppRequest(req, res)) return
 
   try {
 
@@ -91,6 +93,26 @@ export default async function handler(req, res) {
       })
     }
 
+    if (req.method === "GET" && req.query.action === "push-notification-settings") {
+      const { data, error } = await supabase
+        .from("user_state")
+        .select("push_notifications_enabled,push_preview_enabled,push_token_updated_at")
+        .eq("user_id", user_id)
+        .maybeSingle()
+
+      if (error?.code === "42703") {
+        return res.status(200).json({ enabled: false, preview_enabled: true, schema_ready: false })
+      }
+      if (error) return res.status(500).json({ error: error.message })
+
+      return res.status(200).json({
+        enabled: data?.push_notifications_enabled === true,
+        preview_enabled: data?.push_preview_enabled !== false,
+        registered: Boolean(data?.push_token_updated_at),
+        schema_ready: true,
+      })
+    }
+
     if (req.method === "POST") {
       if (req.body.action === "set-inactivity-reach-out-mode") {
         const mode = String(req.body.mode || "")
@@ -116,6 +138,30 @@ export default async function handler(req, res) {
         return res.status(200).json({
           mode: normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode),
         })
+      }
+
+      if (req.body.action === "set-push-notification-settings") {
+        const enabled = req.body.enabled === true
+        const previewEnabled = req.body.preview_enabled !== false
+        const token = String(req.body.push_token || "").trim()
+
+        if (enabled && !/^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$/.test(token)) {
+          return res.status(400).json({ error: "valid Expo push token required" })
+        }
+
+        const { error } = await supabase
+          .from("user_state")
+          .update({
+            push_notifications_enabled: enabled,
+            push_preview_enabled: previewEnabled,
+            ...(token ? { push_token: token } : {}),
+            push_token_updated_at: token ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", user_id)
+
+        if (error) return res.status(500).json({ error: error.message })
+        return res.status(200).json({ enabled, preview_enabled: previewEnabled })
       }
 
       const { last_conversation = null } = req.body

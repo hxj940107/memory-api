@@ -1,5 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
+import * as LocalAuthentication from "expo-local-authentication";
 import { router, useFocusEffect } from "expo-router";
 import {
   Alert,
@@ -23,6 +24,7 @@ import {
   getAccountSettings,
   saveAccountDisplayName,
   saveAccountPassword,
+  saveAccountFaceIdEnabled,
   saveUserMomentAvatarUri,
   saveXiaoCMomentAvatarUri,
 } from "../lib/accountSettings";
@@ -43,6 +45,11 @@ import {
   getInactivityReachOutModeLabel,
   saveInactivityReachOutMode,
 } from "../lib/proactiveSettings";
+import {
+  getLocalPushSettings,
+  savePushSettings,
+  type PushSettings,
+} from "../lib/pushNotifications";
 
 type CreditsResponse = {
   balance?: number | null;
@@ -205,6 +212,10 @@ export default function SettingsScreen() {
   });
   const [reachOutMode, setReachOutMode] =
     useState<InactivityReachOutMode>(DEFAULT_INACTIVITY_REACH_OUT_MODE);
+  const [pushSettings, setPushSettings] = useState<PushSettings>({
+    enabled: false,
+    previewEnabled: true,
+  });
   const [expandedSections, setExpandedSections] = useState({
     model: false,
     cost: false,
@@ -220,7 +231,7 @@ export default function SettingsScreen() {
     setRefreshing(true);
 
     try {
-      const [model, costSummary, creditsData, accountSettings, inactivityMode] = await Promise.all([
+      const [model, costSummary, creditsData, accountSettings, inactivityMode, localPushSettings] = await Promise.all([
         getSelectedChatModel(),
         getCostSummary(),
         apiJson<CreditsResponse>("/api/user-state", {
@@ -235,6 +246,7 @@ export default function SettingsScreen() {
         })),
         getAccountSettings(),
         getInactivityReachOutMode().catch(() => DEFAULT_INACTIVITY_REACH_OUT_MODE),
+        getLocalPushSettings(),
       ]);
 
       setSelectedModel(model);
@@ -242,6 +254,7 @@ export default function SettingsScreen() {
       setCredits(creditsData);
       setAccount(accountSettings);
       setReachOutMode(inactivityMode);
+      setPushSettings(localPushSettings);
     } finally {
       setRefreshing(false);
     }
@@ -384,10 +397,86 @@ export default function SettingsScreen() {
     Alert.alert("密码", account.hasPassword ? "已设置本机密码。" : "还没有设置密码。", actions);
   };
 
-  const showFaceIdInfo = () => {
+  const toggleFaceId = async () => {
+    if (account.faceIdEnabled) {
+      await saveAccountFaceIdEnabled(false);
+      setAccount((prev) => ({ ...prev, faceIdEnabled: false }));
+      return;
+    }
+
+    if (!account.hasPassword) {
+      Alert.alert("先设置密码", "Face ID 需要一个 6 位本机密码作为回退。");
+      return;
+    }
+
+    const [hasHardware, isEnrolled] = await Promise.all([
+      LocalAuthentication.hasHardwareAsync(),
+      LocalAuthentication.isEnrolledAsync(),
+    ]);
+    if (!hasHardware || !isEnrolled) {
+      Alert.alert("Face ID 不可用", "请先在 iPhone 系统设置中录入 Face ID。");
+      return;
+    }
+
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: "开启 Face ID 解锁小C",
+      cancelLabel: "取消",
+      fallbackLabel: "使用设备密码",
+    });
+    if (!result.success) return;
+
+    await saveAccountFaceIdEnabled(true);
+    setAccount((prev) => ({ ...prev, faceIdEnabled: true }));
+  };
+
+  const updatePushSettings = async (next: PushSettings) => {
+    try {
+      const saved = await savePushSettings(next);
+      setPushSettings(saved);
+    } catch (error) {
+      Alert.alert(
+        "通知没有开启",
+        error instanceof Error ? error.message : "请稍后再试。",
+      );
+    }
+  };
+
+  const editPushNotifications = () => {
     Alert.alert(
-      "Face ID",
-      "这里先留好入口。要真正开启 Face ID，需要下一步接入 Expo Local Authentication，然后再把它和 App 锁连起来。",
+      "消息通知",
+      pushSettings.enabled
+        ? `通知已开启，锁屏${pushSettings.previewEnabled ? "会显示消息内容" : "只显示有新消息"}。`
+        : "开启后，小C的主动消息可以出现在锁屏和横幅中。",
+      [
+        { text: "取消", style: "cancel" },
+        ...(pushSettings.enabled
+          ? [
+              {
+                text: pushSettings.previewEnabled ? "隐藏消息内容" : "显示消息内容",
+                onPress: () => updatePushSettings({
+                  enabled: true,
+                  previewEnabled: !pushSettings.previewEnabled,
+                }),
+              },
+              {
+                text: "关闭通知",
+                style: "destructive" as const,
+                onPress: () => updatePushSettings({
+                  enabled: false,
+                  previewEnabled: pushSettings.previewEnabled,
+                }),
+              },
+            ]
+          : [
+              {
+                text: "开启通知",
+                onPress: () => updatePushSettings({
+                  enabled: true,
+                  previewEnabled: true,
+                }),
+              },
+            ]),
+      ],
     );
   };
 
@@ -565,8 +654,13 @@ export default function SettingsScreen() {
           />
           <InfoRow
             label="Face ID"
-            value={account.faceIdEnabled ? "已开启" : "未接入"}
-            onPress={showFaceIdInfo}
+            value={account.faceIdEnabled ? "已开启" : "未开启"}
+            onPress={toggleFaceId}
+          />
+          <InfoRow
+            label="消息通知"
+            value={pushSettings.enabled ? "已开启" : "未开启"}
+            onPress={editPushNotifications}
           />
           <InfoRow
             label="我的朋友圈头像"

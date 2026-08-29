@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { APP_USER } from "../lib/aiConfig.js";
+import { requirePrivateAppRequest } from "../lib/privateAppAuth.js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -7,6 +8,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  if (!requirePrivateAppRequest(req, res)) return;
   try {
     const user_id = req.query.user_id || APP_USER.defaultUserId;
 

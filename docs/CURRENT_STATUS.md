@@ -1,5 +1,15 @@
 # XiaoC Current Status
 
+## Private iOS App Readiness — 2026-08-30
+
+- Push Notification and Face ID integration are implemented in the current working tree and are not yet deployed or device-verified.
+- Proactive private messages attempt Push only after the visible assistant message is persisted. Duplicate proactive tasks reuse the existing message and do not send a second notification.
+- Notification previews can be hidden, notification taps preserve the target conversation through App unlock, and foreground notifications do not add a duplicate banner.
+- The existing Face ID settings placeholder is connected. The six-digit fallback passcode migrates from AsyncStorage to iOS Keychain, cold launch supports biometric unlock, and background snapshots are covered; returning after 60 seconds requires unlock again.
+- `supabase_push_notifications.sql` must be applied before enabling Push, followed by an EAS iOS build that provisions the Apple Push Notification key.
+- Release blocker still requiring an explicit security design decision: most public app API endpoints currently trust the fixed `user_id` and do not authenticate the private device. Do not treat the first private build as security-complete until this is addressed or consciously accepted for the single-device threat model.
+- Private-device API authentication is now implemented in the working tree behind `XIAOC_APP_AUTH_ENABLED`. All 12 API functions share one constant-time gate, internal chat calls forward the token, Cron retains independent `CRON_SECRET` access, and the mobile client loads the build token into Keychain. Follow `docs/PRIVATE_IOS_RELEASE.md`; do not enable the Production flag before installing and verifying the token-bearing build.
+
 ## Canonical Production Baseline — 2026-08-29
 
 This section is the current planning authority. Dated milestone sections below are retained as history and must not override this baseline.

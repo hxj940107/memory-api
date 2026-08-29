@@ -29,6 +29,13 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "允许小C使用 Face ID 保护你们的私人空间。"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -41,6 +48,12 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "允许小C使用 Face ID 保护你们的私人空间。"
         }
       ]
     ],

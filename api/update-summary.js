@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { requirePrivateAppRequest } from "../lib/privateAppAuth.js";
 import {
   AI_ENDPOINTS,
   AI_MODELS,
@@ -147,6 +148,7 @@ async function summarizeBatch(oldSummary, batch) {
 }
 
 export default async function handler(req, res) {
+  if (!requirePrivateAppRequest(req, res)) return;
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST allowed" });
