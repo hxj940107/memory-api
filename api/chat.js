@@ -920,6 +920,39 @@ async function saveUserMessage(
   return data?.data?.[0]?.id || null
 }
 
+async function findExistingClientTurn(user_id, conversation_id, clientMessageId) {
+  if (!clientMessageId) return null
+
+  const { data: userMessage, error: userError } = await supabase
+    .from("messages")
+    .select("id, content, created_at")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .eq("role", "user")
+    .contains("metadata", { clientMessageId })
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (userError) throw userError
+  if (!userMessage) return null
+
+  const { data: assistantMessage, error: assistantError } = await supabase
+    .from("messages")
+    .select("id, content, metadata, created_at")
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .eq("role", "assistant")
+    .contains("metadata", { replyToUserMessageId: userMessage.id })
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (assistantError) throw assistantError
+
+  return { userMessage, assistantMessage: assistantMessage || null }
+}
+
 // --------------------
 // Get Recent History
 // --------------------
@@ -2913,6 +2946,44 @@ export default async function handler(req, res) {
     const normalizedFileText = trimText(String(fileText || "").trim(), 12000)
     const hasFileText = Boolean(normalizedFileName && normalizedFileText)
 
+    const existingClientTurn = await findExistingClientTurn(
+      user_id,
+      cid,
+      normalizedClientMessageId
+    )
+
+    if (existingClientTurn?.assistantMessage) {
+      console.log("CHAT CLIENT MESSAGE DEDUPLICATED:", {
+        conversation_id: cid,
+        client_message_id: normalizedClientMessageId,
+        user_message_id: existingClientTurn.userMessage.id,
+        assistant_message_id: existingClientTurn.assistantMessage.id,
+      })
+      return res.status(200).json({
+        reply: normalizeAssistantOutput(existingClientTurn.assistantMessage),
+        conversation_id: cid,
+        user_message_id: existingClientTurn.userMessage.id,
+        assistant_message_id: existingClientTurn.assistantMessage.id,
+        model: selectedChatModel,
+        usage: {},
+        attachments: existingClientTurn.assistantMessage.metadata?.attachments || [],
+        deduplicated: true,
+      })
+    }
+
+    if (existingClientTurn) {
+      console.log("CHAT CLIENT MESSAGE STILL PROCESSING:", {
+        conversation_id: cid,
+        client_message_id: normalizedClientMessageId,
+        user_message_id: existingClientTurn.userMessage.id,
+      })
+      return res.status(202).json({
+        processing: true,
+        conversation_id: cid,
+        user_message_id: existingClientTurn.userMessage.id,
+      })
+    }
+
 // 1. save user msg
 const userMessageId = await saveUserMessage(
   user_id,
@@ -3459,6 +3530,10 @@ console.log("======================================\n")
       cid,
       {
         ...(attachments.length ? { attachments } : {}),
+        replyToUserMessageId: userMessageId,
+        ...(normalizedClientMessageId
+          ? { replyToClientMessageId: normalizedClientMessageId }
+          : {}),
         sharedContext: getSharedContextDiagnostics(sharedContext, {
           injected: Boolean(sharedContextPrompt),
         }),
@@ -3658,8 +3733,9 @@ console.log("======================================\n")
         })
     )
 
-    try {
-      await updateActiveConversationContext({
+    waitUntil((async () => {
+      try {
+        await updateActiveConversationContext({
         user_id,
         user_message_id: userMessageId,
         user_message_created_at: userMessageCreatedAt,
@@ -3688,28 +3764,28 @@ console.log("======================================\n")
           }
         })(),
         persist_active_context: canPersistActiveConversationContext,
-      })
-
-    } catch (err) {
-      console.error("active conversation context update failed:", err)
-    }
-
-    try {
-      const inactivityTask = await enqueueInactivityReachOutTask({
-        user_id,
-        conversation_id: cid,
-        user_message_id: userMessageId,
-        assistant_message_id: assistantMessageId,
-        message,
-        reply,
-      })
-
-      if (inactivityTask) {
-        console.log("INACTIVITY REACH-OUT QUEUED:", inactivityTask)
+        })
+      } catch (err) {
+        console.error("active conversation context update failed:", err)
       }
-    } catch (err) {
-      console.error("inactivity reach-out enqueue failed:", err)
-    }
+
+      try {
+        const inactivityTask = await enqueueInactivityReachOutTask({
+          user_id,
+          conversation_id: cid,
+          user_message_id: userMessageId,
+          assistant_message_id: assistantMessageId,
+          message,
+          reply,
+        })
+
+        if (inactivityTask) {
+          console.log("INACTIVITY REACH-OUT QUEUED:", inactivityTask)
+        }
+      } catch (err) {
+        console.error("inactivity reach-out enqueue failed:", err)
+      }
+    })())
 
     waitUntil(maybeUpdateBoundSharedContext({
       userId: user_id,

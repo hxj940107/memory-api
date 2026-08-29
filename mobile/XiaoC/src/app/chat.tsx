@@ -94,7 +94,7 @@ type Message = {
   imageUris?: string[];
   imageAsset?: ImagePicker.ImagePickerAsset;
   imageAssets?: ImagePicker.ImagePickerAsset[];
-  status?: "sending" | "sent" | "failed";
+  status?: "sending" | "syncing" | "sent" | "failed";
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
   treeholeDraft?: TreeholeDraft;
   treeholeSaveStatus?: "idle" | "saving" | "saved" | "failed";
@@ -104,6 +104,8 @@ type Message = {
     proactiveType?: string;
     proactiveTaskId?: string;
     clientMessageId?: string;
+    replyToUserMessageId?: string;
+    replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
   };
 };
@@ -138,6 +140,8 @@ type HistoryItem = {
     proactiveType?: string;
     proactiveTaskId?: string;
     clientMessageId?: string;
+    replyToUserMessageId?: string;
+    replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
   };
 };
@@ -150,6 +154,8 @@ type ChatResponse = {
   model?: string;
   usage?: Record<string, unknown>;
   attachments?: GeneratedAttachment[];
+  processing?: boolean;
+  deduplicated?: boolean;
 };
 
 type SignedAttachmentResponse = {
@@ -988,6 +994,7 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
 
   const [isTyping, setIsTyping] = useState(false);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
 
   const [loadingHistory, setLoadingHistory] = useState(true);
 
@@ -1000,6 +1007,7 @@ export default function ChatScreen() {
   const conversationIdRef = useRef<string | null>(null);
   const latestCloudMessageIdRef = useRef<string | null>(null);
   const historyRefreshInFlightRef = useRef(false);
+  const pendingReplyClientIdRef = useRef<string | null>(null);
   const hasRestoredConversationRef = useRef(false);
   const conversationTitleInitializedRef = useRef(false);
   const lastRestoreRouteKeyRef = useRef<string | null>(null);
@@ -1493,6 +1501,20 @@ export default function ChatScreen() {
         }),
       );
 
+      const pendingReplyClientId = pendingReplyClientIdRef.current;
+      if (
+        pendingReplyClientId &&
+        data.some(
+          (item) =>
+            item.role === "assistant" &&
+            item.metadata?.replyToClientMessageId === pendingReplyClientId,
+        )
+      ) {
+        pendingReplyClientIdRef.current = null;
+        setIsTyping(false);
+        setDeliveryNotice(null);
+      }
+
       setMessages((current) =>
         silent
           ? mergeCloudMessages(current, restoredMessages)
@@ -1605,7 +1627,16 @@ export default function ChatScreen() {
       }
     }
 
+    const clientMessageId = messageToSend.clientId || messageToSend.id;
+    pendingReplyClientIdRef.current = clientMessageId;
+    setDeliveryNotice(null);
     setIsTyping(true);
+
+    const slowReplyTimer = setTimeout(() => {
+      if (pendingReplyClientIdRef.current === clientMessageId) {
+        setDeliveryNotice("这次回复有点慢，我还在等。");
+      }
+    }, 10_000);
 
     setTimeout(() => {
       scrollToLatestMessage(true);
@@ -1617,7 +1648,7 @@ export default function ChatScreen() {
       const data = await postJson<ChatResponse>("/api/chat", {
         user_id: APP_USER_ID,
         message: userText,
-        client_message_id: messageToSend.clientId || messageToSend.id,
+        client_message_id: clientMessageId,
         conversation_id: conversationId,
         model: selectedModel.id,
         imageUrl: imageUrls[0],
@@ -1647,6 +1678,22 @@ export default function ChatScreen() {
         }
       }
 
+      if (data.processing) {
+        setMessages((prev) =>
+          reconcileLocalMessageCloudId(
+            prev,
+            messageToSend.id,
+            data.user_message_id,
+            { status: "syncing" },
+          ),
+        );
+        setDeliveryNotice("回复还在同步，不用重复发送。");
+        [1500, 5000, 15_000].forEach((delay) => {
+          setTimeout(refreshIfCloudHistoryChanged, delay);
+        });
+        return;
+      }
+
       await saveChatUsageFromResponse({
         model: data.model || selectedModel.id,
         usage: data.usage,
@@ -1661,7 +1708,9 @@ export default function ChatScreen() {
         ),
       );
 
+      pendingReplyClientIdRef.current = null;
       setIsTyping(false);
+      setDeliveryNotice(null);
 
       const treeholeDraft = parseTreeholeDraft(data.reply || "");
 
@@ -1693,18 +1742,43 @@ export default function ChatScreen() {
     } catch (error) {
       console.log("CHAT ERROR:", error);
 
-      setIsTyping(false);
+      const isTimeout =
+        error instanceof Error && error.message === "Request timeout";
 
-      setMessages((prev) =>
-        prev.map((item) =>
-          item.id === messageToSend.id
-            ? {
-                ...item,
-                status: "failed",
-              }
-            : item,
-        ),
-      );
+      if (isTimeout) {
+        setMessages((prev) =>
+          prev.map((item) =>
+            item.id === messageToSend.id
+              ? { ...item, status: "syncing" }
+              : item,
+          ),
+        );
+        setDeliveryNotice("连接有点慢，回复可能仍在处理中，不用重复发送。");
+        [1500, 5000, 15_000, 30_000].forEach((delay) => {
+          setTimeout(refreshIfCloudHistoryChanged, delay);
+        });
+      } else {
+        pendingReplyClientIdRef.current = null;
+        setIsTyping(false);
+        const responseStatus =
+          typeof error === "object" && error && "status" in error
+            ? Number(error.status)
+            : null;
+        setDeliveryNotice(
+          responseStatus
+            ? "这次回复没有完成，可以稍后重试。"
+            : "网络似乎断开了，这条消息还没送达。",
+        );
+        setMessages((prev) =>
+          prev.map((item) =>
+            item.id === messageToSend.id
+              ? { ...item, status: "failed" }
+              : item,
+          ),
+        );
+      }
+    } finally {
+      clearTimeout(slowReplyTimer);
     }
   };
 
@@ -2302,6 +2376,10 @@ export default function ChatScreen() {
 
           {isTyping && <TypingDots />}
         </ScrollView>
+
+        {!!deliveryNotice && (
+          <Text style={styles.deliveryNotice}>{deliveryNotice}</Text>
+        )}
 
         <View
           style={[
@@ -3251,6 +3329,16 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: "#D0D0D0",
     marginRight: 6,
+  },
+
+  deliveryNotice: {
+    paddingHorizontal: 28,
+    paddingTop: 6,
+    paddingBottom: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#8F8A85",
+    backgroundColor: XiaoCColors.composerBackground,
   },
 
   inputArea: {

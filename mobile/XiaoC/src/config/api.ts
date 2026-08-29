@@ -62,7 +62,7 @@ export async function apiJson<T>(
         ? String(data.error)
         : "Request failed";
 
-    throw new Error(message);
+    throw Object.assign(new Error(message), { status: response.status });
   }
 
   return data as T;

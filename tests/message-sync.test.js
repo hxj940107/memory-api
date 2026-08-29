@@ -183,7 +183,10 @@ test("chat rendering uses stable ids for messages and split bubbles", () => {
   assert.match(source, /setInterval\(refreshIfCloudHistoryChanged, 30_000\)/)
   assert.match(source, /silent\s*\? mergeCloudMessages\(current, restoredMessages\)/)
   assert.doesNotMatch(source, /id: createLocalMessageId\(\),\s*\n\s*cloudId: item\.id/)
-  assert.match(source, /client_message_id: messageToSend\.clientId \|\| messageToSend\.id/)
+  assert.match(source, /const clientMessageId = messageToSend\.clientId \|\| messageToSend\.id/)
+  assert.match(source, /client_message_id: clientMessageId/)
+  assert.match(source, /回复可能仍在处理中，不用重复发送/)
+  assert.match(source, /replyToClientMessageId === pendingReplyClientId/)
 })
 
 test("chat persists the client message identity before calling the model", () => {
@@ -196,6 +199,11 @@ test("chat persists the client message identity before calling the model", () =>
   assert.ok(userSave >= 0)
   assert.ok(modelCall >= 0)
   assert.ok(userSave < modelCall)
+  assert.match(source, /findExistingClientTurn\(/)
+  assert.match(source, /CHAT CLIENT MESSAGE DEDUPLICATED/)
+  assert.match(source, /CHAT CLIENT MESSAGE STILL PROCESSING/)
+  assert.match(source, /replyToUserMessageId: userMessageId/)
+  assert.match(source, /replyToClientMessageId: normalizedClientMessageId/)
 })
 
 test("history API adds message id as a stable secondary order", () => {
