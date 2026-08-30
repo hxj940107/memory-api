@@ -1,13 +1,15 @@
 import { router } from "expo-router";
 import {
   Alert,
+  FlatList,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   deleteFavorite,
@@ -34,6 +36,9 @@ const formatFavoriteDate = (value: string) => {
 
 export default function FavoritesScreen() {
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
+  const [selectedFavorite, setSelectedFavorite] =
+    useState<FavoriteItem | null>(null);
+  const longPressHandledRef = useRef(false);
 
   useEffect(() => {
     loadFavorites();
@@ -60,6 +65,45 @@ export default function FavoritesScreen() {
     ]);
   };
 
+  const renderFavorite = ({ item: favorite }: { item: FavoriteItem }) => (
+    <Pressable
+      style={({ pressed }) => [
+        styles.card,
+        pressed && styles.cardPressed,
+      ]}
+      onPress={() => {
+        if (longPressHandledRef.current) {
+          longPressHandledRef.current = false;
+          return;
+        }
+        setSelectedFavorite(favorite);
+      }}
+      onLongPress={() => {
+        longPressHandledRef.current = true;
+        setTimeout(() => {
+          longPressHandledRef.current = false;
+        }, 800);
+        confirmDeleteFavorite(favorite);
+      }}
+    >
+      <View style={styles.cardHeader}>
+        <Text style={styles.role}>
+          {favorite.role === "assistant" ? "小C" : "我"}
+        </Text>
+        <View style={styles.cardMeta}>
+          <Text style={styles.date}>
+            {formatFavoriteDate(favorite.createdAt)}
+          </Text>
+          <Text style={styles.chevron}>›</Text>
+        </View>
+      </View>
+
+      <Text style={styles.text} numberOfLines={2} ellipsizeMode="tail">
+        {favorite.text}
+      </Text>
+    </Pressable>
+  );
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -70,40 +114,62 @@ export default function FavoritesScreen() {
         <Text style={styles.gentleLine}>有些话，我想替你留着</Text>
       </View>
 
-      <ScrollView
+      <FlatList
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          favorites.length === 0 && styles.emptyContent,
+        ]}
         showsVerticalScrollIndicator={false}
-      >
-        {favorites.length === 0 ? (
+        data={favorites}
+        keyExtractor={(favorite) => favorite.id}
+        renderItem={renderFavorite}
+        ListEmptyComponent={
           <View style={styles.emptyState}>
             <Text style={styles.emptyText}>还没有收藏。</Text>
             <Text style={styles.emptySubtext}>长按一条消息，放进这里。</Text>
           </View>
-        ) : (
-          favorites.map((favorite) => (
-            <Pressable
-              key={favorite.id}
-              style={({ pressed }) => [
-                styles.card,
-                pressed && styles.cardPressed,
-              ]}
-              onLongPress={() => confirmDeleteFavorite(favorite)}
-            >
-              <View style={styles.cardHeader}>
-                <Text style={styles.role}>
-                  {favorite.role === "assistant" ? "小C" : "我"}
-                </Text>
-                <Text style={styles.date}>
-                  {formatFavoriteDate(favorite.createdAt)}
-                </Text>
-              </View>
+        }
+      />
 
-              <Text style={styles.text}>{favorite.text}</Text>
+      <Modal
+        visible={Boolean(selectedFavorite)}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedFavorite(null)}
+      >
+        <View style={styles.detailScreen}>
+          <View style={styles.detailHeader}>
+            <View>
+              <Text style={styles.detailRole}>
+                {selectedFavorite?.role === "assistant" ? "小C" : "我"}
+              </Text>
+              <Text style={styles.detailDate}>
+                {selectedFavorite
+                  ? formatFavoriteDate(selectedFavorite.createdAt)
+                  : ""}
+              </Text>
+            </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.detailClose,
+                pressed && styles.detailClosePressed,
+              ]}
+              onPress={() => setSelectedFavorite(null)}
+            >
+              <Text style={styles.detailCloseText}>完成</Text>
             </Pressable>
-          ))
-        )}
-      </ScrollView>
+          </View>
+
+          <ScrollView
+            style={styles.detailScroll}
+            contentContainerStyle={styles.detailContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.detailText}>{selectedFavorite?.text || ""}</Text>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -152,6 +218,10 @@ const styles = StyleSheet.create({
     paddingBottom: 52,
   },
 
+  emptyContent: {
+    flexGrow: 1,
+  },
+
   emptyState: {
     paddingTop: 120,
     alignItems: "center",
@@ -194,6 +264,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  cardMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
   role: {
     fontSize: 13,
     color: "#A69D98",
@@ -204,9 +280,77 @@ const styles = StyleSheet.create({
     color: "#B8B0AA",
   },
 
+  chevron: {
+    marginTop: -1,
+    fontSize: 19,
+    lineHeight: 20,
+    color: "#C6BEB8",
+  },
+
   text: {
     fontSize: 18,
     lineHeight: 29,
+    color: "#3F3A37",
+  },
+
+  detailScreen: {
+    flex: 1,
+    backgroundColor: "#FBF8F3",
+  },
+
+  detailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 24,
+    paddingTop: 26,
+    paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(120,110,104,0.12)",
+  },
+
+  detailRole: {
+    fontSize: 15,
+    color: "#817873",
+  },
+
+  detailDate: {
+    marginTop: 4,
+    fontSize: 13,
+    color: "#B8B0AA",
+  },
+
+  detailClose: {
+    minWidth: 52,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+    backgroundColor: "rgba(120,120,128,0.08)",
+  },
+
+  detailClosePressed: {
+    backgroundColor: "rgba(120,120,128,0.14)",
+  },
+
+  detailCloseText: {
+    fontSize: 15,
+    color: "#625B57",
+  },
+
+  detailScroll: {
+    flex: 1,
+  },
+
+  detailContent: {
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 52,
+  },
+
+  detailText: {
+    fontSize: 19,
+    lineHeight: 31,
     color: "#3F3A37",
   },
 });
