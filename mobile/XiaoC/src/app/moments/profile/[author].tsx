@@ -1,12 +1,15 @@
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
+  Alert,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,8 +26,12 @@ import {
 import {
   filterMomentsForProfile,
   formatMomentProfileDate,
+  getMomentProfileBio,
+  getMomentProfileCoverUri,
   getMomentProfileDayKey,
-  getMomentsCoverUri,
+  MOMENT_PROFILE_BIO_MAX_LENGTH,
+  saveMomentProfileBio,
+  saveMomentProfileCoverUri,
   type MomentProfileKind,
 } from "../../../lib/momentProfile";
 
@@ -46,6 +53,9 @@ export default function MomentProfileScreen() {
   const [moments, setMoments] = useState<Moment[]>([]);
   const [account, setAccount] = useState<AccountSettings | null>(null);
   const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [bio, setBio] = useState("");
+  const [bioDraft, setBioDraft] = useState("");
+  const [editingBio, setEditingBio] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -56,13 +66,16 @@ export default function MomentProfileScreen() {
         query: { type: "moments", user_id: APP_USER_ID },
       }),
       getAccountSettings(),
-      profile === "user" ? getMomentsCoverUri() : Promise.resolve(null),
+      getMomentProfileCoverUri(profile),
+      getMomentProfileBio(profile),
     ])
-      .then(([loadedMoments, loadedAccount, loadedCover]) => {
+      .then(([loadedMoments, loadedAccount, loadedCover, loadedBio]) => {
         if (!active) return;
         setMoments(filterMomentsForProfile(loadedMoments, profile));
         setAccount(loadedAccount);
         setCoverUri(loadedCover);
+        setBio(loadedBio);
+        setBioDraft(loadedBio);
       })
       .catch((error) => console.log("Moment profile load failed:", error))
       .finally(() => {
@@ -78,7 +91,6 @@ export default function MomentProfileScreen() {
     if (profile === "xiaoc") {
       return {
         name: "小C",
-        bio: "陪你一起生活，也记得我们走过的日子。",
         avatar: account?.xiaocMomentAvatar || DEFAULT_XIAOC_MOMENT_AVATAR,
         avatarUri: account?.xiaocMomentAvatarUri || null,
       };
@@ -86,11 +98,44 @@ export default function MomentProfileScreen() {
 
     return {
       name: account?.displayName || DEFAULT_ACCOUNT_NAME,
-      bio: "和小C一起留下的生活片段。",
       avatar: account?.userMomentAvatar || DEFAULT_USER_MOMENT_AVATAR,
       avatarUri: account?.userMomentAvatarUri || null,
     };
   }, [account, profile]);
+
+  const pickCover = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("需要相册权限", "允许访问相册后，才能更换朋友圈封面。");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [16, 9],
+        quality: 0.9,
+      });
+      const uri = result.canceled ? null : result.assets[0]?.uri;
+      if (!uri) return;
+
+      setCoverUri(uri);
+      await saveMomentProfileCoverUri(profile, uri);
+    } catch (error) {
+      Alert.alert(
+        "更换失败",
+        error instanceof Error ? error.message : "请稍后再试。",
+      );
+    }
+  };
+
+  const finishBioEditing = async () => {
+    const savedBio = await saveMomentProfileBio(profile, bioDraft);
+    setBio(savedBio);
+    setBioDraft(savedBio);
+    setEditingBio(false);
+  };
 
   return (
     <View style={styles.screen}>
@@ -102,11 +147,18 @@ export default function MomentProfileScreen() {
         ListHeaderComponent={
           <View>
             <View style={styles.coverWrap}>
-              <Image
-                source={coverUri ? { uri: coverUri } : defaultCover}
-                style={styles.cover}
-                contentFit="cover"
-              />
+              <Pressable
+                style={styles.coverButton}
+                onPress={pickCover}
+                accessibilityRole="button"
+                accessibilityLabel="更换朋友圈封面"
+              >
+                <Image
+                  source={coverUri ? { uri: coverUri } : defaultCover}
+                  style={styles.cover}
+                  contentFit="cover"
+                />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="返回朋友圈"
@@ -123,23 +175,66 @@ export default function MomentProfileScreen() {
             </View>
 
             <View style={styles.identity}>
-              <View style={styles.identityText}>
-                <Text style={styles.name}>{profileData.name}</Text>
-                <Text style={styles.bio}>{profileData.bio}</Text>
+              <View style={styles.identityTop}>
+                <View style={styles.identityText}>
+                  <Text style={styles.name}>{profileData.name}</Text>
+                </View>
+                <View style={styles.avatarFrame}>
+                  <MomentAvatar
+                    profile={profile}
+                    name={profileData.name}
+                    avatar={profileData.avatar}
+                    uri={profileData.avatarUri}
+                    size={72}
+                  />
+                </View>
               </View>
-              <View style={styles.avatarFrame}>
-                <MomentAvatar
-                  profile={profile}
-                  name={profileData.name}
-                  avatar={profileData.avatar}
-                  uri={profileData.avatarUri}
-                  size={72}
-                />
-              </View>
-            </View>
 
-            <View style={styles.timelineHeader}>
-              <Text style={styles.timelineTitle}>朋友圈</Text>
+              {editingBio ? (
+                <View style={styles.bioEditor}>
+                  <TextInput
+                    autoFocus
+                    multiline
+                    maxLength={MOMENT_PROFILE_BIO_MAX_LENGTH}
+                    value={bioDraft}
+                    onChangeText={setBioDraft}
+                    style={styles.bioInput}
+                    placeholder="写一句个性签名"
+                    placeholderTextColor="#B0AAA5"
+                    textAlign="right"
+                  />
+                  <View style={styles.bioActions}>
+                    <Pressable
+                      onPress={() => {
+                        setBioDraft(bio);
+                        setEditingBio(false);
+                      }}
+                    >
+                      <Text style={styles.bioActionSecondary}>取消</Text>
+                    </Pressable>
+                    <Pressable onPress={finishBioEditing}>
+                      <Text style={styles.bioActionPrimary}>保存</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.bioRow}>
+                  <Text style={styles.bio}>{bio}</Text>
+                  <Pressable
+                    style={styles.bioEditButton}
+                    onPress={() => setEditingBio(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="编辑个性签名"
+                  >
+                    <SymbolView
+                      name="pencil"
+                      size={12}
+                      tintColor="#B4AFAB"
+                      weight="light"
+                    />
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
         }
@@ -190,7 +285,7 @@ export default function MomentProfileScreen() {
               )}
 
               <View style={styles.summaryWrap}>
-                <Text style={styles.summary} numberOfLines={3} ellipsizeMode="tail">
+                <Text style={styles.summary} numberOfLines={1} ellipsizeMode="tail">
                   {item.text || "分享了一张照片"}
                 </Text>
               </View>
@@ -215,6 +310,9 @@ const styles = StyleSheet.create({
     height: 232,
     backgroundColor: "#E9E7E4",
   },
+  coverButton: {
+    ...StyleSheet.absoluteFillObject,
+  },
   cover: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -229,9 +327,14 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(28,28,30,0.32)",
   },
   identity: {
-    minHeight: 104,
+    minHeight: 108,
     paddingHorizontal: 22,
-    paddingBottom: 18,
+    paddingBottom: 22,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(120,120,128,0.18)",
+  },
+  identityTop: {
+    minHeight: 64,
     flexDirection: "row",
     justifyContent: "flex-end",
   },
@@ -248,12 +351,56 @@ const styles = StyleSheet.create({
     color: "#242321",
   },
   bio: {
-    marginTop: 4,
-    maxWidth: 240,
+    flexShrink: 1,
     fontSize: 13,
-    lineHeight: 19,
+    lineHeight: 20,
     textAlign: "right",
     color: "#8B8580",
+  },
+  bioRow: {
+    alignSelf: "flex-end",
+    maxWidth: 310,
+    marginTop: 0,
+    flexDirection: "row",
+    alignItems: "flex-end",
+  },
+  bioEditButton: {
+    width: 25,
+    height: 20,
+    marginLeft: 3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bioEditor: {
+    alignSelf: "stretch",
+    alignItems: "flex-end",
+    marginTop: 2,
+  },
+  bioInput: {
+    width: "100%",
+    minHeight: 42,
+    maxHeight: 86,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 9,
+    backgroundColor: "#F7F6F4",
+    fontSize: 13,
+    lineHeight: 20,
+    color: "#655F5B",
+  },
+  bioActions: {
+    marginTop: 7,
+    flexDirection: "row",
+    gap: 16,
+  },
+  bioActionSecondary: {
+    fontSize: 12,
+    color: "#A39D98",
+  },
+  bioActionPrimary: {
+    fontSize: 12,
+    color: "#6F6965",
+    fontWeight: "500",
   },
   avatarFrame: {
     width: 80,
@@ -263,20 +410,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: "#FFFFFF",
   },
-  timelineHeader: {
-    marginHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 11,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(120,120,128,0.18)",
-  },
-  timelineTitle: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#8C8782",
-  },
   timelineItem: {
-    minHeight: 94,
+    minHeight: 76,
     marginHorizontal: 20,
     paddingVertical: 9,
     flexDirection: "row",
@@ -308,15 +443,15 @@ const styles = StyleSheet.create({
     color: "#77716D",
   },
   thumbnail: {
-    width: 76,
-    height: 76,
+    width: 64,
+    height: 64,
     marginRight: 12,
     borderRadius: 5,
     backgroundColor: "#F1F0EE",
   },
   summaryWrap: {
     flex: 1,
-    minHeight: 60,
+    minHeight: 28,
     justifyContent: "flex-start",
   },
   summary: {
