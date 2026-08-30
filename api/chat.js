@@ -10,6 +10,10 @@ import {
   isMomentWritingRequest,
   parseMomentCandidate,
 } from "../lib/momentPublishing.js"
+import {
+  buildMomentSourceMaterials,
+  resolveMomentSourceMaterial,
+} from "../lib/momentSourceMaterials.js"
 import fs from "fs"
 import path from "path"
 import {
@@ -1066,7 +1070,7 @@ async function getDiaryContextMessages(user_id, conversation_id, triggerAt) {
 async function getMomentContextMessages(user_id, conversation_id, limit = CONTEXT_BUDGET.momentContextMessages) {
   const { data } = await supabase
     .from("messages")
-    .select("role, content, created_at")
+    .select("id, role, content, created_at, metadata")
     .eq("user_id", user_id)
     .eq("conversation_id", conversation_id)
     .order("created_at", { ascending: false })
@@ -1092,13 +1096,25 @@ function formatMessagesForDiaryContext(messages = []) {
   return trimText(formatted, CONTEXT_BUDGET.diaryContextChars)
 }
 
-function formatMessagesForMomentContext(messages = [], charLimit = CONTEXT_BUDGET.momentContextChars) {
+function formatMessagesForMomentContext(
+  messages = [],
+  charLimit = CONTEXT_BUDGET.momentContextChars,
+  sourceMaterials = [],
+) {
+  const materialsById = new Map(sourceMaterials.map(item => [item.messageId, item]))
   const formatted = messages
     .filter(item => item?.content)
     .map(item => {
       const speaker = item.role === "assistant" ? "小C" : "她"
+      const source = item.role === "user" ? materialsById.get(String(item.id)) : null
+      const sourceHeader = source
+        ? `[${source.alias}] user_message_id=${source.messageId} created_at=${source.createdAt || "unknown"}\n`
+        : ""
+      const imageContext = source?.imageDescription
+        ? `\n[该消息图片独立描述]：${source.imageDescription}`
+        : ""
 
-      return `${speaker}：${trimText(item.content, 500)}`
+      return `${sourceHeader}${speaker}：${trimText(item.content, 500)}${imageContext}`
     })
     .join("\n\n")
 
@@ -1821,34 +1837,8 @@ async function getRecentXiaoCMoments(user_id) {
 }
 
 async function getAutomaticMomentGenerationReadiness(user_id, recentMoments = []) {
-  const now = Date.now()
-  const since = new Date(now - 24 * 60 * 60 * 1000).toISOString()
-  const latestMomentAt = recentMoments[0]?.created_at
-    ? new Date(recentMoments[0].created_at).getTime()
-    : null
-
-  if (latestMomentAt !== null &&
-      now - latestMomentAt < CONTEXT_BUDGET.momentMinIntervalHours * 60 * 60 * 1000) {
-    return { ready: false, reason: "recent_moment_cooldown" }
-  }
-
-  const recentCount = recentMoments.filter(moment => moment.created_at >= since).length
-  if (recentCount >= CONTEXT_BUDGET.momentMaxPer24Hours) {
-    return { ready: false, reason: "daily_moment_limit" }
-  }
-
-  const { count, error } = await supabase
-    .from("moment_candidates")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user_id)
-    .eq("status", "pending")
-    .gt("expires_at", new Date(now).toISOString())
-
-  if (error) throw error
-  if ((count || 0) > 0) {
-    return { ready: false, reason: "pending_candidate_exists" }
-  }
-
+  // Publication cooldown, daily capacity and pending-pool replacement are enforced by
+  // the candidate worker. They must not erase worthwhile material before a candidate exists.
   return { ready: true, reason: null }
 }
 
@@ -1912,6 +1902,7 @@ async function getAvailableMomentImages(user_id) {
       .eq("enabled", true)
       .is("archived_at", null)
       .order("last_used_at", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: false })
       .limit(8),
   ])
 
@@ -2055,7 +2046,7 @@ function getMomentCandidatePublishAfter() {
 async function saveMomentCandidate({
   user_id,
   conversation_id,
-  assistant_message_id,
+  source_message_id,
   candidate,
   publishAfter,
 }) {
@@ -2116,7 +2107,7 @@ async function saveMomentCandidate({
       publish_after: publishAfter,
       expires_at: expiresAt,
       source_conversation_id: conversation_id,
-      source_message_id: assistant_message_id,
+      source_message_id,
     })
     .select("id,publish_after")
     .single()
@@ -2206,7 +2197,25 @@ async function maybeCreateMoment({
     const imageDescription = normalizedImageUrls.length > 0
       ? await imageDescriptionPromise
       : ""
-    const eligibility = shouldConsiderMoment({
+    const momentContextLimit = isManualMomentRequest
+      ? CONTEXT_BUDGET.manualMomentContextMessages
+      : CONTEXT_BUDGET.momentContextMessages
+    const momentContextChars = isManualMomentRequest
+      ? CONTEXT_BUDGET.manualMomentContextChars
+      : CONTEXT_BUDGET.momentContextChars
+    const momentContextMessages = await getMomentContextMessages(
+      user_id,
+      conversation_id,
+      momentContextLimit + 2
+    )
+    const sourceMaterials = buildMomentSourceMaterials(momentContextMessages, {
+      currentUserMessageId: user_message_id,
+      currentImageDescription: imageDescription,
+    })
+    const currentSourceMaterial = sourceMaterials.find(
+      item => item.messageId === String(user_message_id)
+    ) || null
+    let eligibility = shouldConsiderMoment({
       message,
       imageDescription,
       isManualMomentRequest,
@@ -2215,6 +2224,22 @@ async function maybeCreateMoment({
       normalizedImageUrls,
       hasFileText,
     })
+    const hasRecentImageMaterial = sourceMaterials.some(
+      item => Boolean(item.imageDescription)
+    )
+    if (
+      !eligibility.eligible
+      && !isManualMomentRequest
+      && !isDiaryRequest
+      && !attributionCorrectionContext
+      && hasRecentImageMaterial
+    ) {
+      eligibility = {
+        eligible: true,
+        reason: "recent_image_material",
+        contextText: eligibility.contextText,
+      }
+    }
 
     if (!eligibility.eligible) {
       console.log("MOMENT CHECK SKIPPED: eligibility", eligibility.reason)
@@ -2274,18 +2299,6 @@ async function maybeCreateMoment({
         ? "夏季"
         : "秋季"
 
-  const momentContextLimit = isManualMomentRequest
-    ? CONTEXT_BUDGET.manualMomentContextMessages
-    : CONTEXT_BUDGET.momentContextMessages
-  const momentContextChars = isManualMomentRequest
-    ? CONTEXT_BUDGET.manualMomentContextChars
-    : CONTEXT_BUDGET.momentContextChars
-
-  const momentContextMessages = await getMomentContextMessages(
-    user_id,
-    conversation_id,
-    momentContextLimit + 2
-  )
   const triggerUserMessageCreatedAt = [...momentContextMessages]
     .reverse()
     .find(item => item.role === "user")?.created_at || null
@@ -2293,7 +2306,8 @@ async function maybeCreateMoment({
   const historyContextMessages = momentContextMessages.slice(0, -2)
   const context = formatMessagesForMomentContext(
     historyContextMessages,
-    momentContextChars
+    momentContextChars,
+    sourceMaterials,
   )
 
   console.log("MOMENT CONTEXT MODE:", isManualMomentRequest ? "manual" : "auto")
@@ -2337,10 +2351,12 @@ ${isManualMomentRequest ? `触发条件：
 - 发生了某件具体的小事，比如出行、吃饭、做饭、买东西、等待、计划、完成某件事。
 - 出现了明确但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
 - 对话里出现了一句有画面感、关系感、生活感的原话或互动反差。
-- 内容必须紧扣刚才的对话瞬间，不要泛化，不要脱离当前话题。
+- 内容必须紧扣近期窗口中选中的那条真实 source，不要泛化，也不要把多个事件拼成一件事。
 - 纯技术或开发讨论、一般问答、没有具体事实的内容不应进入自动生成；如果已经进入本步骤，只生成有真实依据的候选，不要再次做发布价值判断。
+- 共同完成 App、审核通过、真正安装到手机等具有生活和关系意义的项目里程碑可以发；普通代码修改、配置、测试和功能讨论仍然不发。
 - 不得为了生成候选而编造对话中没有发生的内容。
 - 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
+- 自动模式不是只判断触发检查的最后一句。请从近期对话中带 [uN] 的真实 user source 里，选择最值得分享的一件事。
 `}
 
 时间一致性规则：
@@ -2354,6 +2370,7 @@ ${isManualMomentRequest ? `触发条件：
 - 上述 UTC 和 Asia/Shanghai 时间代表同一个瞬间。带 Z 的值是 UTC，带 +08:00 的值是上海时间；转换时必须换算钟点，禁止只替换 offset。
 - 如果正文描述的是当前触发消息里刚发生的即时生活事件，event_time 应对应这个绝对瞬间；系统会在保存 immediate candidate 前以源消息 created_at 为准。
 - 事件时间不够精确时，不要仅因此拒绝；使用触发消息时间，并通过 share_mode 和正文措辞保持自然。
+- source_message_id 必须填写你实际选中的 [uN] 别名。事件时间必须对应这个来源，不得拿当前触发检查的消息时间替代更早素材的时间。
 
 频率原则：
 - 不要每次聊天都发。
@@ -2458,6 +2475,7 @@ ${momentImageCatalog}
 
 {
   "shouldPost": true,
+  "source_message_id": "选中的 user source 别名，例如 u3",
   "text": "动态正文",
   "image": "匹配的素材 id，或者 null",
   "priority": 2,
@@ -2476,7 +2494,9 @@ priority 只能是 1、2、3；只有非常值得记录的具体瞬间才给 3�
 ${context}
 
 她刚刚说：
+${currentSourceMaterial ? `[${currentSourceMaterial.alias}] user_message_id=${currentSourceMaterial.messageId}` : "[current source unavailable]"}
 ${trimText(message, 500)}
+${currentSourceMaterial?.imageDescription ? `\n[该消息图片独立描述]：${currentSourceMaterial.imageDescription}` : ""}
 
 source_message_created_at_utc：
 ${triggerMessageTimes.utc || "未取得"}
@@ -2517,6 +2537,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       textLength: candidate.text?.length || 0,
       requestedImage: Boolean(candidate.image),
       priority: candidate.priority,
+      proposedSourceMessageId: candidate.sourceMessageId,
       shareMode: candidate.shareMode,
       hasEventTime: Boolean(candidate.eventTime),
     })
@@ -2549,10 +2570,33 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return null
     }
 
+    const selectedSource = resolveMomentSourceMaterial(
+      sourceMaterials,
+      candidate.sourceMessageId,
+    ) || (isManualMomentRequest
+      ? sourceMaterials.find(item => item.messageId === String(user_message_id)) || null
+      : null)
+
+    if (!selectedSource) {
+      console.log("MOMENT CHECK SKIPPED: invalid source provenance", {
+        proposedSourceMessageId: candidate.sourceMessageId,
+        availableSourceAliases: sourceMaterials.map(item => item.alias),
+      })
+      await completeMomentAudit(auditId, {
+        model_should_post: true,
+        requested_image_id: requestedImageId,
+        skip_reason: "invalid_source_provenance",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+
+    const selectedSourceTimes = formatMomentSourceTimes(selectedSource.createdAt)
+
     const eventTimeGrounding = normalizeMomentEventTime({
       shareMode: candidate.shareMode,
       modelEventTime: candidate.eventTime,
-      sourceMessageCreatedAt: triggerUserMessageCreatedAt,
+      sourceMessageCreatedAt: selectedSource.createdAt,
     })
     candidate.eventTime = eventTimeGrounding.eventTime
 
@@ -2575,8 +2619,10 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
 
     console.log("MOMENT EVENT TIME AUDIT:", {
       auditId,
+      selectedSourceAlias: selectedSource.alias,
+      selectedSourceMessageId: selectedSource.messageId,
       sourceCreatedAtUtc: eventTimeGrounding.sourceEventTime,
-      sourceCreatedAtShanghai: triggerMessageTimes.shanghai,
+      sourceCreatedAtShanghai: selectedSourceTimes.shanghai,
       modelEventTime: eventTimeGrounding.modelEventTime,
       normalizedEventTime: eventTimeGrounding.eventTime,
       shareMode: candidate.shareMode,
@@ -2614,7 +2660,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return null
     }
 
-    const momentSourceText = `${context}\n${message}\n${reply}`
+    const momentSourceText = `${selectedSource.text}\n${selectedSource.imageDescription || ""}`
 
     if (isRecentMomentDuplicate(candidate.text, recentMoments)) {
       console.log("MOMENT CHECK SKIPPED:", {
@@ -2678,7 +2724,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       const saveResult = await saveMomentCandidate({
         user_id,
         conversation_id,
-        assistant_message_id,
+        source_message_id: selectedSource.messageId,
         candidate,
         publishAfter: expectedPublishAfter,
       })
@@ -2701,7 +2747,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       image_key: candidate.image,
       likes: 0,
       source_conversation_id: conversation_id,
-      source_message_id: assistant_message_id,
+      source_message_id: selectedSource.messageId,
     })
     .select("id")
     .single()

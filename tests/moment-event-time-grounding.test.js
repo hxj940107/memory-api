@@ -6,6 +6,11 @@ import {
   normalizeMomentCandidateForPublish,
   normalizeMomentEventTime,
 } from "../lib/momentEventTime.js"
+import { parseMomentCandidate } from "../lib/momentPublishing.js"
+import {
+  buildMomentSourceMaterials,
+  resolveMomentSourceMaterial,
+} from "../lib/momentSourceMaterials.js"
 
 test("immediate candidate corrects an eight-hour offset replacement", () => {
   const result = normalizeMomentEventTime({
@@ -95,13 +100,90 @@ test("worker time consistency protection remains unchanged", () => {
   assert.match(source, /normalizeMomentCandidateForPublish/)
 })
 
-test("automatic Moment generation is low-frequency and checks capacity before the model", () => {
+test("automatic Moment generation stays low-frequency but publication limits do not erase material", () => {
   const config = fs.readFileSync("lib/aiConfig.js", "utf8")
   const source = fs.readFileSync("api/chat.js", "utf8")
 
   assert.match(config, /momentCheckIntervalMinutes: 180/)
   assert.match(source, /getAutomaticMomentGenerationReadiness/)
-  assert.match(source, /pending_candidate_exists/)
-  assert.match(source, /pre_generation_skipped/)
+  assert.doesNotMatch(source, /reason: "recent_moment_cooldown"/)
+  assert.doesNotMatch(source, /reason: "pending_candidate_exists"/)
+  assert.match(source, /Publication cooldown, daily capacity and pending-pool replacement/)
   assert.match(source, /自动模式必须返回一条有当前对话依据的候选/)
+})
+
+test("Moment judge can select a recent user source with persisted image evidence", () => {
+  const materials = buildMomentSourceMaterials([
+    {
+      id: "message-app",
+      role: "user",
+      content: "赶在出门前搞定了！",
+      created_at: "2026-08-30T04:20:54Z",
+      metadata: { imageDescription: "XiaoC App 已经安装在 iPhone 上" },
+    },
+    {
+      id: "assistant-app",
+      role: "assistant",
+      content: "终于装好了。",
+      created_at: "2026-08-30T04:21:00Z",
+      metadata: {},
+    },
+    {
+      id: "message-dog",
+      role: "user",
+      content: "改吃烤肉了，看餐厅门口的小狗",
+      created_at: "2026-08-30T05:04:01Z",
+      metadata: { imageDescription: "餐厅门口趴着一只柯基" },
+    },
+  ])
+
+  assert.equal(materials.length, 2)
+  assert.equal(materials[1].alias, "u2")
+  assert.equal(materials[1].imageDescription, "餐厅门口趴着一只柯基")
+  assert.equal(resolveMomentSourceMaterial(materials, "u2")?.messageId, "message-dog")
+  assert.equal(resolveMomentSourceMaterial(materials, "message-app")?.alias, "u1")
+  assert.equal(resolveMomentSourceMaterial(materials, "unknown"), null)
+})
+
+test("current image evidence overrides a not-yet-persisted metadata description", () => {
+  const materials = buildMomentSourceMaterials([
+    {
+      id: "message-icecream",
+      role: "user",
+      content: "吃完了，还吃了个免费小甜筒",
+      created_at: "2026-08-30T06:12:54Z",
+      metadata: {},
+    },
+  ], {
+    currentUserMessageId: "message-icecream",
+    currentImageDescription: "烤肉和软冰淇淋甜筒",
+  })
+
+  assert.equal(materials[0].imageDescription, "烤肉和软冰淇淋甜筒")
+})
+
+test("Moment candidate parser keeps the selected source alias", () => {
+  const candidate = parseMomentCandidate(JSON.stringify({
+    shouldPost: true,
+    source_message_id: "u2",
+    text: "出门吃饭，先在门口被这只拦住了。",
+    image: "album:12",
+    priority: 3,
+    share_mode: "immediate",
+    event_time: "2026-08-30T13:04:01+08:00",
+  }))
+
+  assert.equal(candidate.parseFailed, false)
+  assert.equal(candidate.sourceMessageId, "u2")
+})
+
+test("Moment admission validates selected provenance and saves the real user source", () => {
+  const source = fs.readFileSync("api/chat.js", "utf8")
+
+  assert.match(source, /resolveMomentSourceMaterial/)
+  assert.match(source, /invalid_source_provenance/)
+  assert.match(source, /sourceMessageCreatedAt: selectedSource\.createdAt/)
+  assert.match(source, /source_message_id: selectedSource\.messageId/)
+  assert.match(source, /metadata\?\.imageDescription/)
+  assert.match(source, /\.order\("last_used_at", \{ ascending: true, nullsFirst: true \}\)\s*\.order\("created_at", \{ ascending: false \}\)/)
 })
