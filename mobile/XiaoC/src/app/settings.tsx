@@ -220,6 +220,8 @@ export default function SettingsScreen() {
   const [pushSettings, setPushSettings] = useState<PushSettings>({
     enabled: false,
     previewEnabled: true,
+    momentsEnabled: true,
+    treeholeEnabled: true,
   });
   const [expandedSections, setExpandedSections] = useState({
     model: false,
@@ -471,6 +473,8 @@ export default function SettingsScreen() {
                 onPress: () => updatePushSettings({
                   enabled: true,
                   previewEnabled: !pushSettings.previewEnabled,
+                  momentsEnabled: pushSettings.momentsEnabled,
+                  treeholeEnabled: pushSettings.treeholeEnabled,
                 }),
               },
               {
@@ -479,6 +483,8 @@ export default function SettingsScreen() {
                 onPress: () => updatePushSettings({
                   enabled: false,
                   previewEnabled: pushSettings.previewEnabled,
+                  momentsEnabled: pushSettings.momentsEnabled,
+                  treeholeEnabled: pushSettings.treeholeEnabled,
                 }),
               },
             ]
@@ -488,6 +494,8 @@ export default function SettingsScreen() {
                 onPress: () => updatePushSettings({
                   enabled: true,
                   previewEnabled: true,
+                  momentsEnabled: pushSettings.momentsEnabled,
+                  treeholeEnabled: pushSettings.treeholeEnabled,
                 }),
               },
             ]),
@@ -681,6 +689,34 @@ export default function SettingsScreen() {
             label="消息通知"
             value={pushSettings.enabled ? "已开启" : "未开启"}
             onPress={editPushNotifications}
+          />
+          <InfoRow
+            label="朋友圈更新通知"
+            value={pushSettings.enabled && pushSettings.momentsEnabled ? "已开启" : "未开启"}
+            onPress={() => {
+              if (!pushSettings.enabled) {
+                Alert.alert("请先开启消息通知", "开启系统通知后，才能接收朋友圈更新通知。");
+                return;
+              }
+              updatePushSettings({
+                ...pushSettings,
+                momentsEnabled: !pushSettings.momentsEnabled,
+              });
+            }}
+          />
+          <InfoRow
+            label="树洞更新通知"
+            value={pushSettings.enabled && pushSettings.treeholeEnabled ? "已开启" : "未开启"}
+            onPress={() => {
+              if (!pushSettings.enabled) {
+                Alert.alert("请先开启消息通知", "开启系统通知后，才能接收树洞更新通知。");
+                return;
+              }
+              updatePushSettings({
+                ...pushSettings,
+                treeholeEnabled: !pushSettings.treeholeEnabled,
+              });
+            }}
           />
           <InfoRow
             label="我的朋友圈头像"

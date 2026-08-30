@@ -22,12 +22,14 @@ const IN_APP_BANNER_DURATION_MS = 4500;
 type InAppMessageBanner = {
   title: string;
   body: string;
-  conversationId: string;
+  target:
+    | { kind: "message"; conversationId: string }
+    | { kind: "moments" }
+    | { kind: "treehole" };
 };
 
 export default function RootLayout() {
   const pathname = usePathname();
-  const [privacyCovered, setPrivacyCovered] = useState(false);
   const [inAppBanner, setInAppBanner] = useState<InAppMessageBanner | null>(null);
   const backgroundedAtRef = useRef<number | null>(null);
   const pathnameRef = useRef(pathname);
@@ -35,7 +37,11 @@ export default function RootLayout() {
 
   useEffect(() => {
     pathnameRef.current = pathname;
-    if (pathname === "/chat" || pathname === "/") {
+    if (
+      pathname === "/chat" || pathname === "/" ||
+      (pathname.startsWith("/moments") && inAppBanner?.target.kind === "moments") ||
+      (pathname.startsWith("/treehole") && inAppBanner?.target.kind === "treehole")
+    ) {
       setInAppBanner(null);
     }
   }, [pathname]);
@@ -67,13 +73,18 @@ export default function RootLayout() {
         );
         const currentPath = pathnameRef.current;
 
-        if (!target || currentPath === "/chat" || currentPath === "/") return;
+        if (!target) return;
+        if (target.kind === "message" && (currentPath === "/chat" || currentPath === "/")) return;
+        if (target.kind === "moments" && currentPath.startsWith("/moments")) return;
+        if (target.kind === "treehole" && currentPath.startsWith("/treehole")) return;
 
         if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
         setInAppBanner({
           title: notification.request.content.title || "小C",
-          body: notification.request.content.body || "发来了一条消息",
-          conversationId: target.conversationId,
+          body: notification.request.content.body || "有一条新动态",
+          target: target.kind === "message"
+            ? { kind: "message", conversationId: target.conversationId }
+            : target,
         });
         bannerTimerRef.current = setTimeout(() => {
           setInAppBanner(null);
@@ -84,7 +95,6 @@ export default function RootLayout() {
     const appStateSubscription = AppState.addEventListener("change", (state) => {
       if (state === "inactive" || state === "background") {
         if (!backgroundedAtRef.current) backgroundedAtRef.current = Date.now();
-        setPrivacyCovered(true);
         return;
       }
 
@@ -102,7 +112,9 @@ export default function RootLayout() {
               router.replace("/");
             }
           })
-          .finally(() => setPrivacyCovered(false));
+          .catch((error) => {
+            console.log("Background lock check failed:", error);
+          });
       }
     });
     return () => {
@@ -117,9 +129,15 @@ export default function RootLayout() {
     if (!inAppBanner) return;
     if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     bannerTimerRef.current = null;
-    const conversationId = inAppBanner.conversationId;
+    const target = inAppBanner.target;
     setInAppBanner(null);
-    router.push({ pathname: "/chat", params: { conversation_id: conversationId } });
+    if (target.kind === "message") {
+      router.push({ pathname: "/chat", params: { conversation_id: target.conversationId } });
+    } else if (target.kind === "moments") {
+      router.push("/moments");
+    } else {
+      router.push("/treehole");
+    }
   };
 
   return (
@@ -131,12 +149,7 @@ export default function RootLayout() {
           headerShown: false,
         }}
       />
-      {privacyCovered && (
-        <View style={styles.privacyCover}>
-          <Text style={styles.privacyMark}>小C</Text>
-        </View>
-      )}
-      {inAppBanner && !privacyCovered && (
+      {inAppBanner && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${inAppBanner.title}：${inAppBanner.body}`}
@@ -165,17 +178,6 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  privacyCover: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FAFAF8",
-  },
-  privacyMark: {
-    fontSize: 28,
-    color: "#B2AAA5",
-    letterSpacing: 2,
-  },
   inAppBanner: {
     position: "absolute",
     top: Platform.OS === "ios" ? 54 : 18,

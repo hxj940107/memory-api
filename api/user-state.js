@@ -19,6 +19,8 @@ const CLIENT_PREFERENCE_KEYS = new Set([
   "xiaoc_moment_avatar",
   "user_moment_bio",
   "xiaoc_moment_bio",
+  "push_moments_enabled",
+  "push_treehole_enabled",
   "migration_complete",
 ])
 
@@ -213,7 +215,7 @@ export default async function handler(req, res) {
     if (req.method === "GET" && req.query.action === "push-notification-settings") {
       const { data, error } = await supabase
         .from("user_state")
-        .select("push_notifications_enabled,push_preview_enabled,push_token_updated_at")
+        .select("push_notifications_enabled,push_preview_enabled,push_token_updated_at,client_preferences")
         .eq("user_id", user_id)
         .maybeSingle()
 
@@ -226,6 +228,8 @@ export default async function handler(req, res) {
         enabled: data?.push_notifications_enabled === true,
         preview_enabled: data?.push_preview_enabled !== false,
         registered: Boolean(data?.push_token_updated_at),
+        moments_enabled: data?.client_preferences?.push_moments_enabled !== "false",
+        treehole_enabled: data?.client_preferences?.push_treehole_enabled !== "false",
         schema_ready: true,
       })
     }
@@ -306,6 +310,18 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: "valid Expo push token required" })
         }
 
+        const { data: current, error: currentError } = await supabase
+          .from("user_state")
+          .select("client_preferences")
+          .eq("user_id", user_id)
+          .maybeSingle()
+        if (currentError) return res.status(500).json({ error: currentError.message })
+        const clientPreferences = {
+          ...(current?.client_preferences || {}),
+          push_moments_enabled: req.body.moments_enabled === false ? "false" : "true",
+          push_treehole_enabled: req.body.treehole_enabled === false ? "false" : "true",
+        }
+
         const { error } = await supabase
           .from("user_state")
           .update({
@@ -313,12 +329,18 @@ export default async function handler(req, res) {
             push_preview_enabled: previewEnabled,
             ...(token ? { push_token: token } : {}),
             push_token_updated_at: token ? new Date().toISOString() : null,
+            client_preferences: clientPreferences,
             updated_at: new Date().toISOString(),
           })
           .eq("user_id", user_id)
 
         if (error) return res.status(500).json({ error: error.message })
-        return res.status(200).json({ enabled, preview_enabled: previewEnabled })
+        return res.status(200).json({
+          enabled,
+          preview_enabled: previewEnabled,
+          moments_enabled: clientPreferences.push_moments_enabled !== "false",
+          treehole_enabled: clientPreferences.push_treehole_enabled !== "false",
+        })
       }
 
       const { last_conversation = null } = req.body

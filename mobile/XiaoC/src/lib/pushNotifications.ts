@@ -8,11 +8,15 @@ import { APP_USER_ID, postJson } from "../config/api";
 
 const PUSH_ENABLED_KEY = "xiaoc:push_enabled";
 const PUSH_PREVIEW_KEY = "xiaoc:push_preview_enabled";
+const PUSH_MOMENTS_KEY = "xiaoc:push_moments_enabled";
+const PUSH_TREEHOLE_KEY = "xiaoc:push_treehole_enabled";
 const PENDING_NOTIFICATION_CONVERSATION_KEY = "xiaoc:pending_notification_conversation";
 
 export type PushSettings = {
   enabled: boolean;
   previewEnabled: boolean;
+  momentsEnabled: boolean;
+  treeholeEnabled: boolean;
 };
 
 export type XiaoCNotificationData = {
@@ -20,6 +24,11 @@ export type XiaoCNotificationData = {
   conversationId?: unknown;
   messageId?: unknown;
 };
+
+export type XiaoCNotificationTarget =
+  | { kind: "message"; conversationId: string; messageId: string | null }
+  | { kind: "moments" }
+  | { kind: "treehole" };
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -31,13 +40,17 @@ Notifications.setNotificationHandler({
 });
 
 export async function getLocalPushSettings(): Promise<PushSettings> {
-  const [enabled, previewEnabled] = await Promise.all([
+  const [enabled, previewEnabled, momentsEnabled, treeholeEnabled] = await Promise.all([
     AsyncStorage.getItem(PUSH_ENABLED_KEY),
     AsyncStorage.getItem(PUSH_PREVIEW_KEY),
+    AsyncStorage.getItem(PUSH_MOMENTS_KEY),
+    AsyncStorage.getItem(PUSH_TREEHOLE_KEY),
   ]);
   return {
     enabled: enabled === "1",
     previewEnabled: previewEnabled !== "0",
+    momentsEnabled: momentsEnabled !== "0",
+    treeholeEnabled: treeholeEnabled !== "0",
   };
 }
 
@@ -65,11 +78,15 @@ export async function savePushSettings(next: PushSettings) {
     user_id: APP_USER_ID,
     enabled: next.enabled,
     preview_enabled: next.previewEnabled,
+    moments_enabled: next.momentsEnabled,
+    treehole_enabled: next.treeholeEnabled,
     push_token: token,
   });
   await Promise.all([
     AsyncStorage.setItem(PUSH_ENABLED_KEY, next.enabled ? "1" : "0"),
     AsyncStorage.setItem(PUSH_PREVIEW_KEY, next.previewEnabled ? "1" : "0"),
+    AsyncStorage.setItem(PUSH_MOMENTS_KEY, next.momentsEnabled ? "1" : "0"),
+    AsyncStorage.setItem(PUSH_TREEHOLE_KEY, next.treeholeEnabled ? "1" : "0"),
   ]);
   return next;
 }
@@ -86,15 +103,26 @@ export async function openNotificationResponse(response: Notifications.Notificat
     await AsyncStorage.setItem(PENDING_NOTIFICATION_CONVERSATION_KEY, data.conversationId);
     await Notifications.clearLastNotificationResponseAsync();
     router.push("/");
+  } else if (data?.type === "moments_update") {
+    await Notifications.clearLastNotificationResponseAsync();
+    router.push("/moments");
+  } else if (data?.type === "treehole_update") {
+    await Notifications.clearLastNotificationResponseAsync();
+    router.push("/treehole");
   }
 }
 
-export function getXiaoCNotificationTarget(data: XiaoCNotificationData | null | undefined) {
+export function getXiaoCNotificationTarget(
+  data: XiaoCNotificationData | null | undefined,
+): XiaoCNotificationTarget | null {
+  if (data?.type === "moments_update") return { kind: "moments" };
+  if (data?.type === "treehole_update") return { kind: "treehole" };
   if (data?.type !== "xiaoc_message" || typeof data.conversationId !== "string") {
     return null;
   }
 
   return {
+    kind: "message",
     conversationId: data.conversationId,
     messageId: typeof data.messageId === "string" ? data.messageId : null,
   };

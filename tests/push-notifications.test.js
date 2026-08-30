@@ -3,10 +3,29 @@ import fs from "node:fs"
 import test from "node:test"
 
 import {
+  buildContentUpdatePushMessage,
   buildProactivePushMessage,
   isExpoPushToken,
   sendExpoPushMessage,
 } from "../lib/pushNotifications.js"
+
+test("content update notifications use fixed quiet copy", () => {
+  const moments = buildContentUpdatePushMessage({
+    token: "ExponentPushToken[abc123]",
+    type: "moments_update",
+  })
+  const treehole = buildContentUpdatePushMessage({
+    token: "ExponentPushToken[abc123]",
+    type: "treehole_update",
+  })
+
+  assert.equal(moments.title, "小C")
+  assert.equal(moments.body, "小C刚刚更新了朋友圈")
+  assert.equal(moments.sound, null)
+  assert.equal(moments.data.type, "moments_update")
+  assert.equal(treehole.body, "小C刚刚更新了树洞")
+  assert.equal(treehole.sound, null)
+})
 
 test("push token validation is strict", () => {
   assert.equal(isExpoPushToken("ExponentPushToken[abc123]"), true)
@@ -51,7 +70,7 @@ test("proactive messages persist before attempting push and duplicate messages d
   assert.match(source, /pushNotification:/)
 })
 
-test("mobile app registers notification taps and Face ID privacy protection", () => {
+test("mobile app registers notification taps and preserves delayed Face ID relock", () => {
   const layout = fs.readFileSync("mobile/XiaoC/src/app/_layout.tsx", "utf8")
   const settings = fs.readFileSync("mobile/XiaoC/src/app/settings.tsx", "utf8")
   const account = fs.readFileSync("mobile/XiaoC/src/lib/accountSettings.ts", "utf8")
@@ -59,8 +78,9 @@ test("mobile app registers notification taps and Face ID privacy protection", ()
   assert.match(layout, /addNotificationReceivedListener/)
   assert.match(layout, /currentPath === "\/chat"/)
   assert.match(layout, /inAppBanner/)
-  assert.match(layout, /privacyCovered/)
   assert.match(layout, /BACKGROUND_AUTO_LOCK_DELAY_MS = 10 \* 60 \* 1000/)
+  assert.match(layout, /elapsed >= BACKGROUND_AUTO_LOCK_DELAY_MS/)
+  assert.doesNotMatch(layout, /privacyCover/)
   assert.match(settings, /LocalAuthentication\.authenticateAsync/)
   assert.match(account, /SecureStore\.setItemAsync/)
   assert.match(account, /ACCOUNT_PASSWORD_SECURE_KEY = "xiaoc\.account_password"/)
@@ -93,4 +113,26 @@ test("normal chat replies also dispatch push while the client suppresses it on t
   assert.match(chat, /messageType: "normal_chat"/)
   assert.match(chat, /push_notifications_enabled/)
   assert.match(layout, /currentPath === "\/chat"/)
+})
+
+test("Moments and treehole updates notify only after visible content exists", () => {
+  const memory = fs.readFileSync("api/memory.js", "utf8")
+  const layout = fs.readFileSync("mobile/XiaoC/src/app/_layout.tsx", "utf8")
+  const settings = fs.readFileSync("mobile/XiaoC/src/app/settings.tsx", "utf8")
+
+  const treeholeInsert = memory.indexOf('.from("treehole_entries")\n    .insert(', memory.indexOf("async function generateAndSaveTreeholeUpdates"))
+  const treeholePush = memory.indexOf('sendContentUpdateNotification(user_id, "treehole_update")', treeholeInsert)
+  const momentInsert = memory.indexOf('.from("moment_entries")\n        .insert({', memory.indexOf("async function publishPendingMomentCandidates"))
+  const momentPush = memory.indexOf('sendContentUpdateNotification(candidate.user_id, "moments_update")', momentInsert)
+
+  assert.ok(treeholeInsert >= 0 && treeholePush > treeholeInsert)
+  assert.ok(momentInsert >= 0 && momentPush > momentInsert)
+  assert.match(memory, /push_moments_enabled/)
+  assert.match(memory, /push_treehole_enabled/)
+  assert.match(layout, /currentPath\.startsWith\("\/moments"\)/)
+  assert.match(layout, /currentPath\.startsWith\("\/treehole"\)/)
+  assert.match(layout, /router\.push\("\/moments"\)/)
+  assert.match(layout, /router\.push\("\/treehole"\)/)
+  assert.match(settings, /label="朋友圈更新通知"/)
+  assert.match(settings, /label="树洞更新通知"/)
 })

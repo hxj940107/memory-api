@@ -57,6 +57,7 @@ import {
 } from "../lib/proactiveAttentionSend.js"
 import { buildPromptCacheUsageLog } from "../lib/promptCaching.js"
 import {
+  buildContentUpdatePushMessage,
   buildProactivePushMessage,
   sendExpoPushMessage,
 } from "../lib/pushNotifications.js"
@@ -85,6 +86,39 @@ function getMemoryUrl(pathname) {
 
 const MAX_MEMORY_CONTENT_CHARS = 50_000
 let cachedOmbreAdminCookie = ""
+
+async function sendContentUpdateNotification(userId, type) {
+  const preferenceKey = type === "treehole_update"
+    ? "push_treehole_enabled"
+    : "push_moments_enabled"
+  try {
+    const { data: state, error } = await supabase
+      .from("user_state")
+      .select("push_token,push_notifications_enabled,client_preferences")
+      .eq("user_id", userId)
+      .maybeSingle()
+    if (error?.code === "42703") return { attempted: false, reason: "push_schema_missing" }
+    if (error) throw error
+    if (!state?.push_notifications_enabled || !state?.push_token) {
+      return { attempted: false, reason: "push_disabled_or_unregistered" }
+    }
+    if (state?.client_preferences?.[preferenceKey] === "false") {
+      return { attempted: false, reason: "content_notification_disabled" }
+    }
+    const result = await sendExpoPushMessage(
+      buildContentUpdatePushMessage({ token: state.push_token, type }),
+      { accessToken: process.env.EXPO_ACCESS_TOKEN || "" },
+    )
+    console.log("CONTENT UPDATE PUSH:", { type, ...result })
+    return result
+  } catch (error) {
+    console.error("content update push failed:", {
+      type,
+      error: trimText(error?.message, 240),
+    })
+    return { attempted: true, reason: "content_notification_failed" }
+  }
+}
 
 function getCookieHeader(response) {
   if (typeof response.headers.getSetCookie === "function") {
@@ -1803,6 +1837,8 @@ ${treeholeContext}
 
   if (error) throw error
 
+  await sendContentUpdateNotification(user_id, "treehole_update")
+
   return {
     written: data?.length || 0,
     payload: {
@@ -3498,6 +3534,7 @@ async function checkPendingMomentCandidates() {
         .eq("status", "processing")
 
       if (completeError) throw completeError
+      await sendContentUpdateNotification(candidate.user_id, "moments_update")
       published += 1
       break
     } catch (candidateError) {

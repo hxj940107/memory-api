@@ -32,6 +32,8 @@ export type ClientPreferences = {
   xiaoc_moment_cover_uri?: string | null;
   user_moment_bio?: string | null;
   xiaoc_moment_bio?: string | null;
+  push_moments_enabled?: string | null;
+  push_treehole_enabled?: string | null;
   migration_complete?: string | null;
 };
 
