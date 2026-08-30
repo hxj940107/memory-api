@@ -773,50 +773,6 @@ export default function MomentsScreen() {
     router.navigate(`/moments/profile/${profile}`);
   };
 
-  const renderProfileAvatar = () => {
-    if (profileAvatar.uri) {
-      return (
-        <Image
-          source={{ uri: profileAvatar.uri }}
-          style={styles.profileAvatarImage}
-          contentFit="cover"
-        />
-      );
-    }
-
-    const preset =
-      MOMENT_AVATAR_PRESETS.find((item) => item.id === profileAvatar.avatar) ||
-      MOMENT_AVATAR_PRESETS.find((item) => item.id === DEFAULT_USER_MOMENT_AVATAR) ||
-      MOMENT_AVATAR_PRESETS[0];
-
-    const symbol = preset.useInitial
-      ? accountName.trim().slice(0, 1) || "我"
-      : preset.symbol;
-
-    return (
-      <View
-        style={[
-          styles.profileAvatarImage,
-          {
-            backgroundColor: preset.backgroundColor,
-          },
-        ]}
-      >
-        <Text
-          style={[
-            styles.profileAvatarText,
-            {
-              color: preset.color,
-              fontSize: preset.useInitial ? 24 : 30,
-            },
-          ]}
-        >
-          {symbol}
-        </Text>
-      </View>
-    );
-  };
-
   const renderInteractionAvatar = (inList = false) => {
     if (xiaocAvatar.uri) {
       return (
@@ -987,7 +943,13 @@ export default function MomentsScreen() {
               accessibilityRole="button"
               accessibilityLabel="打开我的朋友圈主页"
             >
-              {renderProfileAvatar()}
+              <MomentAvatar
+                profile="user"
+                name={accountName}
+                avatar={profileAvatar.avatar}
+                uri={profileAvatar.uri}
+                size={68}
+              />
             </Pressable>
           </View>
         </View>
@@ -1475,27 +1437,8 @@ const styles = StyleSheet.create({
   },
 
   profileAvatarWrap: {
-    width: 86,
-    height: 86,
-    borderRadius: 10,
-    backgroundColor: "#FFFFFF",
-    padding: 4,
-    shadowColor: "#000000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-
-  profileAvatarImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 7,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  profileAvatarText: {
-    color: "#FFFFFF",
+    width: 68,
+    height: 68,
   },
 
   empty: {

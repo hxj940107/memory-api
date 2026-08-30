@@ -96,9 +96,27 @@ test("profile cover and signature stay lightweight and locally editable", () => 
   assert.match(profileSource, /coverWrap: \{[\s\S]*height: 360/)
   assert.doesNotMatch(profileSource, /borderBottomWidth/)
   assert.match(profileSource, /color: "#FFFFFF"/)
+  assert.match(profileSource, /size=\{68\}/)
   assert.match(profileStateSource, /MOMENT_PROFILE_BIO_MAX_LENGTH = 80/)
   assert.doesNotMatch(
     profileSource,
     /<Text style=\{styles\.timelineTitle\}>朋友圈<\/Text>/,
   )
+})
+
+test("Moments header avatars share the same borderless 68 point presentation", () => {
+  const feedSource = readFileSync("mobile/XiaoC/src/app/moments.tsx", "utf8")
+  const profileSource = readFileSync(
+    "mobile/XiaoC/src/app/moments/profile/[author].tsx",
+    "utf8",
+  )
+  const feedWrapper = feedSource.match(/profileAvatarWrap: \{([\s\S]*?)\n  \},/)
+  const profileWrapper = profileSource.match(/avatarFrame: \{([\s\S]*?)\n  \},/)
+
+  assert.match(feedSource, /profile="user"[\s\S]*size=\{68\}/)
+  assert.match(profileSource, /size=\{68\}/)
+  assert.ok(feedWrapper)
+  assert.ok(profileWrapper)
+  assert.doesNotMatch(feedWrapper[1], /padding|backgroundColor|border|shadow/)
+  assert.doesNotMatch(profileWrapper[1], /padding|backgroundColor|border|shadow/)
 })

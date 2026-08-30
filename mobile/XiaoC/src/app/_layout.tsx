@@ -13,6 +13,8 @@ import {
 } from "../lib/pushNotifications";
 import { getAccountSettings } from "../lib/accountSettings";
 
+const BACKGROUND_AUTO_LOCK_DELAY_MS = 10 * 60 * 1000;
+
 export default function RootLayout() {
   const [privacyCovered, setPrivacyCovered] = useState(false);
   const backgroundedAtRef = useRef<number | null>(null);
@@ -47,7 +49,12 @@ export default function RootLayout() {
         backgroundedAtRef.current = null;
         getAccountSettings()
           .then((account) => {
-            if (account.hasPassword && elapsed >= 60_000) router.replace("/");
+            if (
+              account.hasPassword &&
+              elapsed >= BACKGROUND_AUTO_LOCK_DELAY_MS
+            ) {
+              router.replace("/");
+            }
           })
           .finally(() => setPrivacyCovered(false));
       }

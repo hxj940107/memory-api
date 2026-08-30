@@ -180,7 +180,7 @@ export default function MomentProfileScreen() {
                     name={profileData.name}
                     avatar={profileData.avatar}
                     uri={profileData.avatarUri}
-                    size={78}
+                    size={68}
                   />
                 </View>
               </View>
@@ -407,15 +407,8 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   avatarFrame: {
-    width: 86,
-    height: 86,
-    padding: 4,
-    borderRadius: 10,
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#000000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    width: 68,
+    height: 68,
   },
   timelineItem: {
     minHeight: 76,
