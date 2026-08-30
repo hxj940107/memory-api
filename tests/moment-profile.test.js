@@ -93,6 +93,8 @@ test("profile cover and signature stay lightweight and locally editable", () => 
   assert.match(profileSource, /saveMomentProfileBio\(profile, bioDraft\)/)
   assert.match(profileSource, /name="pencil"/)
   assert.doesNotMatch(profileSource, /coverEditHint/)
+  assert.match(profileSource, /aspectRatio: 1/)
+  assert.match(profileSource, /color: "#FFFFFF"/)
   assert.match(profileStateSource, /MOMENT_PROFILE_BIO_MAX_LENGTH = 80/)
   assert.doesNotMatch(
     profileSource,

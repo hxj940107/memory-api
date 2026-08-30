@@ -172,24 +172,21 @@ export default function MomentProfileScreen() {
                   weight="regular"
                 />
               </Pressable>
-            </View>
-
-            <View style={styles.identity}>
-              <View style={styles.identityTop}>
-                <View style={styles.identityText}>
-                  <Text style={styles.name}>{profileData.name}</Text>
-                </View>
+              <View style={styles.profileInfoRow} pointerEvents="none">
+                <Text style={styles.name}>{profileData.name}</Text>
                 <View style={styles.avatarFrame}>
                   <MomentAvatar
                     profile={profile}
                     name={profileData.name}
                     avatar={profileData.avatar}
                     uri={profileData.avatarUri}
-                    size={72}
+                    size={78}
                   />
                 </View>
               </View>
+            </View>
 
+            <View style={styles.identity}>
               {editingBio ? (
                 <View style={styles.bioEditor}>
                   <TextInput
@@ -307,7 +304,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   coverWrap: {
-    height: 232,
+    width: "100%",
+    aspectRatio: 1,
+    marginBottom: 28,
     backgroundColor: "#E9E7E4",
   },
   coverButton: {
@@ -326,34 +325,41 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(28,28,30,0.32)",
   },
+  profileInfoRow: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: -28,
+    height: 96,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "flex-end",
+  },
   identity: {
-    minHeight: 108,
+    minHeight: 58,
     paddingHorizontal: 22,
-    paddingBottom: 22,
+    paddingTop: 7,
+    paddingBottom: 18,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "rgba(120,120,128,0.18)",
   },
-  identityTop: {
-    minHeight: 64,
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  identityText: {
-    flex: 1,
-    alignItems: "flex-end",
-    paddingTop: 14,
-    paddingRight: 13,
-  },
   name: {
+    maxWidth: "62%",
+    marginRight: 14,
+    marginBottom: 44,
     fontSize: 20,
-    lineHeight: 27,
+    lineHeight: 26,
     fontWeight: "600",
-    color: "#242321",
+    color: "#FFFFFF",
+    textAlign: "right",
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   bio: {
     flexShrink: 1,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 21,
     textAlign: "right",
     color: "#8B8580",
   },
@@ -384,8 +390,8 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderRadius: 9,
     backgroundColor: "#F7F6F4",
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 21,
     color: "#655F5B",
   },
   bioActions: {
@@ -403,12 +409,15 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   avatarFrame: {
-    width: 80,
-    height: 80,
-    marginTop: -20,
+    width: 86,
+    height: 86,
     padding: 4,
-    borderRadius: 16,
+    borderRadius: 10,
     backgroundColor: "#FFFFFF",
+    shadowColor: "#000000",
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
   timelineItem: {
     minHeight: 76,
