@@ -34,6 +34,11 @@ import {
   saveMomentProfileCoverUri,
   type MomentProfileKind,
 } from "../../../lib/momentProfile";
+import {
+  syncClientPreferences,
+  updateClientPreferences,
+  uploadClientPreferenceImage,
+} from "../../../lib/cloudPreferences";
 
 type Moment = {
   id: string;
@@ -61,14 +66,14 @@ export default function MomentProfileScreen() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([
+    syncClientPreferences().catch(() => null).then(() => Promise.all([
       apiJson<Moment[]>("/api/memory", {
         query: { type: "moments", user_id: APP_USER_ID },
       }),
       getAccountSettings(),
       getMomentProfileCoverUri(profile),
       getMomentProfileBio(profile),
-    ])
+    ]))
       .then(([loadedMoments, loadedAccount, loadedCover, loadedBio]) => {
         if (!active) return;
         setMoments(filterMomentsForProfile(loadedMoments, profile));
@@ -120,8 +125,13 @@ export default function MomentProfileScreen() {
       const uri = result.canceled ? null : result.assets[0]?.uri;
       if (!uri) return;
 
-      setCoverUri(uri);
-      await saveMomentProfileCoverUri(profile, uri);
+      const uploaded = await uploadClientPreferenceImage(
+        profile === "user" ? "user_moment_cover" : "xiaoc_moment_cover",
+        uri,
+      );
+      const savedUri = uploaded.uri || uri;
+      setCoverUri(savedUri);
+      await saveMomentProfileCoverUri(profile, savedUri);
     } catch (error) {
       Alert.alert(
         "更换失败",
@@ -132,6 +142,9 @@ export default function MomentProfileScreen() {
 
   const finishBioEditing = async () => {
     const savedBio = await saveMomentProfileBio(profile, bioDraft);
+    await updateClientPreferences({
+      [profile === "user" ? "user_moment_bio" : "xiaoc_moment_bio"]: savedBio,
+    }).catch((error) => console.log("Moment bio sync failed:", error));
     setBio(savedBio);
     setBioDraft(savedBio);
     setEditingBio(false);

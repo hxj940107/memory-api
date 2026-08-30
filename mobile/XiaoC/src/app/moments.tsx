@@ -31,6 +31,10 @@ import {
   saveMomentsCoverUri,
   type MomentProfileKind,
 } from "../lib/momentProfile";
+import {
+  syncClientPreferences,
+  uploadClientPreferenceImage,
+} from "../lib/cloudPreferences";
 
 type Moment = {
   id: string;
@@ -213,6 +217,7 @@ export default function MomentsScreen() {
   };
 
   const loadMoments = async () => {
+    await syncClientPreferences().catch(() => null);
     const [data, account] = await Promise.all([
       apiJson<MomentsResponse>("/api/memory", {
         query: {
@@ -303,7 +308,7 @@ export default function MomentsScreen() {
         console.log("Liked moments load failed:", error);
       });
 
-    getMomentsCoverUri()
+    syncClientPreferences().catch(() => null).then(() => getMomentsCoverUri())
       .then((uri) => {
         if (uri) {
           setProfileCoverUri(uri);
@@ -347,9 +352,11 @@ export default function MomentsScreen() {
       }
 
       const uri = result.assets[0].uri;
+      const uploaded = await uploadClientPreferenceImage("user_moment_cover", uri);
+      const savedUri = uploaded.uri || uri;
 
-      setProfileCoverUri(uri);
-      await saveMomentsCoverUri(uri);
+      setProfileCoverUri(savedUri);
+      await saveMomentsCoverUri(savedUri);
     } catch (error) {
       Alert.alert("更换失败", error instanceof Error ? error.message : "请稍后再试。");
     }

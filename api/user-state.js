@@ -11,6 +11,81 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+const PROFILE_IMAGE_BUCKET = "album-images"
+const CLIENT_PREFERENCE_KEYS = new Set([
+  "display_name",
+  "selected_chat_model",
+  "user_moment_avatar",
+  "xiaoc_moment_avatar",
+  "user_moment_bio",
+  "xiaoc_moment_bio",
+  "migration_complete",
+])
+
+function normalizePreferencePatch(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => CLIENT_PREFERENCE_KEYS.has(key))
+      .map(([key, item]) => [key, item === null ? null : String(item).slice(0, 500)])
+  )
+}
+
+function normalizeUsageRecord(message) {
+  const usage = message?.metadata?.llmUsage
+  if (!usage || typeof usage !== "object") return null
+  const hasCost = usage.cost !== null && usage.cost !== undefined && usage.cost !== ""
+  const cost = hasCost ? Number(usage.cost) : Number.NaN
+  return {
+    id: String(message.id),
+    createdAt: message.created_at,
+    model: String(usage.model || "unknown"),
+    promptTokens: Number(usage.prompt_tokens || usage.inputTokens || 0),
+    completionTokens: Number(usage.completion_tokens || usage.outputTokens || 0),
+    totalTokens: Number(usage.total_tokens || usage.totalTokens || 0),
+    costUsd: Number.isFinite(cost) ? cost : null,
+    costSource: Number.isFinite(cost) ? "actual" : "unknown",
+  }
+}
+
+async function signPreferenceImages(preferences) {
+  const pathEntries = Object.entries(preferences || {})
+    .filter(([key, value]) => key.endsWith("_path") && typeof value === "string" && value)
+  if (!pathEntries.length) return {}
+  const { data, error } = await supabase.storage
+    .from(PROFILE_IMAGE_BUCKET)
+    .createSignedUrls(pathEntries.map(([, path]) => path), 60 * 60 * 24 * 7)
+  if (error) throw error
+  const signedByPath = new Map((data || []).map(item => [item.path, item.signedUrl]))
+  return Object.fromEntries(pathEntries.map(([key, path]) => [
+    key.replace(/_path$/, "_uri"),
+    signedByPath.get(path) || null,
+  ]))
+}
+
+async function uploadPreferenceImage(userId, kind, imageBase64, imageMimeType) {
+  const allowedKinds = new Set([
+    "user_moment_avatar",
+    "xiaoc_moment_avatar",
+    "user_moment_cover",
+    "xiaoc_moment_cover",
+  ])
+  if (!allowedKinds.has(kind)) throw new Error("invalid preference image kind")
+  const rawBase64 = String(imageBase64 || "").replace(/^data:image\/[^;]+;base64,/, "")
+  const buffer = Buffer.from(rawBase64, "base64")
+  if (!buffer.length || buffer.length > 4 * 1024 * 1024) throw new Error("invalid preference image")
+  const mimeType = ["image/jpeg", "image/png", "image/webp"].includes(imageMimeType)
+    ? imageMimeType
+    : "image/jpeg"
+  const extension = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg"
+  const path = `profiles/${userId}/${kind}-${Date.now()}.${extension}`
+  const { error } = await supabase.storage
+    .from(PROFILE_IMAGE_BUCKET)
+    .upload(path, buffer, { contentType: mimeType, upsert: false })
+  if (error) throw error
+  return path
+}
+
 export default async function handler(req, res) {
   if (!requirePrivateAppRequest(req, res)) return
 
@@ -75,6 +150,48 @@ export default async function handler(req, res) {
       }
     }
 
+    if (req.method === "GET" && req.query.action === "chat-usage-summary") {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const recentResult = await supabase
+        .from("messages")
+        .select("id,created_at,metadata")
+        .eq("user_id", user_id)
+        .eq("role", "assistant")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(240)
+      if (recentResult.error) return res.status(500).json({ error: recentResult.error.message })
+      const records = (recentResult.data || []).map(normalizeUsageRecord).filter(Boolean)
+      const latest = records[0] || null
+      const knownCosts = records.filter(record => record.costUsd !== null)
+      return res.status(200).json({
+        last24hCost: knownCosts.length
+          ? knownCosts.reduce((total, record) => total + record.costUsd, 0)
+          : null,
+        latest,
+        requestCount: records.length,
+      })
+    }
+
+    if (req.method === "GET" && req.query.action === "client-preferences") {
+      const { data, error } = await supabase
+        .from("user_state")
+        .select("client_preferences")
+        .eq("user_id", user_id)
+        .maybeSingle()
+      if (error?.code === "42703") {
+        return res.status(200).json({ preferences: {}, schema_ready: false })
+      }
+      if (error) return res.status(500).json({ error: error.message })
+      const preferences = data?.client_preferences || {}
+      const signedImages = await signPreferenceImages(preferences)
+      return res.status(200).json({
+        preferences: { ...preferences, ...signedImages },
+        has_preferences: Object.keys(preferences).length > 0,
+        schema_ready: true,
+      })
+    }
+
     if (req.method === "GET" && req.query.action === "inactivity-reach-out-mode") {
       const { data, error } = await supabase
         .from("user_state")
@@ -114,6 +231,46 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
+      if (req.body.action === "set-client-preferences") {
+        const patch = normalizePreferencePatch(req.body.preferences)
+        const { data: current, error: readError } = await supabase
+          .from("user_state")
+          .select("client_preferences")
+          .eq("user_id", user_id)
+          .maybeSingle()
+        if (readError) return res.status(500).json({ error: readError.message })
+        const next = { ...(current?.client_preferences || {}), ...patch }
+        const { error } = await supabase
+          .from("user_state")
+          .upsert({ user_id, client_preferences: next, updated_at: new Date().toISOString() })
+        if (error) return res.status(500).json({ error: error.message })
+        return res.status(200).json({ preferences: next })
+      }
+
+      if (req.body.action === "upload-client-preference-image") {
+        const kind = String(req.body.kind || "")
+        const path = await uploadPreferenceImage(
+          user_id,
+          kind,
+          req.body.image_base64,
+          String(req.body.image_mime_type || "image/jpeg")
+        )
+        const key = `${kind}_path`
+        const { data: current, error: readError } = await supabase
+          .from("user_state")
+          .select("client_preferences")
+          .eq("user_id", user_id)
+          .maybeSingle()
+        if (readError) return res.status(500).json({ error: readError.message })
+        const next = { ...(current?.client_preferences || {}), [key]: path }
+        const { error } = await supabase
+          .from("user_state")
+          .upsert({ user_id, client_preferences: next, updated_at: new Date().toISOString() })
+        if (error) return res.status(500).json({ error: error.message })
+        const signed = await signPreferenceImages(next)
+        return res.status(200).json({ path, uri: signed[key.replace(/_path$/, "_uri")] || null })
+      }
+
       if (req.body.action === "set-inactivity-reach-out-mode") {
         const mode = String(req.body.mode || "")
 

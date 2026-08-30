@@ -87,7 +87,7 @@ test("profile cover and signature stay lightweight and locally editable", () => 
 
   assert.match(profileSource, /onPress=\{pickCover\}/)
   assert.match(profileSource, /launchImageLibraryAsync/)
-  assert.match(profileSource, /saveMomentProfileCoverUri\(profile, uri\)/)
+  assert.match(profileSource, /saveMomentProfileCoverUri\(profile, savedUri\)/)
   assert.match(profileSource, /multiline/)
   assert.match(profileSource, /maxLength=\{MOMENT_PROFILE_BIO_MAX_LENGTH\}/)
   assert.match(profileSource, /saveMomentProfileBio\(profile, bioDraft\)/)

@@ -12,6 +12,7 @@ import {
   refreshPushRegistrationIfEnabled,
 } from "../lib/pushNotifications";
 import { getAccountSettings } from "../lib/accountSettings";
+import { syncClientPreferences } from "../lib/cloudPreferences";
 
 const BACKGROUND_AUTO_LOCK_DELAY_MS = 10 * 60 * 1000;
 
@@ -20,6 +21,10 @@ export default function RootLayout() {
   const backgroundedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
+    syncClientPreferences().catch((error) => {
+      console.log("Client preferences startup sync failed:", error);
+    });
+
     refreshPushRegistrationIfEnabled().catch((error) => {
       console.log("Push registration refresh failed:", error);
     });

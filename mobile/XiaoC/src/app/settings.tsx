@@ -30,6 +30,11 @@ import {
 } from "../lib/accountSettings";
 import { CostSummary, getCostSummary } from "../lib/costState";
 import {
+  syncClientPreferences,
+  updateClientPreferences,
+  uploadClientPreferenceImage,
+} from "../lib/cloudPreferences";
+import {
   AVAILABLE_CHAT_MODELS,
   ChatModelOption,
   DEFAULT_CHAT_MODEL,
@@ -231,6 +236,9 @@ export default function SettingsScreen() {
     setRefreshing(true);
 
     try {
+      await syncClientPreferences().catch((error) => {
+        console.log("Client preferences sync failed:", error);
+      });
       const [model, costSummary, creditsData, accountSettings, inactivityMode, localPushSettings] = await Promise.all([
         getSelectedChatModel(),
         getCostSummary(),
@@ -283,6 +291,9 @@ export default function SettingsScreen() {
   const selectModel = async (modelId: string) => {
     const model = await saveSelectedChatModel(modelId);
     setSelectedModel(model);
+    await updateClientPreferences({ selected_chat_model: model.id }).catch((error) => {
+      console.log("Selected model sync failed:", error);
+    });
   };
 
   const selectReachOutMode = async (nextMode: InactivityReachOutMode) => {
@@ -323,6 +334,10 @@ export default function SettingsScreen() {
         text: "保存",
         onPress: async (value?: string) => {
           const displayName = await saveAccountDisplayName(value || "");
+
+          await updateClientPreferences({ display_name: displayName }).catch((error) => {
+            console.log("Display name sync failed:", error);
+          });
 
           setAccount((prev) => ({
             ...prev,
@@ -505,20 +520,25 @@ export default function SettingsScreen() {
         result.assets[0].uri,
         target,
       );
+      const uploaded = await uploadClientPreferenceImage(
+        target === "user" ? "user_moment_avatar" : "xiaoc_moment_avatar",
+        avatarUri,
+      );
+      const savedUri = uploaded.uri || avatarUri;
 
       if (target === "user") {
-        await saveUserMomentAvatarUri(avatarUri);
+        await saveUserMomentAvatarUri(savedUri);
         setAccount((prev) => ({
           ...prev,
-          userMomentAvatarUri: avatarUri,
+          userMomentAvatarUri: savedUri,
         }));
         return;
       }
 
-      await saveXiaoCMomentAvatarUri(avatarUri);
+      await saveXiaoCMomentAvatarUri(savedUri);
       setAccount((prev) => ({
         ...prev,
-        xiaocMomentAvatarUri: avatarUri,
+        xiaocMomentAvatarUri: savedUri,
       }));
     } catch (error) {
       Alert.alert(

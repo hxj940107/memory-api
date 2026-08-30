@@ -3477,10 +3477,16 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
 
 const mainChatOptions = buildGeneratedFileChatOptions(generatedFileRequest, cid)
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
+const mainChatLlmCalls = [{
+  request_purpose: "normal_chat",
+  model: selectedChatModel,
+  usage: llm.usage || {},
+}]
 let reply = llm.reply
 const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
 
 if (fallbackSearchQuery) {
+  mainChatLlmCalls[0].request_purpose = "normal_chat_pre_web_search"
   console.log("AI TASK USAGE:", {
     request_purpose: "normal_chat_pre_web_search",
     model: selectedChatModel,
@@ -3511,6 +3517,11 @@ ${fallbackWebSearch}
     ]
 
     llm = await callLLM(searchedMessages, selectedChatModel, mainChatOptions)
+    mainChatLlmCalls.push({
+      request_purpose: "normal_chat_web_search",
+      model: selectedChatModel,
+      usage: llm.usage || {},
+    })
     reply = llm.reply
   } else {
     reply = "这个我现在不太确定，宝宝可以用 /搜 让我帮你查一下。"
@@ -3552,6 +3563,36 @@ console.log("MAIN CHAT USAGE:", {
 
 console.log("======================================\n")
 
+    const mainChatRequestUsages = mainChatLlmCalls.map(call => ({
+      request_purpose: call.request_purpose,
+      model: call.model,
+      ...buildPromptCacheUsageLog(call.usage),
+      prompt_tokens: Number(call.usage?.prompt_tokens || 0),
+      completion_tokens: Number(call.usage?.completion_tokens || 0),
+      total_tokens: Number(call.usage?.total_tokens || 0),
+      cost: call.usage?.cost !== null &&
+        call.usage?.cost !== undefined &&
+        call.usage?.cost !== "" &&
+        Number.isFinite(Number(call.usage.cost))
+        ? Number(call.usage.cost)
+        : null,
+    }))
+    const knownMainChatCosts = mainChatRequestUsages
+      .map(item => item.cost)
+      .filter(cost => Number.isFinite(cost))
+    const mainChatUsage = {
+      request_purpose: "normal_chat",
+      model: selectedChatModel,
+      request_count: mainChatRequestUsages.length,
+      prompt_tokens: mainChatRequestUsages.reduce((total, item) => total + item.prompt_tokens, 0),
+      completion_tokens: mainChatRequestUsages.reduce((total, item) => total + item.completion_tokens, 0),
+      total_tokens: mainChatRequestUsages.reduce((total, item) => total + item.total_tokens, 0),
+      cost: knownMainChatCosts.length === mainChatRequestUsages.length
+        ? knownMainChatCosts.reduce((total, cost) => total + cost, 0)
+        : null,
+      requests: mainChatRequestUsages,
+    }
+
     // 6. save assistant
     const assistantMessageId = await saveMessage(
       user_id,
@@ -3567,6 +3608,7 @@ console.log("======================================\n")
         sharedContext: getSharedContextDiagnostics(sharedContext, {
           injected: Boolean(sharedContextPrompt),
         }),
+        llmUsage: mainChatUsage,
       }
     )
 

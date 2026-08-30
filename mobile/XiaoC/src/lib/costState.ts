@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { APP_USER_ID, apiJson } from "../config/api";
 
 export type TokenUsageRecord = {
   id: string;
@@ -195,9 +196,27 @@ export async function getCostSummary(): Promise<CostSummary> {
     (record) => new Date(record.createdAt).getTime() >= monthStart,
   );
 
-  return {
+  const localSummary = {
     last24hCost: sumKnownCosts(last24hRecords),
     monthCost: sumKnownCosts(monthRecords),
     latest: records[0] || null,
   };
+
+  try {
+    const cloudSummary = await apiJson<{
+      last24hCost: number | null;
+      latest: TokenUsageRecord | null;
+    }>("/api/user-state", {
+      query: { user_id: APP_USER_ID, action: "chat-usage-summary" },
+      timeoutMs: 12000,
+    });
+
+    return {
+      last24hCost: cloudSummary.last24hCost ?? localSummary.last24hCost,
+      monthCost: localSummary.monthCost,
+      latest: cloudSummary.latest || localSummary.latest,
+    };
+  } catch {
+    return localSummary;
+  }
 }
