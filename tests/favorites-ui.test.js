@@ -14,6 +14,8 @@ test("favorites list keeps short text natural and truncates long text to two lin
 test("the whole favorite card opens a lightweight full-text detail", () => {
   assert.match(source, /setSelectedFavorite\(favorite\)/)
   assert.match(source, /presentationStyle="pageSheet"/)
+  assert.match(source, /selectedFavorite\?\.role === "assistant"/)
+  assert.match(source, /<MessageMarkdown text=\{selectedFavorite\.text\} variant="detail" \/>/)
   assert.match(source, /<Text style=\{styles\.detailText\}>\{selectedFavorite\?\.text \|\| ""\}<\/Text>/)
   assert.match(source, /onPress=\{\(\) => setSelectedFavorite\(null\)\}/)
 })

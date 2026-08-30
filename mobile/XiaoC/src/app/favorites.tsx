@@ -16,6 +16,7 @@ import {
   FavoriteItem,
   getFavorites,
 } from "../lib/favoritesState";
+import { MessageMarkdown } from "../components/MessageMarkdown";
 
 const formatFavoriteDate = (value: string) => {
   const date = new Date(value);
@@ -166,7 +167,11 @@ export default function FavoritesScreen() {
             contentContainerStyle={styles.detailContent}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.detailText}>{selectedFavorite?.text || ""}</Text>
+            {selectedFavorite?.role === "assistant" ? (
+              <MessageMarkdown text={selectedFavorite.text} variant="detail" />
+            ) : (
+              <Text style={styles.detailText}>{selectedFavorite?.text || ""}</Text>
+            )}
           </ScrollView>
         </View>
       </Modal>
