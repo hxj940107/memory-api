@@ -20,7 +20,8 @@ const ACCOUNT_XIAOC_MOMENT_AVATAR_KEY = "xiaoc:xiaoc_moment_avatar";
 const ACCOUNT_USER_MOMENT_AVATAR_URI_KEY = "xiaoc:user_moment_avatar_uri";
 const ACCOUNT_XIAOC_MOMENT_AVATAR_URI_KEY = "xiaoc:xiaoc_moment_avatar_uri";
 
-export const DEFAULT_ACCOUNT_NAME = "小天使";
+export const DEFAULT_ACCOUNT_NAME = "大天使长";
+const LEGACY_DEFAULT_ACCOUNT_NAME = "小天使";
 
 export type MomentAvatarId =
   | "moonDark"
@@ -99,7 +100,10 @@ export async function getAccountSettings(): Promise<AccountSettings> {
   ]);
 
   return {
-    displayName: displayName || DEFAULT_ACCOUNT_NAME,
+    displayName:
+      !displayName || displayName === LEGACY_DEFAULT_ACCOUNT_NAME
+        ? DEFAULT_ACCOUNT_NAME
+        : displayName,
     hasPassword: Boolean(password),
     faceIdEnabled: faceIdEnabled === "1",
     userMomentAvatar: normalizeMomentAvatarId(

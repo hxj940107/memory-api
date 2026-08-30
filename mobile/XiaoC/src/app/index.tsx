@@ -19,6 +19,7 @@ import {
   getAccountSettings,
 } from "../lib/accountSettings";
 import { consumePendingNotificationConversation } from "../lib/pushNotifications";
+import { syncClientPreferences } from "../lib/cloudPreferences";
 
 
 export default function Index() {
@@ -30,6 +31,7 @@ export default function Index() {
   const [error, setError] = useState('');
   const [isWelcoming, setIsWelcoming] = useState(false);
   const [faceIdAttempting, setFaceIdAttempting] = useState(false);
+  const [unlockReady, setUnlockReady] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
   const passcodeOpacity = useRef(new Animated.Value(1)).current;
@@ -55,13 +57,56 @@ export default function Index() {
     router.replace("/chat");
   };
 
+  const showWelcomeThenEnter = () => {
+    setUnlockReady(true);
+    setIsWelcoming(true);
+    setError('');
+
+    Animated.sequence([
+      Animated.timing(passcodeOpacity, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }),
+      Animated.parallel([
+        Animated.timing(welcomeCOpacity, {
+          toValue: 1,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+        Animated.timing(welcomeCTranslate, {
+          toValue: 0,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(welcomeTextOpacity, {
+          toValue: 1,
+          duration: 420,
+          useNativeDriver: true,
+        }),
+        Animated.timing(welcomeTextTranslate, {
+          toValue: 0,
+          duration: 420,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.delay(620),
+    ]).start(() => {
+      enterChat();
+    });
+  };
+
   useEffect(() => {
     let isActive = true;
 
-    Promise.all([
+    syncClientPreferences().catch((error) => {
+      console.log("Welcome preferences sync failed:", error);
+    }).then(() => Promise.all([
       getAccountSettings(),
       getAccountPassword(),
-    ]).then(([account, accountPassword]) => {
+    ])).then(([account, accountPassword]) => {
       if (!isActive) {
         return;
       }
@@ -82,12 +127,20 @@ export default function Index() {
           fallbackLabel: "使用设备密码",
         })
           .then((result) => {
-            if (isActive && result.success) enterChat();
+            if (!isActive) return;
+            if (result.success) {
+              showWelcomeThenEnter();
+            } else {
+              setUnlockReady(true);
+            }
           })
           .finally(() => {
             if (isActive) setFaceIdAttempting(false);
           });
+        return;
       }
+
+      setUnlockReady(true);
     });
 
     return () => {
@@ -117,44 +170,7 @@ export default function Index() {
       setTimeout(()=>{
 
         if(value === savedPassword){
-
-          setIsWelcoming(true);
-          setError('');
-
-          Animated.sequence([
-            Animated.timing(passcodeOpacity, {
-              toValue: 0,
-              duration: 260,
-              useNativeDriver: true,
-            }),
-            Animated.parallel([
-              Animated.timing(welcomeCOpacity, {
-                toValue: 1,
-                duration: 520,
-                useNativeDriver: true,
-              }),
-              Animated.timing(welcomeCTranslate, {
-                toValue: 0,
-                duration: 520,
-                useNativeDriver: true,
-              }),
-            ]),
-            Animated.parallel([
-              Animated.timing(welcomeTextOpacity, {
-                toValue: 1,
-                duration: 420,
-                useNativeDriver: true,
-              }),
-              Animated.timing(welcomeTextTranslate, {
-                toValue: 0,
-                duration: 420,
-                useNativeDriver: true,
-              }),
-            ]),
-            Animated.delay(620),
-          ]).start(() => {
-            enterChat();
-          });
+          showWelcomeThenEnter();
 
           return;
 
@@ -181,7 +197,7 @@ export default function Index() {
 
       <View style={styles.center}>
 
-        <Animated.View
+        {unlockReady && <Animated.View
           pointerEvents={isWelcoming ? 'none' : 'auto'}
           style={[
             styles.passcodeContent,
@@ -227,7 +243,7 @@ export default function Index() {
               输入密码
             </Text>
 
-        </Animated.View>
+        </Animated.View>}
 
         {isWelcoming && (
           <View
@@ -273,7 +289,7 @@ export default function Index() {
 
 
 
-        <TextInput
+        {unlockReady && !isWelcoming && !faceIdAttempting && <TextInput
 
           ref={inputRef}
 
@@ -287,11 +303,11 @@ export default function Index() {
 
           onChangeText={handleChange}
 
-          autoFocus={!isWelcoming && !faceIdAttempting}
+          autoFocus
 
           editable={!isWelcoming}
 
-        />
+        />}
 
 
       </View>

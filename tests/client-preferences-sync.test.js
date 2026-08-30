@@ -34,3 +34,18 @@ test("main chat usage is persisted with the assistant message and queried cross-
   assert.match(userState, /metadata\?\.llmUsage/)
   assert.match(costState, /action: "chat-usage-summary"/)
 })
+
+test("Face ID and password unlock share the same personalized welcome", () => {
+  const welcome = readFileSync("mobile/XiaoC/src/app/index.tsx", "utf8")
+  const account = readFileSync(
+    "mobile/XiaoC/src/lib/accountSettings.ts",
+    "utf8",
+  )
+
+  assert.match(welcome, /syncClientPreferences\(\)/)
+  assert.match(welcome, /result\.success[\s\S]*showWelcomeThenEnter\(\)/)
+  assert.match(welcome, /value === savedPassword[\s\S]*showWelcomeThenEnter\(\)/)
+  assert.match(welcome, /\{displayName\}/)
+  assert.match(account, /DEFAULT_ACCOUNT_NAME = "大天使长"/)
+  assert.match(account, /LEGACY_DEFAULT_ACCOUNT_NAME = "小天使"/)
+})
