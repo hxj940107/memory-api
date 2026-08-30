@@ -56,6 +56,9 @@ test("mobile app registers notification taps and Face ID privacy protection", ()
   const settings = fs.readFileSync("mobile/XiaoC/src/app/settings.tsx", "utf8")
   const account = fs.readFileSync("mobile/XiaoC/src/lib/accountSettings.ts", "utf8")
   assert.match(layout, /addNotificationResponseReceivedListener/)
+  assert.match(layout, /addNotificationReceivedListener/)
+  assert.match(layout, /currentPath === "\/chat"/)
+  assert.match(layout, /inAppBanner/)
   assert.match(layout, /privacyCovered/)
   assert.match(layout, /BACKGROUND_AUTO_LOCK_DELAY_MS = 10 \* 60 \* 1000/)
   assert.match(settings, /LocalAuthentication\.authenticateAsync/)
@@ -67,4 +70,27 @@ test("mobile app registers notification taps and Face ID privacy protection", ()
 
   const api = fs.readFileSync("mobile/XiaoC/src/config/api.ts", "utf8")
   assert.match(api, /PRIVATE_APP_TOKEN_KEY = "xiaoc\.private_api_token"/)
+})
+
+test("foreground XiaoC messages use a custom banner outside chat without duplicating the native banner", () => {
+  const layout = fs.readFileSync("mobile/XiaoC/src/app/_layout.tsx", "utf8")
+  const notifications = fs.readFileSync("mobile/XiaoC/src/lib/pushNotifications.ts", "utf8")
+
+  assert.match(notifications, /shouldShowBanner: false/)
+  assert.match(notifications, /data\?\.type !== "xiaoc_message"/)
+  assert.match(layout, /currentPath === "\/chat" \|\| currentPath === "\/"/)
+  assert.match(layout, /router\.push\(\{ pathname: "\/chat"/)
+  assert.match(layout, /numberOfLines=\{2\}/)
+})
+
+test("normal chat replies also dispatch push while the client suppresses it on the chat screen", () => {
+  const chat = fs.readFileSync("api/chat.js", "utf8")
+  const layout = fs.readFileSync("mobile/XiaoC/src/app/_layout.tsx", "utf8")
+
+  const saveIndex = chat.indexOf("const assistantMessageId = await saveMessage(")
+  const pushIndex = chat.indexOf("waitUntil(sendNormalChatPush({", saveIndex)
+  assert.ok(saveIndex >= 0 && pushIndex > saveIndex)
+  assert.match(chat, /messageType: "normal_chat"/)
+  assert.match(chat, /push_notifications_enabled/)
+  assert.match(layout, /currentPath === "\/chat"/)
 })

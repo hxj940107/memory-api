@@ -36,6 +36,10 @@ import {
 } from "../lib/imageUnderstanding.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import {
+  buildProactivePushMessage,
+  sendExpoPushMessage,
+} from "../lib/pushNotifications.js"
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
 import { getDiaryContextWindow } from "../lib/diaryContextWindow.js"
 import {
@@ -797,6 +801,41 @@ async function saveMessage(user_id, role, content, conversation_id, metadata = {
     throw new Error(`Saved ${role} message response is missing a string id`)
   }
   return messageId
+}
+
+async function sendNormalChatPush({
+  user_id,
+  conversation_id,
+  message_id,
+  content,
+}) {
+  const { data: pushState, error } = await supabase
+    .from("user_state")
+    .select("push_token,push_notifications_enabled,push_preview_enabled")
+    .eq("user_id", user_id)
+    .maybeSingle()
+
+  if (error?.code === "42703") {
+    return { attempted: false, delivered_to_expo: false, reason: "push_schema_missing" }
+  }
+  if (error) throw error
+  if (!pushState?.push_notifications_enabled || !pushState?.push_token) {
+    return { attempted: false, delivered_to_expo: false, reason: "push_disabled_or_unregistered" }
+  }
+
+  return sendExpoPushMessage(
+    buildProactivePushMessage({
+      token: pushState.push_token,
+      content,
+      previewEnabled: pushState.push_preview_enabled !== false,
+      data: {
+        conversationId: conversation_id,
+        messageId: String(message_id),
+        messageType: "normal_chat",
+      },
+    }),
+    { accessToken: process.env.EXPO_ACCESS_TOKEN || "" },
+  )
 }
 
 async function getLatestConversationContinuity(user_id, conversation_id) {
@@ -3611,6 +3650,28 @@ console.log("======================================\n")
         llmUsage: mainChatUsage,
       }
     )
+
+    waitUntil(sendNormalChatPush({
+      user_id,
+      conversation_id: cid,
+      message_id: assistantMessageId,
+      content: reply,
+    }).then(result => {
+      console.log("NORMAL CHAT PUSH NOTIFICATION:", {
+        message_id: assistantMessageId,
+        conversation_id: cid,
+        attempted: result.attempted,
+        delivered_to_expo: result.delivered_to_expo,
+        reason: result.reason || null,
+        ticket_id: result.ticket_id || null,
+        error: result.error || null,
+      })
+    }).catch(error => {
+      console.error("normal chat push notification failed:", {
+        message_id: assistantMessageId,
+        error: trimText(error?.message, 240),
+      })
+    }))
 
     if (userMessageId && normalizedImageUrls.length > 0) {
       waitUntil((async () => {

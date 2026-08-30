@@ -15,6 +15,12 @@ export type PushSettings = {
   previewEnabled: boolean;
 };
 
+export type XiaoCNotificationData = {
+  type?: unknown;
+  conversationId?: unknown;
+  messageId?: unknown;
+};
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: false,
@@ -81,6 +87,17 @@ export async function openNotificationResponse(response: Notifications.Notificat
     await Notifications.clearLastNotificationResponseAsync();
     router.push("/");
   }
+}
+
+export function getXiaoCNotificationTarget(data: XiaoCNotificationData | null | undefined) {
+  if (data?.type !== "xiaoc_message" || typeof data.conversationId !== "string") {
+    return null;
+  }
+
+  return {
+    conversationId: data.conversationId,
+    messageId: typeof data.messageId === "string" ? data.messageId : null,
+  };
 }
 
 export async function consumePendingNotificationConversation() {
