@@ -45,6 +45,7 @@ test("Face ID and password unlock share the same personalized welcome", () => {
   assert.match(welcome, /syncClientPreferences\(\)/)
   assert.match(welcome, /result\.success[\s\S]*showWelcomeThenEnter\(\)/)
   assert.match(welcome, /value === savedPassword[\s\S]*showWelcomeThenEnter\(\)/)
+  assert.match(welcome, /if \(!accountPassword\) \{[\s\S]*showWelcomeThenEnter\(\)/)
   assert.match(welcome, /\{displayName\}/)
   assert.match(account, /DEFAULT_ACCOUNT_NAME = "大天使长"/)
   assert.match(account, /LEGACY_DEFAULT_ACCOUNT_NAME = "小天使"/)

@@ -21,6 +21,7 @@ import {
   DEFAULT_USER_MOMENT_AVATAR,
   DEFAULT_XIAOC_MOMENT_AVATAR,
   clearAccountPassword,
+  getAccountPassword,
   getAccountSettings,
   saveAccountDisplayName,
   saveAccountPassword,
@@ -350,82 +351,7 @@ export default function SettingsScreen() {
     ], "plain-text", account.displayName);
   };
 
-  const editPassword = () => {
-    const actions = [
-      {
-        text: "取消",
-        style: "cancel" as const,
-      },
-      ...(account.hasPassword
-        ? [
-            {
-              text: "清除密码",
-              style: "destructive" as const,
-              onPress: async () => {
-                await clearAccountPassword();
-                setAccount((prev) => ({
-                  ...prev,
-                  hasPassword: false,
-                  faceIdEnabled: false,
-                }));
-              },
-            },
-          ]
-        : []),
-      {
-        text: account.hasPassword ? "修改" : "设置",
-        onPress: () => {
-          Alert.prompt(
-            account.hasPassword ? "修改密码" : "设置密码",
-            "请输入 6 位数字密码。",
-            [
-              {
-                text: "取消",
-                style: "cancel",
-              },
-              {
-                text: "保存",
-                onPress: async (value?: string) => {
-                  const normalizedPassword = (value || "")
-                    .replace(/[^0-9]/g, "")
-                    .slice(0, 6);
-
-                  if (normalizedPassword.length !== 6) {
-                    Alert.alert("密码需要 6 位数字");
-                    return;
-                  }
-
-                  const hasPassword = await saveAccountPassword(value || "");
-
-                  setAccount((prev) => ({
-                    ...prev,
-                    hasPassword,
-                    faceIdEnabled: hasPassword ? prev.faceIdEnabled : false,
-                  }));
-                },
-              },
-            ],
-            "secure-text",
-          );
-        },
-      },
-    ];
-
-    Alert.alert("密码", account.hasPassword ? "已设置本机密码。" : "还没有设置密码。", actions);
-  };
-
-  const toggleFaceId = async () => {
-    if (account.faceIdEnabled) {
-      await saveAccountFaceIdEnabled(false);
-      setAccount((prev) => ({ ...prev, faceIdEnabled: false }));
-      return;
-    }
-
-    if (!account.hasPassword) {
-      Alert.alert("先设置密码", "Face ID 需要一个 6 位本机密码作为回退。");
-      return;
-    }
-
+  const enableFaceId = async () => {
     const [hasHardware, isEnrolled] = await Promise.all([
       LocalAuthentication.hasHardwareAsync(),
       LocalAuthentication.isEnrolledAsync(),
@@ -443,7 +369,124 @@ export default function SettingsScreen() {
     if (!result.success) return;
 
     await saveAccountFaceIdEnabled(true);
-    setAccount((prev) => ({ ...prev, faceIdEnabled: true }));
+    setAccount((prev) => ({ ...prev, hasPassword: true, faceIdEnabled: true }));
+  };
+
+  const promptForPassword = (afterSave?: () => void | Promise<void>) => {
+    Alert.prompt(
+      account.hasPassword ? "修改密码" : "设置密码",
+      "请输入 6 位数字密码。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "保存",
+          onPress: async (value?: string) => {
+            const normalizedPassword = (value || "").replace(/[^0-9]/g, "").slice(0, 6);
+            if (normalizedPassword.length !== 6) {
+              Alert.alert("密码需要 6 位数字");
+              return;
+            }
+            const hasPassword = await saveAccountPassword(normalizedPassword);
+            setAccount((prev) => ({ ...prev, hasPassword }));
+            if (hasPassword) await afterSave?.();
+          },
+        },
+      ],
+      "secure-text",
+    );
+  };
+
+  const finishDisablingApplicationLock = async () => {
+    await clearAccountPassword();
+    setAccount((prev) => ({
+      ...prev,
+      hasPassword: false,
+      faceIdEnabled: false,
+    }));
+  };
+
+  const verifyPasswordAndDisableApplicationLock = () => {
+    Alert.prompt(
+      "关闭应用锁",
+      "请输入当前 6 位密码。关闭后，打开小C不再需要验证。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "关闭",
+          style: "destructive",
+          onPress: async (value?: string) => {
+            const currentPassword = await getAccountPassword();
+            if (!currentPassword || value !== currentPassword) {
+              Alert.alert("密码不正确");
+              return;
+            }
+            await finishDisablingApplicationLock();
+          },
+        },
+      ],
+      "secure-text",
+    );
+  };
+
+  const disableApplicationLock = async () => {
+    if (!account.hasPassword) return;
+    if (!account.faceIdEnabled) {
+      verifyPasswordAndDisableApplicationLock();
+      return;
+    }
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: "关闭小C应用锁",
+      cancelLabel: "取消",
+      disableDeviceFallback: true,
+    });
+    if (result.success) {
+      await finishDisablingApplicationLock();
+    } else {
+      verifyPasswordAndDisableApplicationLock();
+    }
+  };
+
+  const editApplicationLock = () => {
+    const passwordAction = account.hasPassword
+      ? account.faceIdEnabled ? "改用密码" : "修改密码"
+      : "使用密码";
+    Alert.alert(
+      "应用锁",
+      account.faceIdEnabled
+        ? "当前使用 Face ID，密码可作为备用解锁方式。"
+        : account.hasPassword
+          ? "当前使用 6 位密码。"
+          : "当前未开启，打开小C不需要验证。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "不使用应用锁",
+          style: account.hasPassword ? "destructive" : "default",
+          onPress: disableApplicationLock,
+        },
+        {
+          text: passwordAction,
+          onPress: async () => {
+            if (account.hasPassword && account.faceIdEnabled) {
+              await saveAccountFaceIdEnabled(false);
+              setAccount((prev) => ({ ...prev, faceIdEnabled: false }));
+            } else {
+              promptForPassword();
+            }
+          },
+        },
+        {
+          text: "使用 Face ID",
+          onPress: () => {
+            if (account.hasPassword) {
+              enableFaceId();
+            } else {
+              promptForPassword(enableFaceId);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const updatePushSettings = async (next: PushSettings) => {
@@ -676,14 +719,9 @@ export default function SettingsScreen() {
             onPress={editDisplayName}
           />
           <InfoRow
-            label="密码"
-            value={account.hasPassword ? "已设置" : "未设置"}
-            onPress={editPassword}
-          />
-          <InfoRow
-            label="Face ID"
-            value={account.faceIdEnabled ? "已开启" : "未开启"}
-            onPress={toggleFaceId}
+            label="应用锁"
+            value={account.faceIdEnabled ? "Face ID" : account.hasPassword ? "密码" : "未开启"}
+            onPress={editApplicationLock}
           />
           <InfoRow
             label="消息通知"

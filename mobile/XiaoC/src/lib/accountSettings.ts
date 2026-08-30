@@ -105,7 +105,7 @@ export async function getAccountSettings(): Promise<AccountSettings> {
         ? DEFAULT_ACCOUNT_NAME
         : displayName,
     hasPassword: Boolean(password),
-    faceIdEnabled: faceIdEnabled === "1",
+    faceIdEnabled: Boolean(password) && faceIdEnabled === "1",
     userMomentAvatar: normalizeMomentAvatarId(
       userMomentAvatar,
       DEFAULT_USER_MOMENT_AVATAR,

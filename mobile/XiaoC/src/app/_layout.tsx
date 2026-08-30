@@ -16,7 +16,7 @@ import {
 import { getAccountSettings } from "../lib/accountSettings";
 import { syncClientPreferences } from "../lib/cloudPreferences";
 
-const BACKGROUND_AUTO_LOCK_DELAY_MS = 10 * 60 * 1000;
+const BACKGROUND_AUTO_LOCK_DELAY_MS = 60 * 60 * 1000;
 const IN_APP_BANNER_DURATION_MS = 4500;
 
 type InAppMessageBanner = {

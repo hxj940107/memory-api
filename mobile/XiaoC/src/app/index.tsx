@@ -115,7 +115,7 @@ export default function Index() {
       setSavedPassword(accountPassword);
 
       if (!accountPassword) {
-        enterChat();
+        showWelcomeThenEnter();
         return;
       }
 
