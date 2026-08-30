@@ -1,0 +1,76 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import test from "node:test"
+
+import {
+  filterMomentsForProfile,
+  formatMomentProfileDate,
+  getMomentAuthorType,
+  getMomentProfileDayKey,
+} from "../mobile/XiaoC/src/lib/momentProfile.ts"
+
+test("structured moment author separates user and XiaoC profiles", () => {
+  assert.equal(getMomentAuthorType("小C"), "xiaoc")
+  assert.equal(getMomentAuthorType(undefined), "xiaoc")
+  assert.equal(getMomentAuthorType("小天使"), "user")
+
+  const moments = [
+    { id: "user-old", author: "小天使", createdAt: "2026-06-01T08:00:00Z" },
+    { id: "xiaoc", author: "小C", createdAt: "2026-06-03T08:00:00Z" },
+    { id: "user-new", author: "小天使", createdAt: "2026-06-04T08:00:00Z" },
+  ]
+
+  assert.deepEqual(
+    filterMomentsForProfile(moments, "user").map((moment) => moment.id),
+    ["user-new", "user-old"],
+  )
+  assert.deepEqual(
+    filterMomentsForProfile(moments, "xiaoc").map((moment) => moment.id),
+    ["xiaoc"],
+  )
+})
+
+test("timeline dates use real createdAt in Shanghai time", () => {
+  const now = new Date("2026-08-30T04:00:00.000Z")
+
+  assert.deepEqual(formatMomentProfileDate("2026-08-30T01:00:00.000Z", now), {
+    primary: "今天",
+    secondary: "",
+  })
+  assert.deepEqual(formatMomentProfileDate("2026-06-23T08:00:00.000Z", now), {
+    primary: "23",
+    secondary: "6月",
+  })
+  assert.deepEqual(formatMomentProfileDate("2025-06-19T08:00:00.000Z", now), {
+    primary: "19",
+    secondary: "2025年\n6月",
+  })
+  assert.equal(
+    getMomentProfileDayKey("2026-08-29T16:30:00.000Z"),
+    "2026-08-30",
+  )
+})
+
+test("profile timeline is compact, navigable, and model-free", () => {
+  const profileSource = readFileSync(
+    "mobile/XiaoC/src/app/moments/profile/[author].tsx",
+    "utf8",
+  )
+  const feedSource = readFileSync("mobile/XiaoC/src/app/moments.tsx", "utf8")
+  const detailSource = readFileSync(
+    "mobile/XiaoC/src/app/moments/[id].tsx",
+    "utf8",
+  )
+
+  assert.match(profileSource, /<FlatList/)
+  assert.match(profileSource, /numberOfLines=\{3\}/)
+  assert.match(profileSource, /还没有动态/)
+  assert.match(profileSource, /router\.push\(`\/moments\/\$\{item\.id\}`\)/)
+  assert.match(feedSource, /openMomentProfile\(getMomentAuthorType\(moment\.author\)\)/)
+  assert.match(feedSource, /openMomentProfile\("user"\)/)
+  assert.match(detailSource, /\/moments\/profile\/\$\{getMomentAuthorType\(moment\.author\)\}/)
+  assert.doesNotMatch(
+    profileSource,
+    /callLLM|openrouter|createEmbedding|judgeActive|update-summary/i,
+  )
+})

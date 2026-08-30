@@ -24,6 +24,13 @@ import {
 import { ImagePreviewModal } from "../components/ImagePreviewModal";
 import type { PreviewImage } from "../components/ImagePreviewModal";
 import { MomentImageThumbnail } from "../components/MomentImageThumbnail";
+import { MomentAvatar } from "../components/MomentAvatar";
+import {
+  getMomentAuthorType,
+  getMomentsCoverUri,
+  saveMomentsCoverUri,
+  type MomentProfileKind,
+} from "../lib/momentProfile";
 
 type Moment = {
   id: string;
@@ -92,8 +99,6 @@ const legacyMomentImageKeys = new Set(["sunset", "notebook", "night"]);
 
 const LIKED_MOMENTS_KEY = "xiaoc_liked_moments_v1";
 const MOMENTS_LAST_READ_AT_KEY = "xiaoc_moments_last_read_at_v1";
-const MOMENTS_COVER_URI_KEY = "xiaoc_moments_cover_uri_v1";
-
 export default function MomentsScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const commentInputRefs = useRef<Record<string, TextInput | null>>({});
@@ -298,7 +303,7 @@ export default function MomentsScreen() {
         console.log("Liked moments load failed:", error);
       });
 
-    AsyncStorage.getItem(MOMENTS_COVER_URI_KEY)
+    getMomentsCoverUri()
       .then((uri) => {
         if (uri) {
           setProfileCoverUri(uri);
@@ -344,7 +349,7 @@ export default function MomentsScreen() {
       const uri = result.assets[0].uri;
 
       setProfileCoverUri(uri);
-      await AsyncStorage.setItem(MOMENTS_COVER_URI_KEY, uri);
+      await saveMomentsCoverUri(uri);
     } catch (error) {
       Alert.alert("更换失败", error instanceof Error ? error.message : "请稍后再试。");
     }
@@ -764,54 +769,8 @@ export default function MomentsScreen() {
     });
   };
 
-  const getAccountInitial = (author: string) => {
-    const name = author === "小C" ? "C" : accountName;
-    return name.trim().slice(0, 1) || "我";
-  };
-
-  const renderAvatar = (moment: Moment) => {
-    if (moment.avatarUri) {
-      return (
-        <Image
-          source={{ uri: moment.avatarUri }}
-          style={styles.avatar}
-          contentFit="cover"
-        />
-      );
-    }
-
-    const preset =
-      MOMENT_AVATAR_PRESETS.find((item) => item.id === moment.avatar) ||
-      MOMENT_AVATAR_PRESETS.find(
-        (item) => item.id === DEFAULT_XIAOC_MOMENT_AVATAR,
-      ) ||
-      MOMENT_AVATAR_PRESETS[0];
-    const symbol = preset.useInitial
-      ? getAccountInitial(moment.author)
-      : preset.symbol;
-
-    return (
-      <View
-        style={[
-          styles.avatar,
-          {
-            backgroundColor: preset.backgroundColor,
-          },
-        ]}
-      >
-        <Text
-          style={[
-            styles.avatarText,
-            {
-              color: preset.color,
-              fontSize: preset.useInitial ? 18 : 24,
-            },
-          ]}
-        >
-          {symbol}
-        </Text>
-      </View>
-    );
+  const openMomentProfile = (profile: MomentProfileKind) => {
+    router.navigate(`/moments/profile/${profile}`);
   };
 
   const renderProfileAvatar = () => {
@@ -1022,7 +981,14 @@ export default function MomentsScreen() {
           </Pressable>
           <View style={styles.profileInfoRow}>
             <Text style={styles.profileName}>{accountName}</Text>
-            <View style={styles.profileAvatarWrap}>{renderProfileAvatar()}</View>
+            <Pressable
+              style={styles.profileAvatarWrap}
+              onPress={() => openMomentProfile("user")}
+              accessibilityRole="button"
+              accessibilityLabel="打开我的朋友圈主页"
+            >
+              {renderProfileAvatar()}
+            </Pressable>
           </View>
         </View>
 
@@ -1079,7 +1045,22 @@ export default function MomentsScreen() {
               }}
               onLongPress={() => confirmDelete(moment)}
             >
-              {renderAvatar(moment)}
+              <Pressable
+                style={styles.avatarPressable}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  openMomentProfile(getMomentAuthorType(moment.author));
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`打开${moment.author}的朋友圈主页`}
+              >
+                <MomentAvatar
+                  profile={getMomentAuthorType(moment.author)}
+                  name={moment.author}
+                  avatar={moment.avatar}
+                  uri={moment.avatarUri}
+                />
+              </Pressable>
 
               <View style={styles.momentBody}>
                 <View style={styles.momentHeader}>
@@ -1658,18 +1639,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(120,120,128,0.04)",
   },
 
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 7,
-    alignItems: "center",
-    justifyContent: "center",
+  avatarPressable: {
     marginRight: 14,
-  },
-
-  avatarText: {
-    fontSize: 24,
-    color: "#FFFFFF",
   },
 
   momentBody: {

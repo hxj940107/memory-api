@@ -1,4 +1,3 @@
-import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useRef, useState } from "react";
@@ -7,15 +6,15 @@ import { Dimensions, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInpu
 import { apiJson, APP_USER_ID } from "../../config/api";
 import {
   DEFAULT_ACCOUNT_NAME,
-  DEFAULT_USER_MOMENT_AVATAR,
   DEFAULT_XIAOC_MOMENT_AVATAR,
-  MOMENT_AVATAR_PRESETS,
   MomentAvatarId,
   getAccountSettings,
 } from "../../lib/accountSettings";
 import { ImagePreviewModal } from "../../components/ImagePreviewModal";
 import type { PreviewImage } from "../../components/ImagePreviewModal";
 import { MomentImageThumbnail } from "../../components/MomentImageThumbnail";
+import { MomentAvatar } from "../../components/MomentAvatar";
+import { getMomentAuthorType } from "../../lib/momentProfile";
 
 type Moment = {
   id: string;
@@ -92,25 +91,6 @@ export default function MomentDetailScreen() {
       })
       .catch((error) => console.log("Moment detail load failed:", error));
   }, [id]);
-
-  const renderAvatar = () => {
-    if (avatar.uri) {
-      return <Image source={{ uri: avatar.uri }} style={styles.avatar} contentFit="cover" />;
-    }
-
-    const preset =
-      MOMENT_AVATAR_PRESETS.find((item) => item.id === avatar.avatar) ||
-      MOMENT_AVATAR_PRESETS.find((item) => item.id === DEFAULT_XIAOC_MOMENT_AVATAR) ||
-      MOMENT_AVATAR_PRESETS[0];
-
-    return (
-      <View style={[styles.avatar, { backgroundColor: preset.backgroundColor }]}>
-        <Text style={[styles.avatarText, { color: preset.color }]}>
-          {preset.useInitial ? (moment?.author || accountName).slice(0, 1) : preset.symbol}
-        </Text>
-      </View>
-    );
-  };
 
   const renderImage = () => {
     if (!moment?.image) return null;
@@ -197,7 +177,24 @@ export default function MomentDetailScreen() {
               }
             }}
           >
-            {renderAvatar()}
+            <Pressable
+              style={styles.avatarPressable}
+              onPress={(event) => {
+                event.stopPropagation();
+                router.navigate(
+                  `/moments/profile/${getMomentAuthorType(moment.author)}`,
+                );
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`打开${moment.author || "小C"}的朋友圈主页`}
+            >
+              <MomentAvatar
+                profile={getMomentAuthorType(moment.author)}
+                name={moment.author || "小C"}
+                avatar={avatar.avatar}
+                uri={avatar.uri}
+              />
+            </Pressable>
             <View style={styles.body}>
               <View style={styles.header}>
                 <Text style={styles.author}>{moment.author || "小C"}</Text>
@@ -322,15 +319,9 @@ const styles = StyleSheet.create({
   content: { paddingVertical: 22 },
   empty: { paddingTop: 80, textAlign: "center", color: "#A6A6AA", fontSize: 15 },
   moment: { flexDirection: "row", paddingHorizontal: 20 },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 7,
-    alignItems: "center",
-    justifyContent: "center",
+  avatarPressable: {
     marginRight: 12,
   },
-  avatarText: { fontSize: 18, fontWeight: "600" },
   body: { flex: 1 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   author: { fontSize: 17, lineHeight: 22, fontWeight: "500", color: "#47658F" },
