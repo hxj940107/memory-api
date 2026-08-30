@@ -1432,7 +1432,7 @@ const styles = StyleSheet.create({
   profileName: {
     maxWidth: "62%",
     marginRight: 14,
-    marginBottom: 44,
+    marginBottom: 34,
     fontSize: 20,
     lineHeight: 26,
     fontWeight: "600",

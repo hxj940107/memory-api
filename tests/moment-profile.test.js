@@ -120,3 +120,17 @@ test("Moments header avatars share the same borderless 68 point presentation", (
   assert.doesNotMatch(feedWrapper[1], /padding|backgroundColor|border|shadow/)
   assert.doesNotMatch(profileWrapper[1], /padding|backgroundColor|border|shadow/)
 })
+
+test("Moments feed nickname moves down independently without moving its avatar", () => {
+  const feedSource = readFileSync("mobile/XiaoC/src/app/moments.tsx", "utf8")
+  const nameStyle = feedSource.match(/profileName: \{([\s\S]*?)\n  \},/)
+  const avatarStyle = feedSource.match(/profileAvatarWrap: \{([\s\S]*?)\n  \},/)
+
+  assert.ok(nameStyle)
+  assert.ok(avatarStyle)
+  assert.match(nameStyle[1], /maxWidth: "62%"/)
+  assert.match(nameStyle[1], /marginRight: 14/)
+  assert.match(nameStyle[1], /marginBottom: 34/)
+  assert.match(avatarStyle[1], /width: 68/)
+  assert.match(avatarStyle[1], /height: 68/)
+})
