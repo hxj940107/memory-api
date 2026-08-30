@@ -310,17 +310,17 @@ const getDisplayAiText = (text: string) =>
     : text.replace(/\s*\n\s*/g, "\n");
 
 const getChatBubbleSegments = (text: string) => {
-  const segments = getDisplayAiText(text)
+  return getDisplayAiText(text)
     .split(/\n+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
-
-  if (segments.length <= 3) {
-    return segments;
-  }
-
-  return [segments[0], segments[1], segments.slice(2).join("\n")];
 };
+
+const getUserBubbleSegments = (text: string) =>
+  text
+    .split(/\n+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
 
 const normalizeTreeholeDraftJson = (rawJson: string) =>
   rawJson
@@ -2083,21 +2083,25 @@ export default function ChatScreen() {
                     </View>
                   )}
 
-                  {!!item.text && (
+                  {!!item.text && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
                     <Pressable
-                      style={styles.userBubble}
+                      key={`${stableMessageId}_user_segment_${segmentIndex}`}
+                      style={[
+                        styles.userBubble,
+                        segmentIndex > 0 && styles.userBubbleSegment,
+                      ]}
                       onLongPress={(event) =>
                         openMessageMenu(
-                          item.text,
+                          segment,
                           item,
                           event.nativeEvent.pageX,
                           event.nativeEvent.pageY,
                         )
                       }
                     >
-                      <Text style={styles.userText}>{item.text}</Text>
+                      <Text style={styles.userText}>{segment}</Text>
                     </Pressable>
-                  )}
+                  ))}
 
                   {!item.imageUri &&
                     !item.imageUris?.length &&
@@ -2656,6 +2660,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 17,
     paddingVertical: 9,
     overflow: "visible",
+  },
+
+  userBubbleSegment: {
+    marginTop: 4,
   },
 
   userText: {
