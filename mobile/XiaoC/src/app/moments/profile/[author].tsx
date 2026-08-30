@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   },
   coverWrap: {
     width: "100%",
-    aspectRatio: 1,
+    height: 360,
     marginBottom: 28,
     backgroundColor: "#E9E7E4",
   },
@@ -340,8 +340,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 7,
     paddingBottom: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(120,120,128,0.18)",
   },
   name: {
     maxWidth: "62%",
@@ -425,8 +423,6 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     flexDirection: "row",
     alignItems: "flex-start",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(120,120,128,0.14)",
   },
   timelineItemPressed: {
     opacity: 0.62,
