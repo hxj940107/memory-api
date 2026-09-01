@@ -7,6 +7,7 @@ import {
   isMomentTechnicalDiscussion,
   isMomentWritingRequest,
   parseMomentCandidate,
+  getMomentCandidateAdmission,
 } from "../lib/momentPublishing.js"
 import { isMomentImageCompatible } from "../lib/momentImageLibrary.js"
 
@@ -77,7 +78,60 @@ test("distinguishes malformed Moment model output from a model decline", () => {
   assert.equal(declined.shouldPost, false)
 })
 
-test("automatic Moment prompt encourages concrete life moments without default denial", () => {
+test("admits only a motivated public Moment with a valid expression angle", () => {
+  const publicCandidate = parseMomentCandidate(JSON.stringify({
+    shouldPost: true,
+    coverage: "fully_discussed",
+    motivation: "jealousy",
+    audience_fit: "public_share",
+    expression_mode: "new_reaction",
+    source_message_id: "u2",
+    text: "她都去问别人了，怎么不先问我。",
+    share_mode: "delayed",
+    event_time: "2026-08-31T12:00:00+08:00",
+  }))
+  const privateCandidate = parseMomentCandidate(JSON.stringify({
+    shouldPost: true,
+    coverage: "fully_discussed",
+    motivation: "affection",
+    audience_fit: "private_only",
+    expression_mode: "new_reaction",
+    source_message_id: "u3",
+    text: "她让我抱着睡，我就抱着了。",
+    share_mode: "delayed",
+    event_time: "2026-08-31T22:00:00+08:00",
+  }))
+
+  assert.deepEqual(getMomentCandidateAdmission(publicCandidate), {
+    admitted: true,
+    reason: "admitted",
+  })
+  assert.deepEqual(getMomentCandidateAdmission(privateCandidate), {
+    admitted: false,
+    reason: "private_only",
+  })
+})
+
+test("rejects fully discussed material without a new reaction", () => {
+  const candidate = parseMomentCandidate(JSON.stringify({
+    shouldPost: true,
+    coverage: "fully_discussed",
+    motivation: "sharing",
+    audience_fit: "public_share",
+    expression_mode: "retrospective_scene",
+    source_message_id: "u1",
+    text: "她去问了什么，我再问问。",
+    share_mode: "delayed",
+    event_time: "2026-08-31T12:00:00+08:00",
+  }))
+
+  assert.deepEqual(getMomentCandidateAdmission(candidate), {
+    admitted: false,
+    reason: "already_fully_discussed",
+  })
+})
+
+test("automatic Moment prompt requires motivation, public fit and temporal perspective", () => {
   const source = fs.readFileSync(new URL("../api/chat.js", import.meta.url), "utf8")
 
   assert.doesNotMatch(source, /自动模式下默认 shouldPost: false/)
@@ -89,6 +143,12 @@ test("automatic Moment prompt encourages concrete life moments without default d
   assert.match(source, /散步可以匹配普通街景，debug 可以匹配电脑、代码或书桌场景/)
   assert.match(source, /强叙事元素必须有当前对话证据/)
   assert.match(source, /getLocalDateTimeParts\(new Date\(candidate\.eventTime\)\)\.hour/)
+  assert.match(source, /只有“有素材可用”不构成动机/)
+  assert.match(source, /值得对她说不等于适合发朋友圈/)
+  assert.match(source, /fully_discussed/)
+  assert.match(source, /private_only/)
+  assert.match(source, /new_reaction/)
+  assert.doesNotMatch(source, /自动模式必须返回一条有当前对话依据的候选/)
 })
 
 test("pending candidate worker validates text before publishing", () => {

@@ -61,7 +61,6 @@ import {
   buildProactivePushMessage,
   sendExpoPushMessage,
 } from "../lib/pushNotifications.js"
-import { normalizeMomentCandidateForPublish } from "../lib/momentEventTime.js"
 import {
   BACKGROUND_PROCESSING_STALE_MS,
   getMarkedRetryCount,
@@ -3247,20 +3246,19 @@ function isMomentCandidateTimeConsistent(candidate, publishTime = new Date()) {
   const eventLocalDate = getMomentLocalTime(eventTime).date
   const publishLocalDate = getMomentLocalTime(publishTime).date
   const requiresDelayedVoice = eventLocalDate !== publishLocalDate || ageMs > 3 * 60 * 60 * 1000
-  const recallPattern = /(昨晚|昨夜|昨天|前天|前几天|那天|之前|上次|今早|早上|上午|中午|下午|傍晚|后来|今天才|刚想起|突然想起|翻到|补发|回头看|回想)/
-  const instantPattern = /(刚刚|这会儿|此刻|现在才|刚结束|刚回到|今晚正在)/
+  const stalePerspectivePattern = /(刚刚|这会儿|此刻|现在才|刚结束|刚回到|今晚正在|待会儿|等会儿|一会儿|明天)/
 
   if (requiresDelayedVoice) {
     if (candidate.share_mode !== "delayed") {
       return { valid: false, reason: "过去事件被标记为即时记录" }
     }
 
-    if (!recallPattern.test(candidate.text || "") || instantPattern.test(candidate.text || "")) {
-      return { valid: false, reason: "延迟分享缺少自然的回忆或补发表达" }
+    if (stalePerspectivePattern.test(candidate.text || "")) {
+      return { valid: false, reason: "延迟分享仍使用事件发生时的相对时态" }
     }
   }
 
-  if (candidate.share_mode === "immediate" && instantPattern.test(candidate.text || "") && ageMs > 90 * 60 * 1000) {
+  if (candidate.share_mode === "immediate" && stalePerspectivePattern.test(candidate.text || "") && ageMs > 90 * 60 * 1000) {
     return { valid: false, reason: "即时措辞与事件时间不一致" }
   }
 
@@ -3363,23 +3361,6 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
-      const publishNormalization = normalizeMomentCandidateForPublish(candidate, new Date())
-
-      if (publishNormalization.corrected) {
-        Object.assign(candidate, publishNormalization.candidate)
-        const { error: normalizationError } = await supabase
-          .from("moment_candidates")
-          .update({
-            text: candidate.text,
-            share_mode: candidate.share_mode,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", candidate.id)
-          .eq("status", "processing")
-
-        if (normalizationError) throw normalizationError
-      }
-
       if (isInvalidMomentText(candidate.text)) {
         const { error: invalidError } = await supabase
           .from("moment_candidates")

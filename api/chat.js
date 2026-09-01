@@ -9,6 +9,7 @@ import {
   isMomentTechnicalDiscussion,
   isMomentWritingRequest,
   parseMomentCandidate,
+  getMomentCandidateAdmission,
 } from "../lib/momentPublishing.js"
 import {
   buildMomentSourceMaterials,
@@ -1114,7 +1115,16 @@ function formatMessagesForMomentContext(
         ? `\n[该消息图片独立描述]：${source.imageDescription}`
         : ""
 
-      return `${sourceHeader}${speaker}：${trimText(item.content, 500)}${imageContext}`
+      const sourceTimes = source ? formatMomentSourceTimes(source.createdAt) : null
+      const sourceLocalTime = sourceTimes?.shanghai
+        ? ` source_time_shanghai=${sourceTimes.shanghai}`
+        : ""
+
+      const provenanceHeader = source
+        ? `${sourceHeader.trimEnd()}${sourceLocalTime}\n`
+        : ""
+
+      return `${provenanceHeader}${speaker}：${trimText(item.content, 500)}${imageContext}`
     })
     .join("\n\n")
 
@@ -2333,11 +2343,14 @@ ${momentEnvironment}
 当前没有提供实时天气。除非近期对话明确提到天气，否则不要声称今天正在下雨、晴天、降温或下雪，也不要选择带有明确天气的图片。
 
 判断顺序必须是：
-1. 最近真实发生了什么？
-2. 其中是否存在小C主动想分享的生活瞬间？
-3. 先确定正文主题；即使不配图，这条正文也必须成立。
-4. 只有场景明确且素材高度匹配时，才选择图片。
-5. 最后检查时间、场景、关系和近期动态是否冲突。
+1. 最近真实发生了什么？把同一时间段、同一外出或同一件生活小事的相邻消息和已授权图片理解为一个场景，但不得拼接无关事件。
+2. 这件事已经聊到什么程度：fresh_unshared、mentioned_not_explored 或 fully_discussed。
+3. 小C现在为什么想发：必须有 humor、affection、pride、jealousy、observation、reflection、sharing 之一；只有“有素材可用”不构成动机。
+4. 这件事是否适合公开：public_share、private_only 或 not_worth_posting。值得对她说不等于适合发朋友圈。
+5. 站在预计发布时间，选择 new_event、retrospective_scene 或 new_reaction。已经聊深的事情只有出现新的小C反应或角度时才能发。
+6. 先确定正文主题；即使不配图，这条正文也必须成立。
+7. 只有场景明确且素材高度匹配时，才选择图片。
+8. 最后检查时间、场景、关系和近期动态是否冲突。
 
 ${isManualMomentRequest ? `触发条件：
 她明确让你发朋友圈；可以发，但仍然要像小C自己随手发的，不要写成“她让我发朋友圈”。
@@ -2352,7 +2365,7 @@ ${isManualMomentRequest ? `触发条件：
 - 出现了明确但日常的情绪，比如开心、烦、无聊、期待、想念、松了一口气。
 - 对话里出现了一句有画面感、关系感、生活感的原话或互动反差。
 - 内容必须紧扣近期窗口中选中的那条真实 source，不要泛化，也不要把多个事件拼成一件事。
-- 纯技术或开发讨论、一般问答、没有具体事实的内容不应进入自动生成；如果已经进入本步骤，只生成有真实依据的候选，不要再次做发布价值判断。
+- 纯技术或开发讨论、一般问答、没有具体事实的内容不应进入自动生成。
 - 共同完成 App、审核通过、真正安装到手机等具有生活和关系意义的项目里程碑可以发；普通代码修改、配置、测试和功能讨论仍然不发。
 - 不得为了生成候选而编造对话中没有发生的内容。
 - 自动模式生成的是稍后发布的候选，不要使用“刚刚”“这会儿”等很快会失真的表达。
@@ -2363,8 +2376,10 @@ ${isManualMomentRequest ? `触发条件：
 - 先判断正文描述的事情大约发生在什么时候，输出 event_time；它表示事件时间，不是发布时间。
 - share_mode 只能是 immediate 或 delayed。
 - immediate 表示即时记录：事件时间应接近预计发布时间，正文可以使用当前时段语气。
-- delayed 表示延迟分享：事件早于预计发布时间，正文必须自然说明是回忆或补发，例如“昨晚”“昨天”“前几天”“今天才想起来”“翻到这张”。
+- delayed 表示延迟分享：事件早于预计发布时间。必须站在预计发布时间重新表达，不能照搬来源消息里的相对时态。
 - 如果昨晚的候选预计到第二天上午发布，不能写成仍在现场，也不能使用“刚刚”“这会儿”“现在才结束”等即时措辞。
+- “待会儿”“等会儿”“今晚”“明天”等词必须以预计发布时间为基准；如果它们来自事件发生时的原话，发布时必须重新理解，不能原样复制。
+- 代码不会为延迟内容补任何固定开场。不要为了标记时间而机械使用“突然想起”或其他模板句。只有确实形成了新的联想、情绪或反应时，才可以自然使用类似表达。
 - 触发这次判断的用户消息创建时间 UTC 是：${triggerMessageTimes.utc || "未取得"}。
 - 同一个绝对瞬间换算为 Asia/Shanghai 是：${triggerMessageTimes.shanghai || "未取得"}。
 - 上述 UTC 和 Asia/Shanghai 时间代表同一个瞬间。带 Z 的值是 UTC，带 +08:00 的值是上海时间；转换时必须换算钟点，禁止只替换 offset。
@@ -2390,6 +2405,9 @@ ${isManualMomentRequest ? `触发条件：
 - 重点是生活里自然留下她存在过的痕迹，不是公开展示恋爱状态。
 - 不要把普通树木、雨景、咖啡等画面强行解释成“因为想她”。
 - 不要写夸张恋爱宣言。
+- 睡眠、卧室、身体亲密等只适合两个人的互动默认属于 private_only，不要把私聊动作流水账公开出去。
+- 用户的私人状态和敏感经历不能因为真实发生过就直接公开；可以表达小C自己的克制反应，但不能泄露不适合公开的细节。
+- 像“她说……我就……”这样的聊天动作复述通常不是朋友圈动机。若没有新的感受、观察或反应，应不发。
 
 内容规则：
 - 长度：1 到 3 句，通常不超过 50 个中文字符。
@@ -2459,23 +2477,29 @@ ${momentImageCatalog}
 - 咖啡、雨天、通勤、散步、猫、夜晚书桌等明确场景同时出现在近期对话和正文时，才可以谨慎选择。
 
 发布前最终检查：
-1. 这条内容是否像小C自己真的想分享，而不是为了保持活跃？
-2. 去掉图片后，正文是否仍然自然成立？
-3. 图片和文字是否来自同一个真实场景？
-4. 当前时间、正文时段和图片时段是否一致？
-5. 事件时间和预计发布时间是否一致；若为延迟分享，正文是否明确表达回忆或补发？
-6. 是否与最近朋友圈重复？
-自动模式已经通过调用前的低频和发布容量检查；不要因为频率再次拒绝。只有图片不满足时，保留正文并把 image 返回 null。
+1. 是否有真实的发布动机，而不是因为素材存在或为了保持活跃？
+2. 是否适合公开，而不只是适合留在两个人的私聊里？
+3. 如果已经聊深，正文是否提供了发布当下的新反应，而不是重复事实或过期的“我要问问”？
+4. 去掉图片后，正文是否仍然自然成立？
+5. 图片和文字是否来自同一个真实场景？
+6. 事件时间、预计发布时间、正文时态和图片时段是否一致？
+7. 是否与最近朋友圈重复？
+自动模式已经通过调用前的低频检查，但仍必须做发布价值判断。没有动机、不适合公开或没有新角度时返回 shouldPost false。只有图片不满足时，保留正文并把 image 返回 null。
 
 生成结果要求：
 - 不解释为什么生成。
 - 不输出判断过程。
-- ${isManualMomentRequest ? "如果明确请求仍没有任何可用真实内容，可以返回 shouldPost false。" : "自动模式必须返回一条有当前对话依据的候选，不返回 shouldPost false。"}
+- 自动和手动模式都允许返回 shouldPost false。不要为了完成任务勉强发布。
+- shouldPost false 时仍输出 coverage、motivation、audience_fit、expression_mode，其余内容可以为空。
 - 如果值得发，返回 JSON，不要代码块：
 
 {
   "shouldPost": true,
   "source_message_id": "选中的 user source 别名，例如 u3",
+  "coverage": "fresh_unshared / mentioned_not_explored / fully_discussed",
+  "motivation": "humor / affection / pride / jealousy / observation / reflection / sharing / none",
+  "audience_fit": "public_share / private_only / not_worth_posting",
+  "expression_mode": "new_event / retrospective_scene / new_reaction",
   "text": "动态正文",
   "image": "匹配的素材 id，或者 null",
   "priority": 2,
@@ -2520,7 +2544,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     await updateMomentAudit(auditId, { model_called: true })
 
     const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
-      max_tokens: 220,
+      max_tokens: 320,
       temperature: 0.35,
     })
     console.log("AI TASK USAGE:", {
@@ -2530,6 +2554,9 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     })
     const candidate = parseMomentCandidate(result.reply)
     const requestedImageId = candidate.image
+    const admission = getMomentCandidateAdmission(candidate, {
+      manual: isManualMomentRequest,
+    })
 
     console.log("MOMENT CANDIDATE:", {
       parseFailed: candidate.parseFailed,
@@ -2538,6 +2565,11 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       requestedImage: Boolean(candidate.image),
       priority: candidate.priority,
       proposedSourceMessageId: candidate.sourceMessageId,
+      coverage: candidate.coverage,
+      motivation: candidate.motivation,
+      audienceFit: candidate.audienceFit,
+      expressionMode: candidate.expressionMode,
+      admissionReason: admission.reason,
       shareMode: candidate.shareMode,
       hasEventTime: Boolean(candidate.eventTime),
     })
@@ -2558,14 +2590,14 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return null
     }
 
-    if (!candidate.shouldPost || !candidate.text) {
+    if (!admission.admitted || !candidate.text) {
       await completeMomentAudit(auditId, {
-        model_should_post: false,
+        model_should_post: candidate.shouldPost,
         requested_image_id: requestedImageId,
         image_validation_result: requestedImageId ? null : "not_requested",
         image_resolution_result: "not_applicable",
-        skip_reason: "model_declined",
-        outcome: "model_declined",
+        skip_reason: admission.admitted ? "missing_text" : admission.reason,
+        outcome: candidate.shouldPost ? "candidate_rejected" : "model_declined",
       })
       return null
     }
@@ -2605,15 +2637,20 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
         candidate,
         expectedPublishAfter
       )
-      Object.assign(candidate, publishNormalization.candidate)
-
-      if (publishNormalization.corrected) {
-        console.log("MOMENT PUBLISH VOICE NORMALIZED:", {
+      if (publishNormalization.requiresDelayedVoice && candidate.shareMode !== "delayed") {
+        console.log("MOMENT CANDIDATE REJECTED: publish perspective mismatch", {
           auditId,
           reason: publishNormalization.correctionReason,
           publishAfter: expectedPublishAfter,
           shareMode: candidate.shareMode,
         })
+        await completeMomentAudit(auditId, {
+          model_should_post: true,
+          requested_image_id: requestedImageId,
+          skip_reason: "publish_perspective_mismatch",
+          outcome: "candidate_rejected",
+        })
+        return null
       }
     }
 
