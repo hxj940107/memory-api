@@ -63,6 +63,7 @@ import {
   getValidCloudMessageId,
   upsertCloudMessage,
 } from "../lib/messageSync";
+import { getPrependAnchoredOffset } from "../lib/chatScrollAnchor";
 import { XiaoCColors } from "../constants/theme";
 import {
   isTreeholeDraftSaved,
@@ -765,11 +766,6 @@ export default function ChatScreen() {
   const isSendDisabled = !canSendMessage || isTyping;
 
   useEffect(() => {
-    if (skipNextMessageAutoScrollRef.current) {
-      skipNextMessageAutoScrollRef.current = false;
-      return;
-    }
-
     RNAnimated.timing(sendButtonProgress, {
       toValue: canSendMessage ? 1 : 0,
       duration: 160,
@@ -786,6 +782,11 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
+    if (skipNextMessageAutoScrollRef.current) {
+      skipNextMessageAutoScrollRef.current = false;
+      return;
+    }
+
     const shortTimer = setTimeout(() => {
       scrollToLatestMessage(true);
     }, 80);
@@ -1211,6 +1212,10 @@ export default function ChatScreen() {
 
       if (shouldStartNewChat && !silent) {
         const draftConversationId = `chat_${Date.now()}`;
+        prependAnchorRef.current = null;
+        skipNextMessageAutoScrollRef.current = false;
+        scrollOffsetYRef.current = 0;
+        contentHeightRef.current = 0;
         setConversationId(draftConversationId);
         conversationIdRef.current = draftConversationId;
         conversationTitleInitializedRef.current = false;
@@ -1234,6 +1239,12 @@ export default function ChatScreen() {
       }
 
       setConversationId(id);
+      if (conversationIdRef.current !== id) {
+        prependAnchorRef.current = null;
+        skipNextMessageAutoScrollRef.current = false;
+        scrollOffsetYRef.current = 0;
+        contentHeightRef.current = 0;
+      }
       conversationIdRef.current = id;
       conversationTitleInitializedRef.current = true;
 
@@ -1965,13 +1976,10 @@ export default function ChatScreen() {
             if (anchor) {
               prependAnchorRef.current = null;
               scrollRef.current?.scrollTo({
-                y: anchor.scrollOffsetY + Math.max(0, height - anchor.contentHeight),
+                y: getPrependAnchoredOffset(anchor, height),
                 animated: false,
               });
-              return;
             }
-
-            scrollRef.current?.scrollToEnd({ animated: true });
           }}
         >
           {loadingHistory ? (

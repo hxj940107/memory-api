@@ -292,7 +292,8 @@ test("chat history loads older messages with a stable cursor and manual pull", (
   assert.match(chatSource, /before_created_at: oldestCloudMessage\.createdAt/)
   assert.match(chatSource, /before_id: String\(oldestCloudMessage\.cloudId\)/)
   assert.match(chatSource, /prependAnchorRef\.current = \{/)
-  assert.match(chatSource, /height - anchor\.contentHeight/)
+  assert.match(chatSource, /getPrependAnchoredOffset\(anchor, height\)/)
+  assert.match(chatSource, /skipNextMessageAutoScrollRef\.current/)
   assert.match(chatSource, /conversationIdRef\.current !== id/)
   assert.match(
     chatSource,
