@@ -117,7 +117,11 @@ const SHANGHAI = "Asia/Shanghai"
   assert.match(memory, /formatDiarySourceTime\(window\.start/)
   assert.match(memory, /parsed\.sections\.slice\(0, 4\)/)
   assert.match(memory, /\.filter\(Boolean\)\.slice\(0, 5\)/)
-  assert.match(memory, /required: \["title", "footnote", "sections", "conclusion"\]/)
+  assert.match(memory, /required: \["title", "sections", "conclusion"\]/)
+  assert.match(memory, /required: \["observation", "xiaoc_thought", "emphasis"\]/)
+  assert.match(memory, /normalizeDiarySectionTime\(section\?\.time\)/)
+  assert.match(memory, /normalizeDiaryTitle\(parsed\?\.title, sections\)/)
+  assert.match(memory, /footnote: null/)
   assert.match(memory, /sections\.push\(\{\s*tag: "观察结论"/)
   assert.match(memory, /existingEntry\s*\?\s*await supabase[\s\S]*?\.update\(storedFields\)/)
 }

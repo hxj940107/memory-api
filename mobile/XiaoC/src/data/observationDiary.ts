@@ -16,6 +16,15 @@ export type ObservationDiaryEntry = {
   sections: ObservationDiarySection[];
 };
 
+export const formatObservationDiaryTime = (value?: string) => {
+  const matches = String(value || "").match(/(?:[01]\d|2[0-3]):[0-5]\d/g) || [];
+  if (!matches.length) return String(value || "").trim();
+  if (matches.length === 1 || matches[0] === matches[matches.length - 1]) {
+    return matches[0];
+  }
+  return `${matches[0]}–${matches[matches.length - 1]}`;
+};
+
 export const observationDiaryEntries: ObservationDiaryEntry[] = [
   {
     id: "2026-06-28",

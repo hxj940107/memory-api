@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   ObservationDiaryEntry,
   ObservationDiarySection,
+  formatObservationDiaryTime,
   getDiaryEntry,
   observationDiaryEntries,
 } from "../../data/observationDiary";
@@ -97,7 +98,9 @@ export default function ObservationDiaryDetailScreen() {
                 <View style={styles.entry}>
                   <Text style={styles.tag}>{section.tag}</Text>
 
-                  {section.time && <Text style={styles.time}>{section.time}</Text>}
+                  {section.time && (
+                    <Text style={styles.time}>{formatObservationDiaryTime(section.time)}</Text>
+                  )}
 
                   {section.paragraphs.map((paragraph, paragraphIndex) => (
                     <Text
@@ -127,9 +130,11 @@ export default function ObservationDiaryDetailScreen() {
             <View style={styles.footnote}>
               <Text style={styles.footnoteText}>{entry.writtenAt}</Text>
               <Text style={styles.footnoteText}>{entry.recorder}</Text>
-              <Text style={[styles.footnoteText, styles.footnoteLast]}>
-                {entry.footnote}
-              </Text>
+              {entry.footnote ? (
+                <Text style={[styles.footnoteText, styles.footnoteLast]}>
+                  {entry.footnote}
+                </Text>
+              ) : null}
             </View>
           </>
         )}

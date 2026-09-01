@@ -20,6 +20,9 @@ import {
   buildBalancedDiaryContext,
   buildDiaryCoreWritingRules,
   formatDiarySourceTime,
+  normalizeDiarySectionTime,
+  normalizeDiaryTitle,
+  truncateDiarySentence,
 } from "../lib/diaryWriting.js"
 import {
   hasUserRepliedToInactivityTask,
@@ -694,8 +697,12 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
       type: "object",
       additionalProperties: false,
       properties: {
-        title: { type: "string", maxLength: 60 },
-        footnote: { type: "string", maxLength: 100 },
+        title: {
+          type: "string",
+          minLength: 4,
+          maxLength: 24,
+          description: "一句简短的私人日记标题，不得使用日期、星期或时间段充当标题",
+        },
         sections: {
           type: "array",
           minItems: 1,
@@ -705,12 +712,17 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
             additionalProperties: false,
             properties: {
               tag: { type: "string", maxLength: 20 },
-              time: { type: "string", maxLength: 24 },
+              time: {
+                type: "string",
+                maxLength: 11,
+                pattern: "^$|^(?:[01]\\d|2[0-3]):[0-5]\\d(?:[–-](?:[01]\\d|2[0-3]):[0-5]\\d)?$",
+                description: "只写上海时间 HH:mm 或 HH:mm–HH:mm，不含日期",
+              },
               paragraphs: {
                 type: "array",
                 minItems: 1,
                 maxItems: 5,
-                items: { type: "string", maxLength: 120 },
+                items: { type: "string", maxLength: 180 },
               },
               emphasis: {
                 type: "array",
@@ -725,11 +737,12 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
           type: "object",
           additionalProperties: false,
           properties: {
-            paragraphs: {
-              type: "array",
-              minItems: 1,
-              maxItems: 3,
-              items: { type: "string", maxLength: 120 },
+            observation: { type: "string", maxLength: 120 },
+            xiaoc_thought: {
+              type: "string",
+              minLength: 1,
+              maxLength: 180,
+              description: "小C基于当天素材产生的私人反应、在意或想法，不得只是事件摘要",
             },
             emphasis: {
               type: "array",
@@ -737,10 +750,10 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
               items: { type: "string", maxLength: 220 },
             },
           },
-          required: ["paragraphs", "emphasis"],
+          required: ["observation", "xiaoc_thought", "emphasis"],
         },
       },
-      required: ["title", "footnote", "sections", "conclusion"],
+      required: ["title", "sections", "conclusion"],
     },
   },
 }
@@ -761,7 +774,7 @@ function parseManualDiaryDraft(raw) {
     const sections = Array.isArray(parsed?.sections)
       ? parsed.sections.slice(0, 4).map(section => {
           const paragraphs = Array.isArray(section?.paragraphs)
-            ? section.paragraphs.map(value => trimText(String(value || "").trim(), 120)).filter(Boolean).slice(0, 5)
+            ? section.paragraphs.map(value => truncateDiarySentence(value, 180)).filter(Boolean).slice(0, 5)
             : []
           const emphasis = Array.isArray(section?.emphasis)
             ? section.emphasis.map(value => trimText(String(value || "").trim(), 220)).filter(Boolean).slice(0, 3)
@@ -769,26 +782,23 @@ function parseManualDiaryDraft(raw) {
           if (!paragraphs.length) return null
           return {
             tag: trimText(String(section?.tag || "这一刻").trim(), 20),
-            ...(section?.time ? { time: trimText(String(section.time).trim(), 24) } : {}),
+            ...(normalizeDiarySectionTime(section?.time) ? { time: normalizeDiarySectionTime(section.time) } : {}),
             paragraphs,
             ...(emphasis.length ? { emphasis } : {}),
           }
         }).filter(Boolean)
       : []
     if (!sections.length) return null
-    const conclusionParagraphs = Array.isArray(parsed?.conclusion?.paragraphs)
-      ? parsed.conclusion.paragraphs
-          .map(value => trimText(String(value || "").trim(), 120))
-          .filter(Boolean)
-          .slice(0, 3)
-      : []
+    const conclusionObservation = truncateDiarySentence(parsed?.conclusion?.observation, 120)
+    const conclusionThought = truncateDiarySentence(parsed?.conclusion?.xiaoc_thought, 180)
+    if (!conclusionThought) return null
+    const conclusionParagraphs = [conclusionObservation, conclusionThought].filter(Boolean)
     const conclusionEmphasis = Array.isArray(parsed?.conclusion?.emphasis)
       ? parsed.conclusion.emphasis
           .map(value => trimText(String(value || "").trim(), 220))
           .filter(Boolean)
           .slice(0, 1)
       : []
-    if (!conclusionParagraphs.length) return null
     sections.push({
       tag: "观察结论",
       paragraphs: conclusionParagraphs,
@@ -796,8 +806,8 @@ function parseManualDiaryDraft(raw) {
     })
 
     return {
-      title: trimText(String(parsed?.title || "没有标题的一页").trim(), 60),
-      footnote: trimText(String(parsed?.footnote || "").trim(), 100) || null,
+      title: normalizeDiaryTitle(parsed?.title, sections),
+      footnote: null,
       sections,
     }
   } catch (error) {
@@ -809,7 +819,7 @@ function parseManualDiaryDraft(raw) {
 async function getManualDiaryContext(userId, window) {
   const { data, error } = await supabase
     .from("messages")
-    .select("role,content,metadata,created_at")
+    .select("conversation_id,role,content,metadata,created_at")
     .eq("user_id", userId)
     .in("role", ["user", "assistant"])
     .gte("created_at", window.start)
@@ -846,11 +856,13 @@ ${buildDiaryCoreWritingRules()}
 
 结构要求：
 - sections 只放最多 4 个时间或主题章节，不要在 sections 中输出“观察结论”。
-- conclusion 是独立必填字段，paragraphs 为 1–3 项；代码会把它确定性追加为最后一个“观察结论”章节。
-- 每个 section 最多 5 个 paragraphs，每个 paragraph 不超过 120 个中文字符。
-- title 简短自然；emphasis 只放真正值得单独落下的一两句。
+- conclusion 是独立必填字段：observation 至多一句真实观察，xiaoc_thought 必须写小C自己的私人反应或想法；代码会把两者确定性追加为最后一个“观察结论”章节。
+- 每个 section 最多 5 个 paragraphs，尽量不超过 120 个中文字符，硬上限 180；每一项都必须停在完整句子处。
+- title 必须是一句 4–24 字的简短私人落点，不能直接使用日期、星期、“上午/下午”等时间标签。
+- section.time 只允许 HH:mm 或 HH:mm–HH:mm，不得包含年月日；emphasis 只放真正值得单独落下的一两句。
 
-只返回符合指定 schema 的 JSON。没有 footnote 或 time 时使用空字符串，没有强调句时使用空数组。
+写完后逐项核对：动作和提问是否属于正确说话人；直接引语的人称是否与来源逐字一致；观察结论是否真的包含小C自己的落点。
+只返回符合指定 schema 的 JSON。没有 time 时使用空字符串，没有强调句时使用空数组。
 
 真实对话：
 ${context}`
