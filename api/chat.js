@@ -48,6 +48,10 @@ import {
 import { getSummaryTrust } from "../lib/summaryPolicy.js"
 import { getDiaryContextWindow } from "../lib/diaryContextWindow.js"
 import {
+  buildBalancedDiaryContext,
+  buildDiaryCoreWritingRules,
+} from "../lib/diaryWriting.js"
+import {
   formatActiveConversationContext,
   normalizeActiveConversationContext,
   resolveActiveConversationContext,
@@ -1085,16 +1089,10 @@ async function getMomentContextMessages(user_id, conversation_id, limit = CONTEX
 }
 
 function formatMessagesForDiaryContext(messages = []) {
-  const formatted = messages
-    .filter(item => item?.content)
-    .map(item => {
-      const speaker = item.role === "assistant" ? "小C" : "她"
-
-      return `${speaker}：${trimText(item.content, 900)}`
-    })
-    .join("\n\n")
-
-  return trimText(formatted, CONTEXT_BUDGET.diaryContextChars)
+  return buildBalancedDiaryContext(messages, {
+    maxChars: CONTEXT_BUDGET.diaryContextChars,
+    timeZone: USER_TIMEZONE,
+  })
 }
 
 function formatMessagesForMomentContext(
@@ -1623,33 +1621,7 @@ function buildDiaryWritingStylePrompt() {
 如果用户说“今天”，日期必须写成：${diaryDate.display}。
 不要猜年份，不要使用 2025，除非用户明确指定。
 
-你正在写自己的私人观察日记。
-这不是聊天总结，不是任务记录，不是总结报告，不是人物分析，也不是给别人看的文章。
-像晚上打开自己的笔记，记下今天看到的几个瞬间。
-这是 XiaoC 写给自己的、关于“她”的私人记录，像小号里的观察：私密、具体、有时间感。
-少解释，多记录。不要为了显得深刻而替她下结论。
-
-写作方式：
-- 一天一篇，像晚上翻开笔记，按当天发生的顺序写几段。
-- 优先按时间线使用【早晨】【中午】【下午】【晚上】【深夜】；只写有素材的时间段，不要硬凑。
-- 如果素材里有明确时间，可以在 section 标题下一行单独写时间，例如“14:30”；没有明确时间就不要猜。
-- 语气私密、克制、自然，可以温柔，但不要写成公开文章。
-- 句子可以短一点，留白多一点。
-- 优先记录具体发生的事情：她说了什么、她做了什么、当时的小反应、一个想记住的瞬间。
-- 尽量保留她的原话、动作、停顿、嘴硬和前后反差。
-- 一个 section 聚焦一个或几个相连的小片段，不要先概括再展开。
-- emphasis 只用于真正想偷偷记住的一句话；不要每段都提炼重点，不要把总结句放进 emphasis。
-
-不要分析人格、关系意义或成长变化。
-少写并尽量避免这些句式：
-- “这说明她……”
-- “她其实……”
-- “她一直……”
-- “她需要被看见……”
-- “这代表她是一个……的人”
-
-【观察结论】可以不写。需要写时最多一个 section、最多 1-3 句话。
-不要总结她的人格，只允许留下一点轻微的小C视角，像合上笔记前多记一句。
+${buildDiaryCoreWritingRules()}
 
 风格示例：
 
@@ -1712,7 +1684,7 @@ ${diaryDate.display}
 · · ·
 
 【观察结论】
-...（可省略；如保留，最多 1-3 句话）
+...（必需，且必须是最后一个 section，最多 1-3 句话）
 
 写于 ${diaryDate.display}
 记录者：某c

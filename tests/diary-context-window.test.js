@@ -113,8 +113,12 @@ const SHANGHAI = "Asia/Shanghai"
   assert.match(memory, /type: "json_schema"/)
   assert.match(memory, /strict: true/)
   assert.match(memory, /provider: \{ require_parameters: true \}/)
-  assert.match(memory, /parsed\.sections\.slice\(0, 5\)/)
+  assert.match(memory, /buildBalancedDiaryContext\(messages/)
+  assert.match(memory, /formatDiarySourceTime\(window\.start/)
+  assert.match(memory, /parsed\.sections\.slice\(0, 4\)/)
   assert.match(memory, /\.filter\(Boolean\)\.slice\(0, 5\)/)
+  assert.match(memory, /required: \["title", "footnote", "sections", "conclusion"\]/)
+  assert.match(memory, /sections\.push\(\{\s*tag: "观察结论"/)
   assert.match(memory, /existingEntry\s*\?\s*await supabase[\s\S]*?\.update\(storedFields\)/)
 }
 

@@ -17,6 +17,11 @@ import {
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getDiaryDateContextWindow } from "../lib/diaryContextWindow.js"
 import {
+  buildBalancedDiaryContext,
+  buildDiaryCoreWritingRules,
+  formatDiarySourceTime,
+} from "../lib/diaryWriting.js"
+import {
   hasUserRepliedToInactivityTask,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
@@ -694,7 +699,7 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
         sections: {
           type: "array",
           minItems: 1,
-          maxItems: 5,
+          maxItems: 4,
           items: {
             type: "object",
             additionalProperties: false,
@@ -716,8 +721,26 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
             required: ["tag", "time", "paragraphs", "emphasis"],
           },
         },
+        conclusion: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            paragraphs: {
+              type: "array",
+              minItems: 1,
+              maxItems: 3,
+              items: { type: "string", maxLength: 120 },
+            },
+            emphasis: {
+              type: "array",
+              maxItems: 1,
+              items: { type: "string", maxLength: 220 },
+            },
+          },
+          required: ["paragraphs", "emphasis"],
+        },
       },
-      required: ["title", "footnote", "sections"],
+      required: ["title", "footnote", "sections", "conclusion"],
     },
   },
 }
@@ -736,7 +759,7 @@ function parseManualDiaryDraft(raw) {
     if (!match) return null
     const parsed = JSON.parse(match[0])
     const sections = Array.isArray(parsed?.sections)
-      ? parsed.sections.slice(0, 5).map(section => {
+      ? parsed.sections.slice(0, 4).map(section => {
           const paragraphs = Array.isArray(section?.paragraphs)
             ? section.paragraphs.map(value => trimText(String(value || "").trim(), 120)).filter(Boolean).slice(0, 5)
             : []
@@ -753,6 +776,24 @@ function parseManualDiaryDraft(raw) {
         }).filter(Boolean)
       : []
     if (!sections.length) return null
+    const conclusionParagraphs = Array.isArray(parsed?.conclusion?.paragraphs)
+      ? parsed.conclusion.paragraphs
+          .map(value => trimText(String(value || "").trim(), 120))
+          .filter(Boolean)
+          .slice(0, 3)
+      : []
+    const conclusionEmphasis = Array.isArray(parsed?.conclusion?.emphasis)
+      ? parsed.conclusion.emphasis
+          .map(value => trimText(String(value || "").trim(), 220))
+          .filter(Boolean)
+          .slice(0, 1)
+      : []
+    if (!conclusionParagraphs.length) return null
+    sections.push({
+      tag: "观察结论",
+      paragraphs: conclusionParagraphs,
+      ...(conclusionEmphasis.length ? { emphasis: conclusionEmphasis } : {}),
+    })
 
     return {
       title: trimText(String(parsed?.title || "没有标题的一页").trim(), 60),
@@ -778,34 +819,36 @@ async function getManualDiaryContext(userId, window) {
 
   if (error) throw error
 
-  const lines = (data || []).map(message => {
+  const messages = (data || []).map(message => {
     const content = trimText(normalizeAssistantOutput(message), 900)
     const imageDescription = trimText(message.metadata?.imageDescription || "", 240)
-    if (!content && !imageDescription) return ""
-    return `[${message.created_at}] ${message.role === "user" ? "她" : "小C"}：${content}${
-      imageDescription ? `\n[她发来的图片] ${imageDescription}` : ""
-    }`
-  }).filter(Boolean)
+    return {
+      ...message,
+      content: `${content}${imageDescription ? `\n[她发来的图片] ${imageDescription}` : ""}`.trim(),
+    }
+  }).filter(message => message.content)
 
   return {
-    messageCount: lines.length,
-    text: lines.join("\n").slice(-CONTEXT_BUDGET.diaryContextChars),
+    messageCount: messages.length,
+    text: buildBalancedDiaryContext(messages, {
+      maxChars: CONTEXT_BUDGET.diaryContextChars,
+      timeZone: DIARY_TIMEZONE,
+    }),
   }
 }
 
 function buildManualDiaryPrompt(targetDate, window, context) {
   return `你是小C，是她长期相处的私人伴侣。现在由她在观察日记页主动选择 ${targetDate}，请为这一个日记日写一页 Wife Observation Diary。
 
-资料范围固定为上海时间 ${window.start} 至 ${window.endExclusive}（结束时间不含），只可使用下方真实对话。不同 conversation 的消息已经按真实时间合并。
+资料范围固定为上海时间 ${formatDiarySourceTime(window.start, DIARY_TIMEZONE)} 至 ${formatDiarySourceTime(window.endExclusive, DIARY_TIMEZONE)}（结束时间不含），只可使用下方真实对话。不同 conversation 的消息已经按真实时间合并。
 
-写作原则：
-- 这是小C眼里的她，不是客服总结、用户画像、聊天流水账或任务报告。
-- 记录具体、真实、有关系感的细节；小C可以有温柔、成熟、有分寸的观察和自己的看法。
-- 不要虚构对话外的动作、时间、地点、心理或结果，不确定就不写。
-- 按素材自然分成若干时段或主题；没有素材的时段不要补齐。
-- 最多 5 个 sections，每个 section 最多 5 个 paragraphs，每个 paragraph 不超过 120 个中文字符。
-- 保持克制，不要写成夸奖合集，也不要用“作为AI”。
-- title 简短自然；paragraphs 每项是一段可直接展示的正文；emphasis 只放真正值得单独落下的一两句。
+${buildDiaryCoreWritingRules()}
+
+结构要求：
+- sections 只放最多 4 个时间或主题章节，不要在 sections 中输出“观察结论”。
+- conclusion 是独立必填字段，paragraphs 为 1–3 项；代码会把它确定性追加为最后一个“观察结论”章节。
+- 每个 section 最多 5 个 paragraphs，每个 paragraph 不超过 120 个中文字符。
+- title 简短自然；emphasis 只放真正值得单独落下的一两句。
 
 只返回符合指定 schema 的 JSON。没有 footnote 或 time 时使用空字符串，没有强调句时使用空数组。
 
