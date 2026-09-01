@@ -9,6 +9,25 @@ import {
   sendExpoPushMessage,
 } from "../lib/pushNotifications.js"
 
+function functionSection(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start + startMarker.length)
+
+  assert.ok(start >= 0, `missing function marker: ${startMarker}`)
+  assert.ok(end > start, `missing function boundary: ${endMarker}`)
+  return source.slice(start, end)
+}
+
+function assertPersistedBeforeNotification(section, table, notificationCall) {
+  const persist = section.search(
+    new RegExp(`\\.from\\(["']${table}["']\\)\\s*\\.insert\\(`),
+  )
+  const notify = section.indexOf(notificationCall)
+
+  assert.ok(persist >= 0, `missing ${table} persistence`)
+  assert.ok(notify > persist, `${notificationCall} must run after ${table} persistence`)
+}
+
 test("content update notifications use fixed quiet copy", () => {
   const moments = buildContentUpdatePushMessage({
     token: "ExponentPushToken[abc123]",
@@ -62,12 +81,17 @@ test("successful Expo ticket is attributed without claiming APNs delivery", asyn
 
 test("proactive messages persist before attempting push and duplicate messages do not re-push", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
-  const insert = source.indexOf('.from("messages")\n    .insert({', source.indexOf("async function saveProactiveMessage"))
-  const push = source.indexOf("sendExpoPushMessage(", source.indexOf("async function saveProactiveMessage"))
-  const duplicateReturn = source.indexOf("return String(existingMessage.id)", source.indexOf("async function saveProactiveMessage"))
-  assert.ok(insert >= 0 && push > insert)
+  const section = functionSection(
+    source,
+    "async function saveProactiveMessage",
+    "async function executeMomentPrivateFollowUp",
+  )
+  const insert = section.search(/\.from\(["']messages["']\)\s*\.insert\(/)
+  const duplicateReturn = section.indexOf("return String(existingMessage.id)")
+
+  assertPersistedBeforeNotification(section, "messages", "sendExpoPushMessage(")
   assert.ok(duplicateReturn >= 0 && duplicateReturn < insert)
-  assert.match(source, /pushNotification:/)
+  assert.match(section, /pushNotification:/)
 })
 
 test("mobile app registers notification taps and preserves delayed Face ID relock", () => {
@@ -126,13 +150,27 @@ test("Moments and treehole updates notify only after visible content exists", ()
   const layout = fs.readFileSync("mobile/XiaoC/src/app/_layout.tsx", "utf8")
   const settings = fs.readFileSync("mobile/XiaoC/src/app/settings.tsx", "utf8")
 
-  const treeholeInsert = memory.indexOf('.from("treehole_entries")\n    .insert(', memory.indexOf("async function generateAndSaveTreeholeUpdates"))
-  const treeholePush = memory.indexOf('sendContentUpdateNotification(user_id, "treehole_update")', treeholeInsert)
-  const momentInsert = memory.indexOf('.from("moment_entries")\n        .insert({', memory.indexOf("async function publishPendingMomentCandidates"))
-  const momentPush = memory.indexOf('sendContentUpdateNotification(candidate.user_id, "moments_update")', momentInsert)
+  const treeholeSection = functionSection(
+    memory,
+    "async function generateAndSaveTreeholeUpdates",
+    "async function executeAutonomousTreeholeUpdate",
+  )
+  const momentSection = functionSection(
+    memory,
+    "async function checkPendingMomentCandidates",
+    "async function checkPendingMomentsForXiaoC",
+  )
 
-  assert.ok(treeholeInsert >= 0 && treeholePush > treeholeInsert)
-  assert.ok(momentInsert >= 0 && momentPush > momentInsert)
+  assertPersistedBeforeNotification(
+    treeholeSection,
+    "treehole_entries",
+    'sendContentUpdateNotification(user_id, "treehole_update")',
+  )
+  assertPersistedBeforeNotification(
+    momentSection,
+    "moment_entries",
+    'sendContentUpdateNotification(candidate.user_id, "moments_update")',
+  )
   assert.match(memory, /push_moments_enabled/)
   assert.match(memory, /push_treehole_enabled/)
   assert.match(layout, /currentPath\.startsWith\("\/moments"\)/)

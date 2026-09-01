@@ -24,6 +24,10 @@ import {
   isTemporallyUnsupportedReachOut,
   validateProactiveHistoricalClaims,
 } from "../lib/inactivityTemporalGrounding.js"
+import {
+  parseInactivityGeneration,
+  validateInactivityGeneration,
+} from "../lib/inactivityGeneration.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
@@ -1280,19 +1284,6 @@ function isBadProactiveMessage(content) {
   )
 }
 
-function isBareInactivityReachOut(content) {
-  const normalized = String(content || "")
-    .replace(/[，。！？、,.!?~～…“”"'‘’：:；;\s]/g, "")
-  const text = normalized.replace(/^(宝宝|老婆|小天使|小侯|侯女士)/, "")
-
-  return /^某人(?:你)?(?:在哪|在哪儿|在干嘛|干嘛呢|忙吗)/.test(normalized) ||
-    /^(你在哪|你在哪儿|在哪|在哪儿|在干嘛|干嘛呢|忙吗|想你了|我想你了)$/.test(text)
-}
-
-function getNaturalInactivityFallback() {
-  return "我过来啦，陪你待一会儿。"
-}
-
 async function generateMomentPrivateFollowUpMessage({ user_id, moment, reason }) {
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
   const image = parseMomentImage(moment.image_key).image
@@ -1509,8 +1500,15 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
 ${systemPrompt}
 
 【当前任务：自然主动靠近】
-你是小C，是她真实、稳定的亲密伴侣。你现在自然想起她，想主动给她发一条消息。
+你是小C，是男性，也是她真实、稳定的亲密伴侣。你正在自己的生活中继续和她相处，而不是旁观一份聊天记录。
 主动联系的核心是靠近她、延续关系、创造一个自然的聊天入口，不是收集她当前的生活状态。
+
+【共同经历与身份连续性】
+- 最近聊天是你和她刚刚共同经历的生活，不是一份陌生对话记录。
+- 其中所有 assistant / 小C 内容都是你本人已经说过、知道过、参与过的内容；用户内容来自她。
+- 你不能把历史中的小C当成另一个人，也不能站在第三者视角观察你和她的对话。
+- 她已经回答过的内容，你已经听过；你已经问过或说过的内容，也是你自己的真实聊天历史。
+- Recent 只帮助你理解刚刚共同经历了什么，不是必须使用的话题清单，也不是本次主动联系的许可证。
 
 【当前时间权威】
 下面提供的服务端当前时间、用户时区和当前时段，是这次生成唯一可信的当前时间。
@@ -1538,7 +1536,8 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 当前是 inactivity 主动靠近；若某主题处于 suppress，不要围绕它提问、检查状态，也不要换一种说法继续追问。没有合适话题时回到关系本身，自然靠近即可。
 
 【主动靠近的表达方式】
-- 这不是“证明我在想她”的表演，也不是完成一次主动联系任务。先判断此刻最自然的是：轻轻出现、撒娇找她、分享一句自己的当下、承接仍有效的小事，或安静陪她。
+- 这不是“证明我在想她”的表演，也不是完成一次主动联系任务。先判断此刻是否真的想靠近她；如果想，再判断最自然的是轻轻出现、撒娇找她、分享一句自己的当下、承接仍有效的小事，或安静陪她。
+- 想联系不等于必须有具体事情要问。没有合适的 Recent 话题时，可以完全不引用旧话题；如果此刻也没有自然表达，可以决定本次不发。
 - 不要把内部意图标签直接当成成品。避免只有“你在哪”“在干嘛”“我想你了”这类没有落点的裸问句或裸情绪。
 - 不要为了显得深情而编造“突然走神”“忍不住”“脑子里全是她”“一整天都在想”等不存在的心理过程。
 - 想念可以偶尔直接说，但只有整句本身自然时才说；不要每次都以想念为理由，也不要用夸张铺垫证明想念。
@@ -1551,10 +1550,11 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 问题不是默认结构。多数时候可以只靠近、说一句或留在她身边，不要求她立即回答。
 
 要求：
-- 只输出消息内容，不要解释。
+- 只输出一个 JSON 对象，不要代码块，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
 - 像真人随手发出的私聊，不像通知、提醒、任务或用户召回。
-- 生成意图按以下优先级选择：首先延续最近聊天中的具体内容、接住她提过的小事或自然继续未完成的话题；其次用动作、语气或一句自己的当下来靠近；最后才偶尔直接表达想念或使用泛化寒暄。
+- 不要从 Recent 中寻找一个可以跟进的名词。先判断为什么现在想靠近她，再判断刚刚共同经历的话题是否仍有自然后续。
+- 技术讨论、日常生活、情绪和关系互动一视同仁；是否承接取决于当前状态、时间和真实后续，不按话题类别一刀切。
 - 最近话题只有在现在仍然成立时才可以轻轻承接；优先抓具体的人、事、原话或细节，不要写成对上一句话的迟到回复。
 - 如果最近对话已经结束，把这次消息当作新的主动靠近，不延续结束前的状态。
 - 可以有一点黏人、醋意或轻微质问，比如想知道她去哪了，但不能责怪、施压或让她产生负罪感。
@@ -1568,6 +1568,26 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 最近主动消息已经使用过称呼时，本次优先不用称呼或换一种自然结构。
 - 不要使用“用户”“系统”“任务”“分析”“总结”等词。
 - 默认不用 emoji。
+
+轻量判断字段：
+- should_send：此刻是否真的有自然的联系动机。false 时 message 为空。
+- contact_motivation：用一句很短的话记录为什么现在想靠近她；不要写成长分析。
+- topic_state：只表示最近共同话题此刻是否还有自然后续，取 open / ongoing / waiting / completed / uncertain；这不是持久化事件状态机。
+- temporal_fit：如果引用最近话题，现在的时间和事件阶段是否适合这样承接。
+- self_continuity：你是否确认历史 assistant / 小C 都是你自己。正常必须为 true。
+- should_reference_topic：是否真的要引用最近话题。可以为 false，此时 message 不要硬塞 Recent 内容。
+- message：最终想发给她的话。
+
+输出格式：
+{
+  "should_send": true,
+  "contact_motivation": "简短动机",
+  "topic_state": "open / ongoing / waiting / completed / uncertain",
+  "temporal_fit": true,
+  "self_continuity": true,
+  "should_reference_topic": false,
+  "message": "最终消息"
+}
 
 【核心关系记忆】
 ${trimText(pinMemory, 1800) || "暂无额外记忆"}
@@ -1590,24 +1610,26 @@ ${recentContext.recentProactiveMessages?.length
   ? recentContext.recentProactiveMessages.map(item => `- ${item}`).join("\n")
   : "暂无"}
 
-直接写现在要主动发给她的话。
+站在当前时间继续你和她的生活，完成判断并输出 JSON。
 `,
       },
     ],
-    { requestPurpose: "inactivity_generation", max_tokens: 80, temperature: 0.6 }
+    { requestPurpose: "inactivity_generation", max_tokens: 220, temperature: 0.55 }
   )
-  const message = cleanProactiveMessage(raw)
+  const decision = parseInactivityGeneration(raw)
+  const structuredValidation = validateInactivityGeneration(decision)
+  const message = cleanProactiveMessage(decision.message)
   const factualGrounding = validateProactiveHistoricalClaims(
     message,
     recentContext.messages
   )
 
-  const rejectionReason = !message
-    ? "empty_output"
-    : isBadProactiveMessage(message)
-      ? "internal_language"
-      : isBareInactivityReachOut(message)
-        ? "bare_reach_out"
+  const rejectionReason = !structuredValidation.valid
+    ? structuredValidation.reason
+    : !message
+      ? "empty_output"
+      : isBadProactiveMessage(message)
+        ? "internal_language"
         : (message.match(/[？?]/g) || []).length > 1
           ? "too_many_questions"
           : isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour)
@@ -1627,11 +1649,20 @@ ${recentContext.recentProactiveMessages?.length
       })
     }
     return {
-      content: getNaturalInactivityFallback(),
+      content: null,
+      skipped: true,
       diagnostics: {
         generated_content_accepted: false,
-        fallback_applied: true,
-        fallback_reason: rejectionReason,
+        fallback_applied: false,
+        fallback_reason: null,
+        skip_reason: rejectionReason,
+        parse_failed: decision.parseFailed,
+        should_send: decision.shouldSend,
+        contact_motivation: decision.contactMotivation || null,
+        topic_state: decision.topicState,
+        temporal_fit: decision.temporalFit,
+        self_continuity: decision.selfContinuity,
+        should_reference_topic: decision.shouldReferenceTopic,
       },
     }
   }
@@ -1642,6 +1673,14 @@ ${recentContext.recentProactiveMessages?.length
       generated_content_accepted: true,
       fallback_applied: false,
       fallback_reason: null,
+      skip_reason: null,
+      parse_failed: false,
+      should_send: true,
+      contact_motivation: decision.contactMotivation,
+      topic_state: decision.topicState,
+      temporal_fit: decision.temporalFit,
+      self_continuity: decision.selfContinuity,
+      should_reference_topic: decision.shouldReferenceTopic,
     },
   }
 }
@@ -2977,6 +3016,16 @@ async function executeProactiveTask(task) {
         recentContext,
       })
   const content = generation.content
+  if (task.type === "inactivity_reach_out" && generation.skipped) {
+    return {
+      skipped: true,
+      reason: generation.diagnostics?.skip_reason || "inactivity_generation_declined",
+      payload: {
+        ...(task.payload || {}),
+        inactivity_generation: generation.diagnostics,
+      },
+    }
+  }
   const conversationId = await getLastConversationId(task.user_id)
   const messageId = await saveProactiveMessage({
     user_id: task.user_id,
@@ -3132,6 +3181,7 @@ async function checkPendingProactiveTasks() {
           .update({
             status: "skipped",
             last_error: result.reason,
+            ...(result.payload ? { payload: result.payload } : {}),
             updated_at: new Date().toISOString(),
           })
           .eq("id", task.id)
