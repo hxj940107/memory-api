@@ -68,6 +68,9 @@ assert.equal(truncateDiarySentence("第一句完整。第二句也很长但不�
   assert.match(rules, /“她：”只代表用户/)
   assert.match(rules, /不能改写成“她老婆”/)
   assert.match(rules, /不能只是压缩全天事件/)
+  assert.match(rules, /不能替她补出没说过的具体内容/)
+  assert.match(rules, /可以写“她没往下说，我反而更在意了”/)
+  assert.match(rules, /完整、可独立成立的话/)
 }
 
 {

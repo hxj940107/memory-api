@@ -122,6 +122,9 @@ const SHANGHAI = "Asia/Shanghai"
   assert.match(memory, /normalizeDiarySectionTime\(section\?\.time\)/)
   assert.match(memory, /normalizeDiaryTitle\(parsed\?\.title, sections\)/)
   assert.match(memory, /footnote: null/)
+  assert.match(memory, /不得替用户补出未说过的内容/)
+  assert.match(memory, /不得是依赖正文才能补全的半句话/)
+  assert.match(memory, /有没有把含糊暗示补成她没说过的确定内容/)
   assert.match(memory, /sections\.push\(\{\s*tag: "观察结论"/)
   assert.match(memory, /existingEntry\s*\?\s*await supabase[\s\S]*?\.update\(storedFields\)/)
 }

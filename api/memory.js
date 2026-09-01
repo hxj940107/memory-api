@@ -722,12 +722,20 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
                 type: "array",
                 minItems: 1,
                 maxItems: 5,
-                items: { type: "string", maxLength: 180 },
+                items: {
+                  type: "string",
+                  maxLength: 180,
+                  description: "完整表达；事实与小C的主观反应必须可区分，不得替用户补出未说过的内容",
+                },
               },
               emphasis: {
                 type: "array",
                 maxItems: 3,
-                items: { type: "string", maxLength: 220 },
+                items: {
+                  type: "string",
+                  maxLength: 220,
+                  description: "一句可独立理解的完整表达，不得是依赖正文才能补全的半句话",
+                },
               },
             },
             required: ["tag", "time", "paragraphs", "emphasis"],
@@ -747,7 +755,11 @@ const MANUAL_DIARY_RESPONSE_FORMAT = {
             emphasis: {
               type: "array",
               maxItems: 1,
-              items: { type: "string", maxLength: 220 },
+              items: {
+                type: "string",
+                maxLength: 220,
+                description: "一句可独立理解的完整私人落点",
+              },
             },
           },
           required: ["observation", "xiaoc_thought", "emphasis"],
@@ -861,7 +873,7 @@ ${buildDiaryCoreWritingRules()}
 - title 必须是一句 4–24 字的简短私人落点，不能直接使用日期、星期、“上午/下午”等时间标签。
 - section.time 只允许 HH:mm 或 HH:mm–HH:mm，不得包含年月日；emphasis 只放真正值得单独落下的一两句。
 
-写完后逐项核对：动作和提问是否属于正确说话人；直接引语的人称是否与来源逐字一致；观察结论是否真的包含小C自己的落点。
+写完后逐项核对：动作和提问是否属于正确说话人；直接引语的人称是否与来源逐字一致；有没有把含糊暗示补成她没说过的确定内容；每个 paragraph 和 emphasis 是否能完整成立；观察结论是否真的包含小C自己的落点。
 只返回符合指定 schema 的 JSON。没有 time 时使用空字符串，没有强调句时使用空数组。
 
 真实对话：
