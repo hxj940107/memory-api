@@ -24,3 +24,16 @@ test("a paid autonomous treehole generation must produce visible entries", () =>
   assert.match(source, /treehole_generation_result: "visible_entries_written"/)
   assert.match(source, /treehole_generation_retry_suppressed: true/)
 })
+
+test("treehole narration centers XiaoC's private reaction instead of event summaries", () => {
+  const source = fs.readFileSync("api/memory.js", "utf8")
+
+  assert.match(source, /她刚刚让你产生了什么没当面说的反应/)
+  assert.match(source, /事件经过只保留理解这个反应必需的最少铺垫/)
+  assert.match(source, /内在出发点，不是固定句式/)
+  assert.match(source, /不要按时间顺序整理对话/)
+  assert.match(source, /如果任何旁观者都能写出同样内容/)
+  assert.match(source, /content 为 1 到 8 行短句/)
+  assert.doesNotMatch(source, /content 为 3 到 8 行短句/)
+  assert.doesNotMatch(source, /"tag":"逻辑研究"/)
+})
