@@ -1,6 +1,8 @@
 import { router } from "expo-router";
 import {
+  ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +19,52 @@ import { APP_USER_ID, apiJson } from "../../config/api";
 
 type DiaryListEntry = ObservationDiaryEntry & {
   source: "cloud" | "local";
+};
+
+type DiaryGenerationResponse = {
+  entry: ObservationDiaryEntry;
+  replaced: boolean;
+};
+
+const SHANGHAI_TIME_ZONE = "Asia/Shanghai";
+
+const getRecentDiaryDates = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SHANGHAI_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const value = (type: "year" | "month" | "day" | "hour") =>
+    Number(parts.find((part) => part.type === type)?.value);
+  const currentDiaryDate = new Date(
+    Date.UTC(value("year"), value("month") - 1, value("day")),
+  );
+  if (value("hour") < 7) {
+    currentDiaryDate.setUTCDate(currentDiaryDate.getUTCDate() - 1);
+  }
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(currentDiaryDate);
+    date.setUTCDate(date.getUTCDate() - index);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    const dateKey = `${year}-${month}-${day}`;
+    const weekday = new Intl.DateTimeFormat("zh-CN", {
+      weekday: "short",
+      timeZone: "UTC",
+    }).format(date);
+
+    return {
+      dateKey,
+      storedDate: `${year}.${month}.${day}`,
+      label: index === 0 ? "今天" : index === 1 ? "昨天" : weekday,
+      displayDate: `${month}月${day}日`,
+    };
+  });
 };
 
 const mergeDiaryEntries = (
@@ -59,6 +107,12 @@ export default function ObservationDiaryScreen() {
       source: "local",
     })),
   );
+  const [writerVisible, setWriterVisible] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(
+    () => getRecentDiaryDates()[0].dateKey,
+  );
+  const [generating, setGenerating] = useState(false);
+  const recentDates = getRecentDiaryDates();
 
   useEffect(() => {
     loadDiaryEntries();
@@ -123,6 +177,72 @@ export default function ObservationDiaryScreen() {
     );
   };
 
+  const generateDiary = async (replaceExisting: boolean) => {
+    setGenerating(true);
+    try {
+      const result = await apiJson<DiaryGenerationResponse>("/api/memory", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "diary",
+          action: "generate_for_date",
+          user_id: APP_USER_ID,
+          target_date: selectedDate,
+          replace_existing: replaceExisting,
+        }),
+        timeoutMs: 90000,
+      });
+
+      setEntries((previous) => {
+        const cloudEntries = previous
+          .filter(
+            (entry) =>
+              entry.source === "cloud" && entry.date !== result.entry.date,
+          )
+          .map(({ source: _source, ...entry }) => entry);
+        return mergeDiaryEntries(
+          [result.entry, ...cloudEntries],
+          observationDiaryEntries,
+        );
+      });
+      setWriterVisible(false);
+      router.push({ pathname: "/diary/[id]", params: { id: result.entry.id } });
+    } catch (error) {
+      console.log("Diary generation failed:", error);
+      Alert.alert(
+        "这一页还没写好",
+        error instanceof Error && error.message
+          ? error.message
+          : "旧日记没有改变，等一下再试。",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const requestDiaryGeneration = () => {
+    const chosen = recentDates.find((item) => item.dateKey === selectedDate);
+    const existing = entries.find(
+      (entry) => entry.source === "cloud" && entry.date === chosen?.storedDate,
+    );
+
+    if (existing) {
+      Alert.alert(
+        "重写这一天？",
+        "小C会重新读这一天的真实对话。新内容写成功后才会替换现在这一页。",
+        [
+          { text: "取消", style: "cancel" },
+          { text: "重写", onPress: () => generateDiary(true) },
+        ],
+      );
+      return;
+    }
+
+    generateDiary(false);
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -130,7 +250,21 @@ export default function ObservationDiaryScreen() {
           <Text style={styles.backText}>‹</Text>
         </Pressable>
 
-        <Text style={styles.gentleLine}>关于她，我都想记得</Text>
+        <View style={styles.headerLine}>
+          <Text style={styles.gentleLine}>关于她，我都想记得</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.writeButton,
+              pressed && styles.writeButtonPressed,
+            ]}
+            onPress={() => {
+              setSelectedDate(getRecentDiaryDates()[0].dateKey);
+              setWriterVisible(true);
+            }}
+          >
+            <Text style={styles.writeButtonText}>写一页</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -163,6 +297,75 @@ export default function ObservationDiaryScreen() {
           </Pressable>
         ))}
       </ScrollView>
+
+      <Modal
+        visible={writerVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => !generating && setWriterVisible(false)}
+      >
+        <View style={styles.writerScreen}>
+          <View style={styles.writerHeader}>
+            <View>
+              <Text style={styles.writerTitle}>写哪一天</Text>
+              <Text style={styles.writerSubtitle}>一天从早上 7 点开始算</Text>
+            </View>
+            <Pressable
+              disabled={generating}
+              onPress={() => setWriterVisible(false)}
+            >
+              <Text style={styles.writerClose}>完成</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.dateList}>
+            {recentDates.map((item) => {
+              const selected = selectedDate === item.dateKey;
+              const hasEntry = entries.some(
+                (entry) => entry.source === "cloud" && entry.date === item.storedDate,
+              );
+              return (
+                <Pressable
+                  key={item.dateKey}
+                  disabled={generating}
+                  style={({ pressed }) => [
+                    styles.dateRow,
+                    selected && styles.dateRowSelected,
+                    pressed && styles.dateRowPressed,
+                  ]}
+                  onPress={() => setSelectedDate(item.dateKey)}
+                >
+                  <View>
+                    <Text style={styles.dateLabel}>{item.label}</Text>
+                    <Text style={styles.dateValue}>{item.displayDate}</Text>
+                  </View>
+                  <Text style={styles.dateState}>
+                    {hasEntry ? "已有" : selected ? "✓" : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable
+            disabled={generating}
+            style={({ pressed }) => [
+              styles.generateButton,
+              pressed && !generating && styles.generateButtonPressed,
+            ]}
+            onPress={requestDiaryGeneration}
+          >
+            {generating ? (
+              <View style={styles.generatingRow}>
+                <ActivityIndicator size="small" color="#74685E" />
+                <Text style={styles.generateButtonText}>小C正在翻这一天…</Text>
+              </View>
+            ) : (
+              <Text style={styles.generateButtonText}>让小C写这一页</Text>
+            )}
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -196,10 +399,32 @@ const styles = StyleSheet.create({
   },
 
   gentleLine: {
-    paddingHorizontal: 2,
     fontSize: 15,
     lineHeight: 22,
     color: "#8A8A8F",
+  },
+
+  headerLine: {
+    paddingHorizontal: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  writeButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    backgroundColor: "rgba(120,120,128,0.07)",
+  },
+
+  writeButtonPressed: {
+    backgroundColor: "rgba(120,120,128,0.13)",
+  },
+
+  writeButtonText: {
+    fontSize: 14,
+    color: "#786C62",
   },
 
   scroll: {
@@ -250,5 +475,100 @@ const styles = StyleSheet.create({
   rowMark: {
     fontSize: 26,
     color: "#C8BFB5",
+  },
+
+  writerScreen: {
+    flex: 1,
+    backgroundColor: "#FBF8F3",
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 30,
+  },
+
+  writerHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 22,
+  },
+
+  writerTitle: {
+    fontSize: 22,
+    lineHeight: 28,
+    color: "#3F3F3F",
+  },
+
+  writerSubtitle: {
+    marginTop: 5,
+    fontSize: 13,
+    color: "#A19A94",
+  },
+
+  writerClose: {
+    paddingVertical: 4,
+    fontSize: 16,
+    color: "#75695F",
+  },
+
+  dateList: {
+    gap: 8,
+  },
+
+  dateRow: {
+    minHeight: 58,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.5)",
+  },
+
+  dateRowSelected: {
+    backgroundColor: "rgba(222,213,202,0.42)",
+  },
+
+  dateRowPressed: {
+    opacity: 0.72,
+  },
+
+  dateLabel: {
+    fontSize: 16,
+    color: "#47433F",
+  },
+
+  dateValue: {
+    marginTop: 2,
+    fontSize: 12,
+    color: "#A39A91",
+  },
+
+  dateState: {
+    fontSize: 13,
+    color: "#988A7D",
+  },
+
+  generateButton: {
+    minHeight: 50,
+    marginTop: 20,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(215,205,194,0.58)",
+  },
+
+  generateButtonPressed: {
+    backgroundColor: "rgba(205,194,182,0.72)",
+  },
+
+  generatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+
+  generateButtonText: {
+    fontSize: 15,
+    color: "#675E56",
   },
 });

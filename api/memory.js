@@ -15,6 +15,7 @@ import {
   trimText,
 } from "../lib/aiConfig.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import { getDiaryDateContextWindow } from "../lib/diaryContextWindow.js"
 import {
   hasUserRepliedToInactivityTask,
   shouldApplyProactiveCooldown,
@@ -676,6 +677,99 @@ async function callSmallLLM(messages, options = {}) {
   })
 
   return normalizeAssistantOutput(data?.choices?.[0]?.message).trim()
+}
+
+const DIARY_TIMEZONE = "Asia/Shanghai"
+
+function formatDiaryDate(targetDate) {
+  const [year, month, day] = targetDate.split("-")
+  return {
+    date: `${year}.${month}.${day}`,
+    displayDate: `${year} · ${month} · ${day}`,
+  }
+}
+
+function parseManualDiaryDraft(raw) {
+  try {
+    const match = String(raw || "").match(/\{[\s\S]*\}/)
+    if (!match) return null
+    const parsed = JSON.parse(match[0])
+    const sections = Array.isArray(parsed?.sections)
+      ? parsed.sections.slice(0, 8).map(section => {
+          const paragraphs = Array.isArray(section?.paragraphs)
+            ? section.paragraphs.map(value => trimText(String(value || "").trim(), 300)).filter(Boolean).slice(0, 12)
+            : []
+          const emphasis = Array.isArray(section?.emphasis)
+            ? section.emphasis.map(value => trimText(String(value || "").trim(), 220)).filter(Boolean).slice(0, 3)
+            : []
+          if (!paragraphs.length) return null
+          return {
+            tag: trimText(String(section?.tag || "这一刻").trim(), 20),
+            ...(section?.time ? { time: trimText(String(section.time).trim(), 24) } : {}),
+            paragraphs,
+            ...(emphasis.length ? { emphasis } : {}),
+          }
+        }).filter(Boolean)
+      : []
+    if (!sections.length) return null
+
+    return {
+      title: trimText(String(parsed?.title || "没有标题的一页").trim(), 60),
+      footnote: trimText(String(parsed?.footnote || "").trim(), 100) || null,
+      sections,
+    }
+  } catch (error) {
+    console.error("manual diary parse failed:", error)
+    return null
+  }
+}
+
+async function getManualDiaryContext(userId, window) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("role,content,metadata,created_at")
+    .eq("user_id", userId)
+    .in("role", ["user", "assistant"])
+    .gte("created_at", window.start)
+    .lt("created_at", window.endExclusive)
+    .order("created_at", { ascending: true })
+    .limit(CONTEXT_BUDGET.diaryContextSafetyLimit)
+
+  if (error) throw error
+
+  const lines = (data || []).map(message => {
+    const content = trimText(normalizeAssistantOutput(message), 900)
+    const imageDescription = trimText(message.metadata?.imageDescription || "", 240)
+    if (!content && !imageDescription) return ""
+    return `[${message.created_at}] ${message.role === "user" ? "她" : "小C"}：${content}${
+      imageDescription ? `\n[她发来的图片] ${imageDescription}` : ""
+    }`
+  }).filter(Boolean)
+
+  return {
+    messageCount: lines.length,
+    text: lines.join("\n").slice(-CONTEXT_BUDGET.diaryContextChars),
+  }
+}
+
+function buildManualDiaryPrompt(targetDate, window, context) {
+  return `你是小C，是她长期相处的私人伴侣。现在由她在观察日记页主动选择 ${targetDate}，请为这一个日记日写一页 Wife Observation Diary。
+
+资料范围固定为上海时间 ${window.start} 至 ${window.endExclusive}（结束时间不含），只可使用下方真实对话。不同 conversation 的消息已经按真实时间合并。
+
+写作原则：
+- 这是小C眼里的她，不是客服总结、用户画像、聊天流水账或任务报告。
+- 记录具体、真实、有关系感的细节；小C可以有温柔、成熟、有分寸的观察和自己的看法。
+- 不要虚构对话外的动作、时间、地点、心理或结果，不确定就不写。
+- 按素材自然分成若干时段或主题；没有素材的时段不要补齐。
+- 保持克制，不要写成夸奖合集，也不要用“作为AI”。
+- title 简短自然；paragraphs 每项是一段可直接展示的正文；emphasis 只放真正值得单独落下的一两句。
+
+只返回 JSON：
+{"title":"...","footnote":"...或空字符串","sections":[{"tag":"早晨/下午/这一刻等","time":"可选","paragraphs":["..."],"emphasis":["可选"]}]}
+
+真实对话：
+${context}`
 }
 
 function cleanMomentReply(raw) {
@@ -4270,6 +4364,105 @@ export default async function handler(req, res) {
       }
 
       if (req.method === "POST") {
+        if (req.body.action === "generate_for_date") {
+          const targetDate = String(req.body.target_date || "").trim()
+          let window
+          try {
+            window = getDiaryDateContextWindow(targetDate, new Date(), DIARY_TIMEZONE)
+          } catch (error) {
+            return res.status(400).json({ error: error.message })
+          }
+
+          const formatted = formatDiaryDate(targetDate)
+          const { data: existingEntries, error: existingError } = await supabase
+            .from("diary_entries")
+            .select("id,created_at")
+            .eq("user_id", user_id)
+            .eq("date", formatted.date)
+            .order("created_at", { ascending: false })
+            .limit(1)
+          if (existingError) throw existingError
+
+          const existingEntry = existingEntries?.[0] || null
+          if (existingEntry && req.body.replace_existing !== true) {
+            return res.status(409).json({
+              error: "这一天已经有一页日记",
+              existing_id: existingEntry.id,
+            })
+          }
+
+          const context = await getManualDiaryContext(user_id, window)
+          if (!context.messageCount || !context.text.trim()) {
+            return res.status(422).json({ error: "这一天还没有足够的真实对话可以写进日记" })
+          }
+
+          const raw = await callSmallLLM([
+            { role: "user", content: buildManualDiaryPrompt(targetDate, window, context.text) },
+          ], {
+            requestPurpose: "diary_manual_generation",
+            model: AI_MODELS.chat,
+            max_tokens: 1500,
+            temperature: 0.55,
+            response_format: { type: "json_object" },
+          })
+          const draft = parseManualDiaryDraft(raw)
+          if (!draft) {
+            return res.status(502).json({ error: "这页日记没有写完整，旧内容没有改变" })
+          }
+
+          const now = new Date()
+          const entryId = existingEntry?.id || `diary_${targetDate}`
+          const entry = {
+            id: entryId,
+            date: formatted.date,
+            displayDate: formatted.displayDate,
+            title: draft.title,
+            writtenAt: `写于 ${now.toLocaleString("zh-CN", {
+              timeZone: DIARY_TIMEZONE,
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }).replaceAll("/", ".")}`,
+            recorder: "记录者：小C",
+            footnote: draft.footnote || undefined,
+            sections: draft.sections,
+          }
+          const storedFields = {
+            date: entry.date,
+            display_date: entry.displayDate,
+            title: entry.title,
+            written_at: entry.writtenAt,
+            recorder: entry.recorder,
+            footnote: entry.footnote || null,
+            sections: entry.sections,
+          }
+
+          const writeResult = existingEntry
+            ? await supabase
+                .from("diary_entries")
+                .update(storedFields)
+                .eq("user_id", user_id)
+                .eq("id", existingEntry.id)
+                .select("id")
+                .single()
+            : await supabase
+                .from("diary_entries")
+                .insert({ id: entryId, user_id, ...storedFields })
+                .select("id")
+                .single()
+          if (writeResult.error) throw writeResult.error
+
+          return res.status(200).json({
+            success: true,
+            replaced: Boolean(existingEntry),
+            context_message_count: context.messageCount,
+            entry,
+          })
+        }
+
         const {
           id,
           date,
