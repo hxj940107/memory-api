@@ -680,6 +680,47 @@ async function callSmallLLM(messages, options = {}) {
 }
 
 const DIARY_TIMEZONE = "Asia/Shanghai"
+const MANUAL_DIARY_RESPONSE_FORMAT = {
+  type: "json_schema",
+  json_schema: {
+    name: "manual_diary_entry",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", maxLength: 60 },
+        footnote: { type: "string", maxLength: 100 },
+        sections: {
+          type: "array",
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              tag: { type: "string", maxLength: 20 },
+              time: { type: "string", maxLength: 24 },
+              paragraphs: {
+                type: "array",
+                minItems: 1,
+                maxItems: 5,
+                items: { type: "string", maxLength: 120 },
+              },
+              emphasis: {
+                type: "array",
+                maxItems: 3,
+                items: { type: "string", maxLength: 220 },
+              },
+            },
+            required: ["tag", "time", "paragraphs", "emphasis"],
+          },
+        },
+      },
+      required: ["title", "footnote", "sections"],
+    },
+  },
+}
 
 function formatDiaryDate(targetDate) {
   const [year, month, day] = targetDate.split("-")
@@ -766,8 +807,7 @@ function buildManualDiaryPrompt(targetDate, window, context) {
 - 保持克制，不要写成夸奖合集，也不要用“作为AI”。
 - title 简短自然；paragraphs 每项是一段可直接展示的正文；emphasis 只放真正值得单独落下的一两句。
 
-只返回 JSON：
-{"title":"...","footnote":"...或空字符串","sections":[{"tag":"早晨/下午/这一刻等","time":"可选","paragraphs":["..."],"emphasis":["可选"]}]}
+只返回符合指定 schema 的 JSON。没有 footnote 或 time 时使用空字符串，没有强调句时使用空数组。
 
 真实对话：
 ${context}`
@@ -4404,7 +4444,8 @@ export default async function handler(req, res) {
             model: AI_MODELS.chat,
             max_tokens: 2600,
             temperature: 0.55,
-            response_format: { type: "json_object" },
+            response_format: MANUAL_DIARY_RESPONSE_FORMAT,
+            provider: { require_parameters: true },
           })
           const draft = parseManualDiaryDraft(raw)
           if (!draft) {
