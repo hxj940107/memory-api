@@ -695,9 +695,9 @@ function parseManualDiaryDraft(raw) {
     if (!match) return null
     const parsed = JSON.parse(match[0])
     const sections = Array.isArray(parsed?.sections)
-      ? parsed.sections.slice(0, 8).map(section => {
+      ? parsed.sections.slice(0, 5).map(section => {
           const paragraphs = Array.isArray(section?.paragraphs)
-            ? section.paragraphs.map(value => trimText(String(value || "").trim(), 300)).filter(Boolean).slice(0, 12)
+            ? section.paragraphs.map(value => trimText(String(value || "").trim(), 120)).filter(Boolean).slice(0, 5)
             : []
           const emphasis = Array.isArray(section?.emphasis)
             ? section.emphasis.map(value => trimText(String(value || "").trim(), 220)).filter(Boolean).slice(0, 3)
@@ -762,6 +762,7 @@ function buildManualDiaryPrompt(targetDate, window, context) {
 - 记录具体、真实、有关系感的细节；小C可以有温柔、成熟、有分寸的观察和自己的看法。
 - 不要虚构对话外的动作、时间、地点、心理或结果，不确定就不写。
 - 按素材自然分成若干时段或主题；没有素材的时段不要补齐。
+- 最多 5 个 sections，每个 section 最多 5 个 paragraphs，每个 paragraph 不超过 120 个中文字符。
 - 保持克制，不要写成夸奖合集，也不要用“作为AI”。
 - title 简短自然；paragraphs 每项是一段可直接展示的正文；emphasis 只放真正值得单独落下的一两句。
 
@@ -4401,7 +4402,7 @@ export default async function handler(req, res) {
           ], {
             requestPurpose: "diary_manual_generation",
             model: AI_MODELS.chat,
-            max_tokens: 1500,
+            max_tokens: 2600,
             temperature: 0.55,
             response_format: { type: "json_object" },
           })

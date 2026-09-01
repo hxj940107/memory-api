@@ -108,6 +108,9 @@ const SHANGHAI = "Asia/Shanghai"
   assert.match(memory, /\.gte\("created_at", window\.start\)/)
   assert.match(memory, /\.lt\("created_at", window\.endExclusive\)/)
   assert.match(memory, /requestPurpose: "diary_manual_generation"/)
+  assert.match(memory, /max_tokens: 2600/)
+  assert.match(memory, /parsed\.sections\.slice\(0, 5\)/)
+  assert.match(memory, /\.filter\(Boolean\)\.slice\(0, 5\)/)
   assert.match(memory, /existingEntry\s*\?\s*await supabase[\s\S]*?\.update\(storedFields\)/)
 }
 
