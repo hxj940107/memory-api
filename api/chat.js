@@ -1491,9 +1491,10 @@ async function saveEpisodicObservation({
   userId,
   content,
   category,
-  sourceMessageId,
+  provenance,
   sourceConversationId,
 }) {
+  const sourceMessageId = provenance?.source_message_id
   if (!sourceMessageId) return null
   const { data, error } = await supabase
     .from("memories")
@@ -1502,9 +1503,11 @@ async function saveEpisodicObservation({
       content,
       metadata: {
         type: "episodic",
-        source_role: "user",
+        source_role: provenance.source_role,
         source_message_id: sourceMessageId,
         source_conversation_id: sourceConversationId,
+        evidence_text: provenance.evidence_text,
+        evidence_type: provenance.evidence_type,
         category: category || null,
         consolidation: false,
       },
@@ -3855,6 +3858,19 @@ console.log("======================================\n")
       .reverse()
       .find(m => m.role === "user")
 
+    const allowedMemoryUserSources = [
+      ...(lastUserMessage?.id
+        ? [{
+            id: lastUserMessage.id,
+            role: "user",
+            content: lastUserMessage.content || "",
+          }]
+        : []),
+      ...(userMessageId
+        ? [{ id: userMessageId, role: "user", content: message }]
+        : []),
+    ]
+
     waitUntil((async () => {
       try {
         const judgeResult = (
@@ -3867,7 +3883,8 @@ console.log("======================================\n")
               message,
               {
                 previousContent: lastUserMessage?.content || "",
-                assistantContext: reply
+                assistantContext: reply,
+                allowedUserSources: allowedMemoryUserSources,
               }
             )
           : {
@@ -3897,7 +3914,7 @@ console.log("======================================\n")
                   userId: user_id,
                   content: judgeResult.content,
                   category: judgeResult.category,
-                  sourceMessageId: userMessageId,
+                  provenance: judgeResult.provenance,
                   sourceConversationId: cid,
                 })
 
@@ -3928,6 +3945,12 @@ console.log("======================================\n")
           } catch (err) {
             console.error("hold-hook failed:", err)
           }
+        } else if (judgeResult.reason) {
+          console.warn("MEMORY SKIPPED:", {
+            userMessageId,
+            conversationId: cid,
+            reason: judgeResult.reason,
+          })
         }
       } catch (err) {
         console.error("memory judge task failed:", err)
