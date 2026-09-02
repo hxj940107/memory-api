@@ -1206,6 +1206,33 @@ export default function ChatScreen() {
     pickFile();
   };
 
+  const openConversationMenu = () => {
+    const currentConversationId = conversationIdRef.current;
+    if (!currentConversationId) return;
+
+    const openSearch = () => {
+      router.push({
+        pathname: "/chat-search",
+        params: { conversationId: currentConversationId },
+      } as never);
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["取消", "搜索聊天记录"],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) openSearch();
+        },
+      );
+      return;
+    }
+
+    openSearch();
+  };
+
   const restoreConversation = async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoadingHistory(true);
@@ -1941,6 +1968,16 @@ export default function ChatScreen() {
           >
             <Text style={styles.menuText}>☰</Text>
           </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="更多聊天功能"
+            hitSlop={8}
+            style={styles.headerMoreButton}
+            onPress={openConversationMenu}
+          >
+            <Text style={styles.headerMoreText}>···</Text>
+          </Pressable>
         </View>
 
         <SharedContextBar
@@ -2603,6 +2640,24 @@ const styles = StyleSheet.create({
 
   menuText: {
     fontSize: 26,
+    color: XiaoCColors.icon,
+  },
+
+  headerMoreButton: {
+    position: "absolute",
+    right: 12,
+    bottom: 0,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  headerMoreText: {
+    marginTop: -7,
+    fontSize: 18,
+    fontWeight: "600",
+    letterSpacing: 1,
     color: XiaoCColors.icon,
   },
 
