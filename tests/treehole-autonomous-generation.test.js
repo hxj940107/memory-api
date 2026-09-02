@@ -15,11 +15,15 @@ test("autonomous treehole checks for new shared-life material before calling the
   assert.match(source, /generateAndSaveTreeholeUpdates\(task\.user_id, "autonomous", context\)/)
 })
 
-test("a paid autonomous treehole generation must produce visible entries", () => {
+test("a paid treehole generation may honestly decline instead of forcing an entry", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
 
   assert.match(source, /是她长期相处的恋人和伴侣，不是生活助手、朋友或旁观记录者/)
-  assert.match(source, /至少返回 1 条 draft；不要返回空 drafts/)
+  assert.match(source, /生成 0 到 3 条/)
+  assert.match(source, /手动催更也不构成必须写一条的理由/)
+  assert.match(source, /返回 \{"drafts":\[\]\}/)
+  assert.match(source, /treehole_generation_result: "no_worthy_draft"/)
+  assert.match(source, /treehole_generated_entry_count: 0/)
   assert.match(source, /treehole_generation_returned_no_visible_draft/)
   assert.match(source, /treehole_generation_result: "visible_entries_written"/)
   assert.match(source, /treehole_generation_retry_suppressed: true/)
@@ -36,4 +40,16 @@ test("treehole narration centers XiaoC's private reaction instead of event summa
   assert.match(source, /content 为 1 到 8 行短句/)
   assert.doesNotMatch(source, /content 为 3 到 8 行短句/)
   assert.doesNotMatch(source, /"tag":"逻辑研究"/)
+})
+
+test("treehole context preserves message identity and rejects ungrounded speaker attribution", () => {
+  const source = fs.readFileSync("api/memory.js", "utf8")
+
+  assert.match(source, /\.select\("id,role,content,metadata,created_at"\)/)
+  assert.match(source, /\[message_id=\$\{String\(message\.id \|\| ""\)\}\]/)
+  assert.match(source, /\[role=\$\{message\.role\}\]/)
+  assert.match(source, /source_evidence/)
+  assert.match(source, /validateTreeholeSourceEvidence/)
+  assert.match(source, /treehole_rejected_provenance_count/)
+  assert.doesNotMatch(source, /\.join\("\\n"\)\s*\.slice\(-TREEHOLE_AUTONOMOUS_POLICY\.recentChatChars\)/)
 })

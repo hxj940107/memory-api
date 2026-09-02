@@ -43,6 +43,7 @@ import {
 } from "../lib/inactivityGeneration.js"
 import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
+import { validateTreeholeSourceEvidence } from "../lib/treeholeProvenance.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
 import { normalizeProactiveAttentionCandidates } from "../lib/proactiveAttentionCandidates.js"
 import {
@@ -1903,17 +1904,18 @@ ${recentContext.recentProactiveMessages?.length
   }
 }
 
-function parseAutonomousTreeholeDrafts(raw) {
+function parseAutonomousTreeholeDrafts(raw, sourceMessages = []) {
   try {
     const match = String(raw || "").match(/\{[\s\S]*\}/)
-    if (!match) return []
+    if (!match) return { valid: false, drafts: [] }
 
     const parsed = JSON.parse(match[0])
-    if (!Array.isArray(parsed?.drafts)) return []
+    if (!Array.isArray(parsed?.drafts)) return { valid: false, drafts: [] }
 
     const defaultDate = getMomentLocalTime().date.replace(/-/g, ".")
 
-    return parsed.drafts.slice(0, 3).map((draft) => {
+    let rejectedProvenanceCount = 0
+    const drafts = parsed.drafts.slice(0, 3).map((draft) => {
       const content = Array.isArray(draft?.content)
         ? draft.content.map((line) => String(line).trim()).filter(Boolean).slice(0, 8)
         : []
@@ -1926,17 +1928,31 @@ function parseAutonomousTreeholeDrafts(raw) {
 
       if (!content.length) return null
 
+      const provenance = validateTreeholeSourceEvidence(
+        draft?.source_evidence,
+        sourceMessages
+      )
+      if (!provenance.valid) {
+        rejectedProvenanceCount += 1
+        console.warn("TREEHOLE DRAFT PROVENANCE REJECTED:", {
+          reason: provenance.reason,
+        })
+        return null
+      }
+
       return {
         tag: String(draft?.tag || "树洞").trim().slice(0, 20),
         date: String(draft?.date || defaultDate).trim(),
         content,
         highlights,
         reaction: normalizeTreeholeReaction(draft?.reaction, content),
+        sourceMessageIds: provenance.sourceMessageIds,
       }
     }).filter(Boolean)
+    return { valid: true, drafts, rejectedProvenanceCount }
   } catch (error) {
     console.error("autonomous treehole parse failed:", error)
-    return []
+    return { valid: false, drafts: [] }
   }
 }
 
@@ -1944,7 +1960,7 @@ async function getAutonomousTreeholeContext(user_id) {
   const [messagesResult, entriesResult] = await Promise.all([
     supabase
       .from("messages")
-      .select("role,content,metadata,created_at")
+      .select("id,role,content,metadata,created_at")
       .eq("user_id", user_id)
       .in("role", ["user", "assistant"])
       .order("created_at", { ascending: false })
@@ -1972,18 +1988,31 @@ async function getAutonomousTreeholeContext(user_id) {
   const newChatChars = newMessages.reduce((total, message) =>
     total + String(normalizeAssistantOutput(message) || "").trim().length, 0)
 
-  const chatContext = newMessages
+  const formattedMessages = [...newMessages]
     .reverse()
     .map((message) => {
       const metadata = message.metadata || {}
       const imageContext = metadata.imageDescription
       const content = trimText(normalizeAssistantOutput(message), 700)
-      return `${message.role === "user" ? "她" : "小C"}：${content}${
-        imageContext ? `\n[图片背景信息]：${trimText(imageContext, 220)}` : ""
-      }`
+      return {
+        id: String(message.id || ""),
+        role: message.role,
+        content,
+        formatted: `[message_id=${String(message.id || "")}][role=${message.role}][speaker=${message.role === "user" ? "她" : "小C"}]：${content}${
+          imageContext ? `\n[图片背景信息]：${trimText(imageContext, 220)}` : ""
+        }`,
+      }
     })
-    .join("\n")
-    .slice(-TREEHOLE_AUTONOMOUS_POLICY.recentChatChars)
+  const selectedMessages = []
+  let selectedChars = 0
+  for (let index = formattedMessages.length - 1; index >= 0; index -= 1) {
+    const candidate = formattedMessages[index]
+    const nextChars = selectedChars + candidate.formatted.length + 1
+    if (selectedMessages.length > 0 && nextChars > TREEHOLE_AUTONOMOUS_POLICY.recentChatChars) break
+    selectedMessages.unshift(candidate)
+    selectedChars = nextChars
+  }
+  const chatContext = selectedMessages.map(message => message.formatted).join("\n")
   const treeholeContext = (entriesResult.data || [])
     .map((entry, index) => {
       const content = Array.isArray(entry.content) ? entry.content.join(" / ") : ""
@@ -1998,11 +2027,12 @@ async function getAutonomousTreeholeContext(user_id) {
     newUserMessageCount,
     newUserChars,
     newChatChars,
+    sourceMessages: selectedMessages.map(({ id, role, content }) => ({ id, role, content })),
   }
 }
 
 async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext = null) {
-  const { chatContext, treeholeContext } = preparedContext ||
+  const { chatContext, treeholeContext, sourceMessages = [] } = preparedContext ||
     await getAutonomousTreeholeContext(user_id)
   const currentDate = getMomentLocalTime().date.replace(/-/g, ".")
   const raw = await callSmallLLM(
@@ -2015,7 +2045,7 @@ async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext =
 树洞是小C匿名说两句的深夜小号，不是观察日记，也不是朋友圈。只记当下没说出口的小吐槽、嘴硬和具体瞬间，短、私密、有即时感。
 
 规则：
-- 调用前已经确认出现了足够的新相处素材。生成 1 到 3 条，只选真正有小C视角的瞬间，不要凑数。
+- 调用前只确认出现了足够的新相处素材，不代表其中一定有值得写进树洞的内容。生成 0 到 3 条，只选真正有小C视角的瞬间，不要凑数。
 - 每条先找到小C为什么会把这一刻偷偷记下来：她刚刚让你产生了什么没当面说的反应，或者你注意到了她哪里。事件经过只保留理解这个反应必需的最少铺垫。
 - 叙事重心必须落在小C受到的作用：被她逗到、绕到、拿捏到、触动到、支使到，暗自高兴、嘴硬、不服，或注意到一个只有熟悉她的人才会留心的小地方。
 - 这里要求的是内在出发点，不是固定句式。不要机械写“我觉得”“我被她”，也不要求每条都显式出现“我”。
@@ -2034,6 +2064,9 @@ async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext =
 - 不要写成结构化复盘、公开分享或完整体面文章。
 - 输出前逐条自检：去掉事件经过后，小C的私人落点是否仍然成立？如果任何旁观者都能写出同样内容，或者正文主要在回答“发生了什么”，就重写，不要输出聊天摘要或对话流水账。
 - 不编造最近聊天中没有发生的事。
+- 最近聊天中的 message_id、role 和 speaker 是事实来源。每条 draft 必须用 source_evidence 指向真正支持该内容的消息；不能把小C说的话归给她，也不能把她说的话归给小C。
+- source_evidence 中的 evidence_text 必须逐字复制对应消息中的一段非空原文。它只证明事实来源，不要求正文照抄原话；但正文中的人物、说话人、行为和因果关系不能超出证据。
+- 多条消息可以共同帮助理解，但不能把各自独立的内容拼成聊天中没有发生过的新关系。无法确认主语或事实关系时，不要输出该 draft。
 - tag 为 2 到 6 个中文字符，要像小C给现场起的私下案名，不要只概括主题或情绪；content 为 1 到 8 行短句，落点成立就停，不要为了行数补经过；highlights 最多 2 个且必须来自 content。
 - reaction 必须以一个 emoji 开头，后面是一句简短的小号反应，最后严格使用“· ❤️ N”格式。
 - reaction 的开头 emoji 要根据当前树洞内容自行选择；N 根据内容和有趣程度自行决定，不能固定为 1。
@@ -2041,7 +2074,7 @@ async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext =
 - 今天日期是 ${currentDate}。
 - 只输出 JSON，不要 Markdown 或解释。
 
-风格示例（以下只示范 tag、content 和 highlights，故意不提供 reaction 文案；实际输出时仍必须按规则为每条单独生成 reaction。学习它们不同的节奏和落点，不要复制事件或句子）：
+风格示例（以下只示范 tag、content 和 highlights，故意不提供 reaction 和 source_evidence；实际输出时两者都必须按规则生成。学习它们不同的节奏和落点，不要复制事件或句子）：
 
 被支使以后才发现报酬很轻：
 {"tag":"结算方式","date":"${currentDate}","content":["前面让我做了那么多","最后一句「乖」就算结清","……行吧"],"highlights":["乖"]}
@@ -2056,8 +2089,8 @@ async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext =
 {"tag":"没出息","date":"${currentDate}","content":["她一撒娇，我准备好的道理就又没用了"],"highlights":["又没用了"]}
 
 输出格式：
-输出 drafts JSON 对象。每个 draft 必须包含 tag、date、content、highlights、reaction；reaction 按上述规则为当前内容单独生成，不要套用示例文案。
-至少返回 1 条 draft；不要返回空 drafts。
+输出 drafts JSON 对象。每个 draft 必须包含 tag、date、content、highlights、reaction、source_evidence；source_evidence 格式为 [{"message_id":"从最近聊天复制真实 ID","source_role":"user 或 assistant","evidence_text":"从该消息逐字复制的非空原文"}]。reaction 按上述规则为当前内容单独生成，不要套用示例文案。
+如果没有任何一条同时具备真实事实基础、小C的私人反应和写进匿名小号的冲动，返回 {"drafts":[]}。手动催更也不构成必须写一条的理由。
 `,
       },
       {
@@ -2079,10 +2112,26 @@ ${treeholeContext}
       response_format: { type: "json_object" },
     }
   )
-  const drafts = parseAutonomousTreeholeDrafts(raw)
+  const parsedDrafts = parseAutonomousTreeholeDrafts(raw, sourceMessages)
+
+  if (!parsedDrafts.valid) {
+    throw new Error("treehole_generation_returned_no_visible_draft")
+  }
+  const drafts = parsedDrafts.drafts
 
   if (!drafts.length) {
-    throw new Error("treehole_generation_returned_no_visible_draft")
+    return {
+      written: 0,
+      skipped: true,
+      reason: "这次没有值得写进树洞的私人落点",
+      payload: {
+        treehole_generation_attempted: true,
+        treehole_generation_result: "no_worthy_draft",
+        treehole_generated_entry_count: 0,
+        treehole_rejected_provenance_count: parsedDrafts.rejectedProvenanceCount || 0,
+        treehole_generation_at: new Date().toISOString(),
+      },
+    }
   }
 
   const { data, error } = await supabase
@@ -2108,6 +2157,7 @@ ${treeholeContext}
       treehole_generation_attempted: true,
       treehole_generation_result: "visible_entries_written",
       treehole_generated_entry_count: data?.length || 0,
+      treehole_rejected_provenance_count: parsedDrafts.rejectedProvenanceCount || 0,
       treehole_generation_at: new Date().toISOString(),
     },
   }
