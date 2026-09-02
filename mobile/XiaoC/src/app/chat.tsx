@@ -792,6 +792,8 @@ export default function ChatScreen() {
   } | null>(null);
   const skipNextMessageAutoScrollRef = useRef(false);
   const historyLocationModeRef = useRef(false);
+  const returnToLatestInFlightRef = useRef(false);
+  const pendingReturnToLatestScrollRef = useRef(false);
   const locationHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locationReadyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const locationHighlightGenerationRef = useRef(0);
@@ -1307,6 +1309,47 @@ export default function ChatScreen() {
       pathname: "/chat-search",
       params: { conversationId: currentConversationId },
     } as never);
+  };
+
+  const returnToLatestMessages = async () => {
+    const id = conversationIdRef.current;
+    if (!id || returnToLatestInFlightRef.current) return;
+
+    returnToLatestInFlightRef.current = true;
+    endLocationHighlight();
+
+    try {
+      const data = await apiJson<HistoryItem[]>("/api/history", {
+        query: {
+          user_id: APP_USER_ID,
+          conversation_id: id,
+          limit: HISTORY_PAGE_SIZE,
+        },
+      });
+      if (conversationIdRef.current !== id) return;
+
+      const restoredMessages = await restoreHistoryItems(data);
+      if (conversationIdRef.current !== id) return;
+
+      prependAnchorRef.current = null;
+      skipNextMessageAutoScrollRef.current = true;
+      pendingReturnToLatestScrollRef.current = true;
+      historyLocationModeRef.current = false;
+      setViewingLocatedHistory(false);
+      setLocatedMessageId(null);
+      setHasOlderHistory(data.length === HISTORY_PAGE_SIZE);
+      latestCloudMessageIdRef.current = data.length
+        ? String(data[data.length - 1].id || "") || null
+        : null;
+      setMessages((current) => mergeCloudMessages(current, restoredMessages));
+
+      // If the latest page was already present, content size may not change.
+      requestAnimationFrame(() => scrollToLatestMessage(true));
+    } catch (error) {
+      console.log("Return to latest messages failed:", error);
+    } finally {
+      returnToLatestInFlightRef.current = false;
+    }
   };
 
   const restoreConversation = async ({ silent = false } = {}) => {
@@ -2135,6 +2178,10 @@ export default function ChatScreen() {
                 animated: false,
               });
             }
+            if (pendingReturnToLatestScrollRef.current) {
+              pendingReturnToLatestScrollRef.current = false;
+              scrollToLatestMessage(true);
+            }
           }}
         >
           {loadingHistory ? (
@@ -2424,12 +2471,7 @@ export default function ChatScreen() {
               styles.historyLatestButton,
               pressed && styles.historyLatestButtonPressed,
             ]}
-            onPress={() => {
-              router.replace({
-                pathname: "/chat",
-                params: { conversationId },
-              } as never);
-            }}
+            onPress={returnToLatestMessages}
           >
             <Text style={styles.historyLatestButtonText}>回到最新消息 ↓</Text>
           </Pressable>

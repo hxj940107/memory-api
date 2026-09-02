@@ -47,6 +47,21 @@ test("a result opens real messages on both sides of the target", () => {
   assert.match(chatSource, /if \(!id \|\| historyLocationModeRef\.current/)
 })
 
+test("returning from located history smoothly scrolls the current chat to the latest message", () => {
+  const returnSection = chatSource.slice(
+    chatSource.indexOf("const returnToLatestMessages"),
+    chatSource.indexOf("const restoreConversation"),
+  )
+
+  assert.match(returnSection, /limit: HISTORY_PAGE_SIZE/)
+  assert.match(returnSection, /mergeCloudMessages\(current, restoredMessages\)/)
+  assert.match(returnSection, /historyLocationModeRef\.current = false/)
+  assert.match(returnSection, /pendingReturnToLatestScrollRef\.current = true/)
+  assert.match(returnSection, /scrollToLatestMessage\(true\)/)
+  assert.match(chatSource, /onPress=\{returnToLatestMessages\}/)
+  assert.doesNotMatch(returnSection, /router\.replace/)
+})
+
 test("the chat header exposes the iOS-style search entry without changing page size", () => {
   const menuSection = chatSource.slice(
     chatSource.indexOf("const openConversationMenu"),
