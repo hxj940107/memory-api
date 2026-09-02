@@ -118,7 +118,7 @@ test("current explicit nap intent remains valid current-state evidence", () => {
   assert.match(currentUserMessage, /我现在要补觉/)
 })
 
-test("the inactivity prompt uses timed context and temporal validation without changing scheduling", () => {
+test("the inactivity prompt uses timed context and treats silence continuation as a fresh judgment", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
 
   assert.match(source, /\.select\("role,content,created_at,metadata"\)/)
@@ -126,6 +126,8 @@ test("the inactivity prompt uses timed context and temporal validation without c
   assert.match(source, /【事件阶段与时间定位】/)
   assert.match(source, /isTemporallyUnsupportedReachOut\(message, recentContext\.messages\)/)
   assert.match(source, /validateProactiveHistoricalClaims/)
-  assert.match(source, /同一次沉默阶段不再连续追发/)
+  assert.match(source, /沉默仍在继续，不等于沉默前的话题仍然开放/)
+  assert.match(source, /每次都从当前时间和关系中重新形成联系动机/)
+  assert.match(source, /同一沉默阶段联系序号/)
   assert.match(source, /isProactiveQuietHours\(now\)/)
 })

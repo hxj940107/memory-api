@@ -7,6 +7,10 @@ import {
   normalizeInactivityReachOutMode,
 } from "../lib/aiConfig.js"
 import {
+  canContinueInactivityChain,
+  getInactivityAttemptIndex,
+  getInactivityAttemptLimit,
+  getNextInactivityDelayMinutes,
   hasUserRepliedToInactivityTask,
 } from "../lib/inactivityReachOut.js"
 
@@ -57,6 +61,9 @@ test("inactivity generation varies natural companion approaches without performi
   assert.match(memorySource, /一条最多一个称呼/)
   assert.match(memorySource, /最近实际发送过的主动消息/)
   assert.match(memorySource, /recentProactiveMessages/)
+  assert.match(memorySource, /某人/)
+  assert.match(memorySource, /联系次数增加不要求语气固定升级/)
+  assert.match(memorySource, /已经自然结束或完整回应的话题不会因为经过一段时间重新变成待续内容/)
   assert.doesNotMatch(memorySource, /isBareInactivityReachOut\(message\)/)
   assert.doesNotMatch(memorySource, /getNaturalInactivityFallback\(\)/)
   assert.match(memorySource, /最近聊天是你和她刚刚共同经历的生活/)
@@ -70,11 +77,21 @@ test("inactivity generation varies natural companion approaches without performi
   assert.doesNotMatch(memorySource, /return "突然有点想你了，想来找你待一会儿"/)
 })
 
-test("each silence episode sends at most once and has no daily quota", () => {
+test("silence continuation has bounded mode-aware attempts and no daily quota", () => {
   const memorySource = readFileSync("api/memory.js", "utf8")
 
-  assert.match(memorySource, /同一次沉默阶段不再连续追发/)
-  assert.doesNotMatch(memorySource, /async function enqueueNextInactivityReachOutTask/)
+  assert.equal(getInactivityAttemptLimit("frequent"), 3)
+  assert.equal(getInactivityAttemptLimit("normal"), 2)
+  assert.equal(getInactivityAttemptLimit("relaxed"), 1)
+  assert.equal(getInactivityAttemptLimit("off"), 0)
+  assert.equal(getInactivityAttemptIndex({ payload: {} }), 1)
+  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 1 } }, "frequent"), true)
+  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 3 } }, "frequent"), false)
+  assert.equal(getNextInactivityDelayMinutes(2, () => 0), 60)
+  assert.equal(getNextInactivityDelayMinutes(2, () => 0.999999), 120)
+  assert.equal(getNextInactivityDelayMinutes(3, () => 0), 120)
+  assert.equal(getNextInactivityDelayMinutes(3, () => 0.999999), 180)
+  assert.match(memorySource, /async function enqueueNextInactivityReachOutTask/)
   assert.doesNotMatch(memorySource, /今天主动靠近次数已达上限/)
 })
 
@@ -95,6 +112,38 @@ test("a newer user message closes the previous silence episode", () => {
   )
 })
 
+test("a continuation keeps the silence root so any later user reply cancels it", () => {
+  const task = {
+    source_type: "proactive_message",
+    source_id: "first-proactive-message",
+    payload: {
+      attempt_index: 2,
+      silence_root_user_message_id: "silence-root-user-message",
+      user_message_id: "silence-root-user-message",
+      continuation_of_task_id: "first-inactivity-task",
+      previous_proactive_message_ids: ["first-proactive-message"],
+    },
+  }
+
+  assert.equal(
+    hasUserRepliedToInactivityTask(task, { id: "silence-root-user-message" }),
+    false,
+  )
+  assert.equal(
+    hasUserRepliedToInactivityTask(task, { id: "user-returned" }),
+    true,
+  )
+})
+
+test("event follow-up substitutes for one inactivity contact without double advancing on retry", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(memorySource, /async function consumePendingInactivityWithEventMessage/)
+  assert.match(memorySource, /本轮由现实事件主动回访完成联系，避免同一时段重复发送/)
+  assert.match(memorySource, /previouslyCountedMessageIds\.includes\(String\(messageId\)\)/)
+  assert.match(memorySource, /await consumePendingInactivityWithEventMessage\(/)
+})
+
 test("inactivity task identities preserve history within one conversation", () => {
   const chatSource = readFileSync("api/chat.js", "utf8")
   const memorySource = readFileSync("api/memory.js", "utf8")
@@ -103,7 +152,7 @@ test("inactivity task identities preserve history within one conversation", () =
     chatSource,
     /type: "inactivity_reach_out",\s+source_type: "message",\s+source_id: user_message_id/,
   )
-  assert.doesNotMatch(memorySource, /source_type: "proactive_message",\s+source_id: result\.messageId/)
+  assert.match(memorySource, /source_type: "proactive_message"/)
   assert.doesNotMatch(
     chatSource,
     /type: "inactivity_reach_out",\s+source_type: "conversation",\s+source_id: conversation_id/,

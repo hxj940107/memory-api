@@ -25,6 +25,10 @@ import {
   truncateDiarySentence,
 } from "../lib/diaryWriting.js"
 import {
+  canContinueInactivityChain,
+  getInactivityAttemptIndex,
+  getInactivityAttemptLimit,
+  getNextInactivityDelayMinutes,
   hasUserRepliedToInactivityTask,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
@@ -1677,6 +1681,7 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
   const now = new Date()
   const localTime = getMomentLocalTime(now)
   const timeContext = getInactivityTimeContext(now)
+  const attemptIndex = getInactivityAttemptIndex(task)
   const contextMessages = recentContext.messages.length
     ? formatTimedInactivityMessages(recentContext.messages, trimText)
     : formatTimedInactivityMessages(
@@ -1751,6 +1756,13 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 称呼不能只是生硬问句或裸情绪前附加的标签，例如“老婆，你在哪”“宝宝，我想你了”。
 - 问题不是默认结构。多数时候可以只靠近、说一句或留在她身边，不要求她立即回答。
 
+【同一沉默阶段的连续性】
+- 当前联系序号只是已经发生过几次主动联系的事实，不规定语气、情绪、称呼或表达方式。
+- 她没有回复不自动表示拒绝、冷落、异常或任何新的生活状态。
+- 沉默仍在继续，不等于沉默前的话题仍然开放；已经自然结束或完整回应的话题不会因为经过一段时间重新变成待续内容。
+- 每次都从当前时间和关系中重新形成联系动机。此前主动消息是你自己已经说过的话，不能换一种句式重复其内容、问题、动机或结构。
+- 联系次数增加不要求语气固定升级，也不要求必须发送。是否联系、是否引用旧话题以及最终表达继续由你独立判断。
+
 要求：
 - 只输出一个 JSON 对象，不要代码块，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
@@ -1803,6 +1815,8 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 当前时段：${timeContext.label}
 时段要求：${timeContext.guidance}
 最近对话状态：${recentContext.state === "conversation_end" ? "已明确结束，需要生成新的主动意图" : "没有明确结束，但也不要机械续接上一句话"}
+同一沉默阶段联系序号：${attemptIndex}
+沉默起点消息：${payload.silence_root_user_message_id || payload.user_message_id || task.source_id || "未知"}
 
 最近聊天上下文：
 ${contextMessages}
@@ -1854,6 +1868,7 @@ ${recentContext.recentProactiveMessages?.length
       content: null,
       skipped: true,
       diagnostics: {
+        attempt_index: attemptIndex,
         generated_content_accepted: false,
         fallback_applied: false,
         fallback_reason: null,
@@ -1872,6 +1887,7 @@ ${recentContext.recentProactiveMessages?.length
   return {
     content: message,
     diagnostics: {
+      attempt_index: attemptIndex,
       generated_content_accepted: true,
       fallback_applied: false,
       fallback_reason: null,
@@ -2176,8 +2192,15 @@ async function validateInactivityReachOutTask(task) {
     return { allowed: false, reason: "用户已关闭主动联系" }
   }
 
-  if (task.source_type === "proactive_message" || payload.continuation_of_task_id) {
-    return { allowed: false, reason: "同一次沉默阶段不再连续追发" }
+  const attemptIndex = getInactivityAttemptIndex(task)
+  if (attemptIndex > getInactivityAttemptLimit(reachOutMode)) {
+    return { allowed: false, reason: "当前主动联系频率不允许继续本次沉默阶段" }
+  }
+  if (
+    attemptIndex > 1
+    && (!payload.continuation_of_task_id || !payload.silence_root_user_message_id)
+  ) {
+    return { allowed: false, reason: "连续主动联系缺少沉默阶段来源" }
   }
 
   const { data: latestUserMessage, error: latestUserError } = await supabase
@@ -2247,6 +2270,124 @@ async function getProactiveMessageCooldown(task) {
     ).toISOString(),
     reason: "刚刚已经主动联系过，避免连续发送主动消息",
   }
+}
+
+async function getCurrentInactivityReachOutMode(userId) {
+  const { data, error } = await supabase
+    .from("user_state")
+    .select("inactivity_reach_out_mode")
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error && error.code !== "42703") throw error
+  return error?.code === "42703"
+    ? DEFAULT_INACTIVITY_REACH_OUT_MODE
+    : normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode)
+}
+
+async function enqueueNextInactivityReachOutTask({
+  task,
+  messageId,
+  conversationId,
+}) {
+  const mode = await getCurrentInactivityReachOutMode(task.user_id)
+  if (!canContinueInactivityChain(task, mode)) return null
+
+  const currentAttempt = getInactivityAttemptIndex(task)
+  const nextAttempt = currentAttempt + 1
+  const delayMinutes = getNextInactivityDelayMinutes(nextAttempt)
+  if (!delayMinutes) return null
+
+  const scheduledAt = new Date().toISOString()
+  const rawDueAt = new Date(Date.now() + delayMinutes * 60 * 1000)
+  const dueAt = isProactiveQuietHours(rawDueAt)
+    ? getNextProactiveMorning(rawDueAt)
+    : rawDueAt.toISOString()
+  const previousMessageIds = Array.from(new Set([
+    ...(task.payload?.previous_proactive_message_ids || []).map(String),
+    String(messageId),
+  ]))
+  const rootUserMessageId = String(
+    task.payload?.silence_root_user_message_id
+    || task.payload?.user_message_id
+    || task.source_id
+    || ""
+  )
+  if (!rootUserMessageId) return null
+
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert({
+      user_id: task.user_id,
+      type: "inactivity_reach_out",
+      source_type: "proactive_message",
+      source_id: String(messageId),
+      status: "pending",
+      due_at: dueAt,
+      conversation_id: conversationId || task.conversation_id,
+      reason: "同一段沉默仍在继续，小C稍后重新判断是否自然靠近。",
+      payload: {
+        ...(task.payload || {}),
+        scheduled_at: scheduledAt,
+        reach_out_mode: mode,
+        attempt_index: nextAttempt,
+        silence_root_user_message_id: rootUserMessageId,
+        user_message_id: rootUserMessageId,
+        continuation_of_task_id: task.id,
+        previous_proactive_message_ids: previousMessageIds,
+      },
+      completed_at: null,
+      message_id: null,
+      last_error: null,
+      updated_at: scheduledAt,
+    }, { onConflict: "user_id,type,source_type,source_id" })
+    .select("id,due_at,status,payload")
+    .single()
+  if (error) throw error
+  return data
+}
+
+async function consumePendingInactivityWithEventMessage({
+  eventTask,
+  messageId,
+  conversationId,
+}) {
+  const { data: pending, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,user_id,conversation_id,type,source_type,source_id,status,due_at,payload,created_at")
+    .eq("user_id", eventTask.user_id)
+    .eq("type", "inactivity_reach_out")
+    .eq("status", "pending")
+    .order("due_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  if (!pending) return null
+
+  const previouslyCountedMessageIds = Array.isArray(pending.payload?.previous_proactive_message_ids)
+    ? pending.payload.previous_proactive_message_ids.map(String)
+    : []
+  if (previouslyCountedMessageIds.includes(String(messageId))) return null
+
+  const consumedAt = new Date().toISOString()
+  const { data: consumed, error: consumeError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .update({
+      status: "skipped",
+      last_error: "本轮由现实事件主动回访完成联系，避免同一时段重复发送",
+      updated_at: consumedAt,
+    })
+    .eq("id", pending.id)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle()
+  if (consumeError) throw consumeError
+  if (!consumed) return null
+
+  return enqueueNextInactivityReachOutTask({
+    task: pending,
+    messageId,
+    conversationId,
+  })
 }
 
 async function getLastConversationId(user_id) {
@@ -3019,6 +3160,11 @@ async function executeProactiveAttentionWakeup(task) {
       diagnostics: recoveredDiagnostics,
       sentAt: existingMessage.created_at || evaluatedAt,
     })
+    await consumePendingInactivityWithEventMessage({
+      eventTask: task,
+      messageId: existingMessage.id,
+      conversationId: existingMessage.conversation_id || task.conversation_id,
+    })
     return {
       messageId: existingMessage.id,
       conversationId: task.conversation_id,
@@ -3159,6 +3305,11 @@ async function executeProactiveAttentionWakeup(task) {
       diagnostics: completedDiagnostics,
       sentAt,
     })
+    await consumePendingInactivityWithEventMessage({
+      eventTask: task,
+      messageId,
+      conversationId: task.conversation_id,
+    })
   } catch (error) {
     error.proactiveAttentionSendDiagnostics = {
       ...claimedDiagnostics,
@@ -3245,6 +3396,13 @@ async function executeProactiveTask(task) {
       ? { inactivityGeneration: generation.diagnostics }
       : {},
   })
+  const nextInactivityTask = task.type === "inactivity_reach_out"
+    ? await enqueueNextInactivityReachOutTask({
+        task,
+        messageId,
+        conversationId,
+      })
+    : null
 
   return {
     messageId,
@@ -3254,6 +3412,8 @@ async function executeProactiveTask(task) {
       payload: {
         ...(task.payload || {}),
         inactivity_generation: generation.diagnostics,
+        continuation_task_id: nextInactivityTask?.id || null,
+        continuation_due_at: nextInactivityTask?.due_at || null,
       },
     } : {}),
   }
