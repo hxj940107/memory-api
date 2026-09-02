@@ -178,6 +178,7 @@ export default function ChatSearchScreen() {
       params: {
         conversationId,
         targetMessageId: result.id,
+        searchQuery: normalizedQuery,
       },
     } as never);
   };

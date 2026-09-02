@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Platform,
   Pressable,
@@ -22,9 +22,52 @@ export { hasBlockMarkdown };
 
 type MessageMarkdownVariant = "chat" | "detail";
 
-export function InlineMarkdown({ text }: { text: string }) {
+function HighlightedInlineText({
+  text,
+  highlight,
+}: {
+  text: string;
+  highlight?: string;
+}) {
+  const query = String(highlight || "").trim();
+  if (!query) return text;
+
+  const lowerText = text.toLocaleLowerCase();
+  const lowerQuery = query.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = lowerText.indexOf(lowerQuery, cursor);
+
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
+    parts.push(
+      <Text key={`match_${matchIndex}`} style={styles.searchMatch}>
+        {text.slice(matchIndex, matchIndex + query.length)}
+      </Text>,
+    );
+    cursor = matchIndex + query.length;
+    matchIndex = lowerText.indexOf(lowerQuery, cursor);
+  }
+
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
+
+export function InlineMarkdown({
+  text,
+  highlight,
+}: {
+  text: string;
+  highlight?: string;
+}) {
   return parseInlineMarkdown(text).map((token, index) => {
-    if (token.type === "text") return token.text;
+    if (token.type === "text") {
+      return (
+        <Text key={`text_${index}`}>
+          <HighlightedInlineText text={token.text} highlight={highlight} />
+        </Text>
+      );
+    }
 
     return (
       <Text
@@ -37,7 +80,7 @@ export function InlineMarkdown({ text }: { text: string }) {
               : styles.inlineCode
         }
       >
-        {token.text}
+        <HighlightedInlineText text={token.text} highlight={highlight} />
       </Text>
     );
   });
@@ -94,9 +137,11 @@ function CodeBlockCard({
 function MarkdownContent({
   blocks,
   variant,
+  highlight,
 }: {
   blocks: MarkdownBlock[];
   variant: MessageMarkdownVariant;
+  highlight?: string;
 }) {
   const baseTextStyle = [
     styles.text,
@@ -115,7 +160,7 @@ function MarkdownContent({
             variant === "detail" && styles.detailHeading,
           ]}
         >
-          <InlineMarkdown text={block.text} />
+          <InlineMarkdown text={block.text} highlight={highlight} />
         </Text>
       );
     }
@@ -123,7 +168,7 @@ function MarkdownContent({
     if (block.type === "paragraph") {
       return (
         <Text key={`paragraph_${blockIndex}`} style={[baseTextStyle, styles.paragraph]}>
-          <InlineMarkdown text={block.text} />
+          <InlineMarkdown text={block.text} highlight={highlight} />
         </Text>
       );
     }
@@ -132,7 +177,7 @@ function MarkdownContent({
       return (
         <View key={`quote_${blockIndex}`} style={styles.quote}>
           <Text style={[baseTextStyle, styles.quoteText]}>
-            <InlineMarkdown text={block.text} />
+            <InlineMarkdown text={block.text} highlight={highlight} />
           </Text>
         </View>
       );
@@ -151,7 +196,7 @@ function MarkdownContent({
                 {block.type === "orderedList" ? `${itemIndex + 1}.` : "•"}
               </Text>
               <Text style={[baseTextStyle, styles.listText]}>
-                <InlineMarkdown text={item} />
+                <InlineMarkdown text={item} highlight={highlight} />
               </Text>
             </View>
           ))}
@@ -167,10 +212,12 @@ export function MessageMarkdown({
   text,
   variant = "chat",
   onLongPress,
+  highlight,
 }: {
   text: string;
   variant?: MessageMarkdownVariant;
   onLongPress?: (event: GestureResponderEvent) => void;
+  highlight?: string;
 }) {
   const blocks = parseMarkdownBlocks(text);
   const content = (
@@ -183,7 +230,12 @@ export function MessageMarkdown({
             language={block.language}
           />
         ) : (
-          <MarkdownContent key={`content_${index}`} blocks={[block]} variant={variant} />
+          <MarkdownContent
+            key={`content_${index}`}
+            blocks={[block]}
+            variant={variant}
+            highlight={highlight}
+          />
         ),
       )}
     </View>
@@ -236,6 +288,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: XiaoCColors.textPrimary,
     backgroundColor: "rgba(120,120,128,0.10)",
+  },
+  searchMatch: {
+    color: XiaoCColors.userBubble,
+    backgroundColor: "rgba(74, 156, 246, 0.16)",
+    fontWeight: "700",
   },
   heading: {
     fontSize: 18,

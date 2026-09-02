@@ -323,6 +323,42 @@ const getUserBubbleSegments = (text: string) =>
     .map((segment) => segment.trim())
     .filter(Boolean);
 
+function SearchHighlightedText({
+  text,
+  query,
+  userMessage = false,
+}: {
+  text: string;
+  query: string;
+  userMessage?: boolean;
+}) {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return text;
+
+  const lowerText = text.toLocaleLowerCase();
+  const lowerQuery = normalizedQuery.toLocaleLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = lowerText.indexOf(lowerQuery, cursor);
+
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
+    parts.push(
+      <Text
+        key={`search_match_${matchIndex}`}
+        style={userMessage ? styles.searchMatchUser : styles.searchMatchAssistant}
+      >
+        {text.slice(matchIndex, matchIndex + normalizedQuery.length)}
+      </Text>,
+    );
+    cursor = matchIndex + normalizedQuery.length;
+    matchIndex = lowerText.indexOf(lowerQuery, cursor);
+  }
+
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
+
 const normalizeTreeholeDraftJson = (rawJson: string) =>
   rawJson
     .replace(/^```(?:json)?\s*/i, "")
@@ -709,6 +745,7 @@ export default function ChatScreen() {
 
   const incomingConversationId = params.conversationId as string | undefined;
   const targetMessageId = params.targetMessageId as string | undefined;
+  const targetSearchQuery = String(params.searchQuery || "").trim();
   const shouldStartNewChat = params.newChat === "1";
 
   const [message, setMessage] = useState("");
@@ -1293,7 +1330,14 @@ export default function ChatScreen() {
         return;
       }
 
-      const restoredMessages = await restoreHistoryItems(data);
+      const historyData = locatingMessageId
+        ? Array.from(
+            new Map(
+              data.map((item) => [String(item.id || ""), item]),
+            ).values(),
+          )
+        : data;
+      const restoredMessages = await restoreHistoryItems(historyData);
 
       if (conversationIdRef.current !== id) return;
 
@@ -1329,7 +1373,7 @@ export default function ChatScreen() {
       );
       if (!silent) {
         const targetIndex = locatingMessageId
-          ? data.findIndex((item) => String(item.id || "") === locatingMessageId)
+          ? historyData.findIndex((item) => String(item.id || "") === locatingMessageId)
           : -1;
         setHasOlderHistory(
           locatingMessageId
@@ -2054,11 +2098,11 @@ export default function ChatScreen() {
             const stableMessageId = getStableMessageId(item);
 
             const isLocatedMessage = stableMessageId === locatedMessageId;
+            const isSearchTarget = stableMessageId === targetMessageId;
 
             return (
               <Fragment key={stableMessageId}>
               <View
-                style={isLocatedMessage ? styles.locatedMessage : undefined}
                 onLayout={isLocatedMessage ? (event) => {
                   const targetY = Math.max(0, event.nativeEvent.layout.y - 120);
                   requestAnimationFrame(() => {
@@ -2183,7 +2227,15 @@ export default function ChatScreen() {
                         )
                       }
                     >
-                      <Text style={styles.userText}>{segment}</Text>
+                      <Text style={styles.userText}>
+                        {isSearchTarget && targetSearchQuery ? (
+                          <SearchHighlightedText
+                            text={segment}
+                            query={targetSearchQuery}
+                            userMessage
+                          />
+                        ) : segment}
+                      </Text>
                     </Pressable>
                   ))}
 
@@ -2257,6 +2309,7 @@ export default function ChatScreen() {
 	                      {hasBlockMarkdown(item.text) ? (
 	                    <MessageMarkdown
 	                      text={item.text}
+	                      highlight={isSearchTarget ? targetSearchQuery : undefined}
 	                      onLongPress={(event) =>
 	                        openMessageMenu(
 	                          item.text,
@@ -2284,7 +2337,10 @@ export default function ChatScreen() {
 	                        }
 	                      >
 	                        <Text style={styles.aiText}>
-	                          <InlineMarkdown text={segment} />
+	                          <InlineMarkdown
+	                            text={segment}
+	                            highlight={isSearchTarget ? targetSearchQuery : undefined}
+	                          />
 	                        </Text>
 	                      </Pressable>
 	                    ))
@@ -2733,11 +2789,6 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
 
-  locatedMessage: {
-    borderRadius: 16,
-    backgroundColor: "rgba(74, 156, 246, 0.12)",
-  },
-
   historyLatestButton: {
     position: "absolute",
     right: 16,
@@ -2763,6 +2814,18 @@ const styles = StyleSheet.create({
     color: XiaoCColors.userBubble,
     fontSize: 13,
     fontWeight: "600",
+  },
+
+  searchMatchAssistant: {
+    color: XiaoCColors.userBubble,
+    backgroundColor: "rgba(74, 156, 246, 0.16)",
+    fontWeight: "700",
+  },
+
+  searchMatchUser: {
+    color: "#FFFFFF",
+    backgroundColor: "rgba(20, 90, 180, 0.38)",
+    fontWeight: "700",
   },
 
   empty: {
