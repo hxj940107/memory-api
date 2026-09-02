@@ -16,7 +16,15 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { APP_USER_ID, apiJson } from "../config/api";
+import { MomentAvatar } from "../components/MomentAvatar";
 import { XiaoCColors } from "../constants/theme";
+import {
+  DEFAULT_ACCOUNT_NAME,
+  DEFAULT_USER_MOMENT_AVATAR,
+  DEFAULT_XIAOC_MOMENT_AVATAR,
+  getAccountSettings,
+  type AccountSettings,
+} from "../lib/accountSettings";
 
 type SearchResult = {
   id: string;
@@ -78,8 +86,23 @@ export default function ChatSearchScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
   const [contextLoading, setContextLoading] = useState(false);
+  const [account, setAccount] = useState<AccountSettings>({
+    displayName: DEFAULT_ACCOUNT_NAME,
+    hasPassword: false,
+    faceIdEnabled: false,
+    userMomentAvatar: DEFAULT_USER_MOMENT_AVATAR,
+    xiaocMomentAvatar: DEFAULT_XIAOC_MOMENT_AVATAR,
+    userMomentAvatarUri: null,
+    xiaocMomentAvatarUri: null,
+  });
 
   const normalizedQuery = query.trim();
+
+  useEffect(() => {
+    getAccountSettings()
+      .then(setAccount)
+      .catch((loadError) => console.log("Chat search account settings failed:", loadError));
+  }, []);
 
   useEffect(() => {
     if (selectedId) return;
@@ -321,12 +344,24 @@ export default function ChatSearchScreen() {
               style={({ pressed }) => [styles.resultRow, pressed && styles.resultPressed]}
               onPress={() => openContext(item)}
             >
-              <View style={styles.resultAvatar}>
-                <Text style={styles.resultAvatarText}>{item.role === "user" ? "她" : "C"}</Text>
+              <View style={styles.resultAvatar} pointerEvents="none">
+                <MomentAvatar
+                  profile={item.role === "user" ? "user" : "xiaoc"}
+                  name={item.role === "user" ? account.displayName : "小C"}
+                  avatar={item.role === "user"
+                    ? account.userMomentAvatar
+                    : account.xiaocMomentAvatar}
+                  uri={item.role === "user"
+                    ? account.userMomentAvatarUri
+                    : account.xiaocMomentAvatarUri}
+                  size={42}
+                />
               </View>
               <View style={styles.resultBody}>
                 <View style={styles.resultMeta}>
-                  <Text style={styles.resultName}>{item.role === "user" ? "我" : "小C"}</Text>
+                  <Text style={styles.resultName}>
+                    {item.role === "user" ? account.displayName : "小C"}
+                  </Text>
                   <Text style={styles.resultTime}>{formatShanghaiTime(item.created_at)}</Text>
                 </View>
                 <Text style={styles.resultSnippet} numberOfLines={3}>
@@ -417,15 +452,6 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     marginTop: 16,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: XiaoCColors.surface,
-  },
-  resultAvatarText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: XiaoCColors.textSecondary,
   },
   resultBody: {
     flex: 1,
@@ -458,7 +484,7 @@ const styles = StyleSheet.create({
     color: XiaoCColors.textSecondary,
   },
   matchText: {
-    color: "#D98200",
+    color: XiaoCColors.userBubble,
     fontWeight: "600",
   },
   footerLoader: {

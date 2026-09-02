@@ -1210,27 +1210,10 @@ export default function ChatScreen() {
     const currentConversationId = conversationIdRef.current;
     if (!currentConversationId) return;
 
-    const openSearch = () => {
-      router.push({
-        pathname: "/chat-search",
-        params: { conversationId: currentConversationId },
-      } as never);
-    };
-
-    if (Platform.OS === "ios") {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ["取消", "搜索聊天记录"],
-          cancelButtonIndex: 0,
-        },
-        (buttonIndex) => {
-          if (buttonIndex === 1) openSearch();
-        },
-      );
-      return;
-    }
-
-    openSearch();
+    router.push({
+      pathname: "/chat-search",
+      params: { conversationId: currentConversationId },
+    } as never);
   };
 
   const restoreConversation = async ({ silent = false } = {}) => {

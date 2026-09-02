@@ -33,11 +33,29 @@ test("a result opens real messages on both sides of the target", () => {
 })
 
 test("the chat header exposes the iOS-style search entry without changing page size", () => {
+  const menuSection = chatSource.slice(
+    chatSource.indexOf("const openConversationMenu"),
+    chatSource.indexOf("const restoreConversation"),
+  )
   assert.match(chatSource, /accessibilityLabel="更多聊天功能"/)
-  assert.match(chatSource, /搜索聊天记录/)
-  assert.match(chatSource, /pathname: "\/chat-search"/)
+  assert.match(menuSection, /pathname: "\/chat-search"/)
+  assert.doesNotMatch(menuSection, /showActionSheetWithOptions/)
   assert.match(chatSource, /const HISTORY_PAGE_SIZE = 60/)
   assert.doesNotMatch(searchSource, /mergeCloudMessages|loadOlderHistory/)
+})
+
+test("search result identity follows account nickname and avatar settings", () => {
+  assert.match(searchSource, /getAccountSettings\(\)/)
+  assert.match(searchSource, /account\.displayName/)
+  assert.match(searchSource, /account\.userMomentAvatar/)
+  assert.match(searchSource, /account\.xiaocMomentAvatar/)
+  assert.match(searchSource, /<MomentAvatar/)
+  assert.doesNotMatch(searchSource, /item\.role === "user" \? "我" : "小C"/)
+})
+
+test("search term highlight reuses the user chat bubble color", () => {
+  assert.match(searchSource, /matchText:[\s\S]*color: XiaoCColors\.userBubble/)
+  assert.doesNotMatch(searchSource, /#D98200/)
 })
 
 test("search is debounced and stale requests are isolated", () => {
