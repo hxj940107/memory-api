@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,13 +29,6 @@ type SearchResult = {
   id: string;
   role: "user" | "assistant";
   snippet: string;
-  created_at: string;
-};
-
-type ContextMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
   created_at: string;
 };
 
@@ -75,7 +67,6 @@ export default function ChatSearchScreen() {
   const params = useLocalSearchParams<{ conversationId?: string }>();
   const conversationId = String(params.conversationId || "");
   const inputRef = useRef<TextInput>(null);
-  const contextScrollRef = useRef<ScrollView>(null);
   const requestVersionRef = useRef(0);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -83,9 +74,6 @@ export default function ChatSearchScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [contextMessages, setContextMessages] = useState<ContextMessage[]>([]);
-  const [contextLoading, setContextLoading] = useState(false);
   const [account, setAccount] = useState<AccountSettings>({
     displayName: DEFAULT_ACCOUNT_NAME,
     hasPassword: false,
@@ -105,10 +93,9 @@ export default function ChatSearchScreen() {
   }, []);
 
   useEffect(() => {
-    if (selectedId) return;
     const timer = setTimeout(() => inputRef.current?.focus(), 120);
     return () => clearTimeout(timer);
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     const version = ++requestVersionRef.current;
@@ -184,28 +171,15 @@ export default function ChatSearchScreen() {
     }
   };
 
-  const openContext = async (result: SearchResult) => {
+  const openContext = (result: SearchResult) => {
     Keyboard.dismiss();
-    setSelectedId(result.id);
-    setContextMessages([]);
-    setContextLoading(true);
-    setError("");
-    try {
-      const data = await apiJson<ContextMessage[]>("/api/history", {
-        query: {
-          action: "context",
-          user_id: APP_USER_ID,
-          conversation_id: conversationId,
-          target_id: result.id,
-        },
-      });
-      setContextMessages(data);
-    } catch (requestError) {
-      console.log("Chat search context failed:", requestError);
-      setError("暂时没能打开这段聊天");
-    } finally {
-      setContextLoading(false);
-    }
+    router.replace({
+      pathname: "/chat",
+      params: {
+        conversationId,
+        targetMessageId: result.id,
+      },
+    } as never);
   };
 
   const emptyLabel = useMemo(() => {
@@ -214,83 +188,6 @@ export default function ChatSearchScreen() {
     if (error) return error;
     return "没有找到相关聊天";
   }, [error, loading, normalizedQuery]);
-
-  if (selectedId) {
-    return (
-      <View style={[styles.container, { paddingTop: insets.top }]}> 
-        <View style={styles.navigationBar}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="返回搜索结果"
-            hitSlop={8}
-            style={styles.backButton}
-            onPress={() => {
-              setSelectedId(null);
-              setContextMessages([]);
-              setError("");
-            }}
-          >
-            <Text style={styles.backGlyph}>‹</Text>
-          </Pressable>
-          <Text style={styles.navigationTitle}>聊天记录</Text>
-        </View>
-
-        {contextLoading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator color={XiaoCColors.textSecondary} />
-          </View>
-        ) : error ? (
-          <View style={styles.centered}>
-            <Text style={styles.emptyText}>{error}</Text>
-          </View>
-        ) : (
-          <ScrollView
-            ref={contextScrollRef}
-            style={styles.contextScroll}
-            contentContainerStyle={styles.contextContent}
-          >
-            {contextMessages.map((message) => {
-              const selected = message.id === selectedId;
-              return (
-                <View
-                  key={message.id}
-                  style={styles.contextRow}
-                  onLayout={selected ? (event) => {
-                    const targetY = Math.max(0, event.nativeEvent.layout.y - 120);
-                    requestAnimationFrame(() => {
-                      contextScrollRef.current?.scrollTo({ y: targetY, animated: false });
-                    });
-                  } : undefined}
-                >
-                  <Text style={styles.contextTime}>
-                    {formatShanghaiTime(message.created_at)}
-                  </Text>
-                  <View
-                    style={[
-                      styles.contextBubble,
-                      message.role === "user"
-                        ? styles.contextUserBubble
-                        : styles.contextAssistantBubble,
-                      selected && styles.contextSelectedBubble,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.contextText,
-                        message.role === "user" && styles.contextUserText,
-                      ]}
-                    >
-                      {message.content}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </ScrollView>
-        )}
-      </View>
-    );
-  }
 
   return (
     <KeyboardAvoidingView
@@ -489,79 +386,5 @@ const styles = StyleSheet.create({
   },
   footerLoader: {
     marginVertical: 18,
-  },
-  navigationBar: {
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: XiaoCColors.separator,
-    backgroundColor: XiaoCColors.navigationBackground,
-  },
-  navigationTitle: {
-    fontSize: 17,
-    fontWeight: "600",
-    color: XiaoCColors.textPrimary,
-  },
-  backButton: {
-    position: "absolute",
-    left: 8,
-    top: 0,
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
-  },
-  backGlyph: {
-    marginTop: -3,
-    fontSize: 38,
-    fontWeight: "300",
-    color: "#3478F6",
-  },
-  contextScroll: {
-    flex: 1,
-  },
-  contextContent: {
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 36,
-  },
-  contextRow: {
-    marginBottom: 13,
-  },
-  contextTime: {
-    marginBottom: 6,
-    textAlign: "center",
-    fontSize: 11,
-    color: XiaoCColors.textSecondary,
-  },
-  contextBubble: {
-    maxWidth: "82%",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-  },
-  contextUserBubble: {
-    alignSelf: "flex-end",
-    backgroundColor: XiaoCColors.userBubble,
-    borderBottomRightRadius: 7,
-  },
-  contextAssistantBubble: {
-    alignSelf: "flex-start",
-    backgroundColor: XiaoCColors.assistantBubble,
-    borderBottomLeftRadius: 7,
-  },
-  contextSelectedBubble: {
-    borderWidth: 2,
-    borderColor: "#F1B645",
-  },
-  contextText: {
-    fontSize: 16,
-    lineHeight: 23,
-    color: XiaoCColors.textPrimary,
-  },
-  contextUserText: {
-    color: "#FFFFFF",
   },
 });

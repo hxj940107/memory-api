@@ -708,6 +708,7 @@ export default function ChatScreen() {
   const drawerWidth = Dimensions.get("window").width * 0.82;
 
   const incomingConversationId = params.conversationId as string | undefined;
+  const targetMessageId = params.targetMessageId as string | undefined;
   const shouldStartNewChat = params.newChat === "1";
 
   const [message, setMessage] = useState("");
@@ -736,6 +737,8 @@ export default function ChatScreen() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [hasOlderHistory, setHasOlderHistory] = useState(false);
+  const [locatedMessageId, setLocatedMessageId] = useState<string | null>(null);
+  const [viewingLocatedHistory, setViewingLocatedHistory] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const scrollOffsetYRef = useRef(0);
@@ -745,6 +748,8 @@ export default function ChatScreen() {
     scrollOffsetY: number;
   } | null>(null);
   const skipNextMessageAutoScrollRef = useRef(false);
+  const historyLocationModeRef = useRef(false);
+  const locationHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const keyboardVisibleRef = useRef(false);
   const sendButtonProgress = useRef(new RNAnimated.Value(0)).current;
@@ -800,6 +805,12 @@ export default function ChatScreen() {
       clearTimeout(layoutTimer);
     };
   }, [messages.length, messages[messages.length - 1]?.text?.length, isTyping]);
+
+  useEffect(() => () => {
+    if (locationHighlightTimerRef.current) {
+      clearTimeout(locationHighlightTimerRef.current);
+    }
+  }, []);
 
   const restoreHistoryItems = async (data: HistoryItem[]) => {
     let savedDiaryKeys = new Set<string>();
@@ -1258,11 +1269,14 @@ export default function ChatScreen() {
       conversationIdRef.current = id;
       conversationTitleInitializedRef.current = true;
 
+      const locatingMessageId = !silent ? targetMessageId : undefined;
       const data = await apiJson<HistoryItem[]>("/api/history", {
         query: {
           user_id: APP_USER_ID,
           conversation_id: id,
-          limit: HISTORY_PAGE_SIZE,
+          ...(locatingMessageId
+            ? { action: "context", target_id: locatingMessageId }
+            : { limit: HISTORY_PAGE_SIZE }),
         },
       });
 
@@ -1297,12 +1311,32 @@ export default function ChatScreen() {
         setDeliveryNotice(null);
       }
 
+      if (locatingMessageId) {
+        skipNextMessageAutoScrollRef.current = true;
+        historyLocationModeRef.current = true;
+        setViewingLocatedHistory(true);
+        setLocatedMessageId(locatingMessageId);
+      } else if (!silent) {
+        historyLocationModeRef.current = false;
+        setViewingLocatedHistory(false);
+        setLocatedMessageId(null);
+      }
+
       setMessages((current) =>
         silent
           ? mergeCloudMessages(current, restoredMessages)
           : restoredMessages,
       );
-      if (!silent) setHasOlderHistory(data.length === HISTORY_PAGE_SIZE);
+      if (!silent) {
+        const targetIndex = locatingMessageId
+          ? data.findIndex((item) => String(item.id || "") === locatingMessageId)
+          : -1;
+        setHasOlderHistory(
+          locatingMessageId
+            ? targetIndex > 0
+            : data.length === HISTORY_PAGE_SIZE,
+        );
+      }
       latestCloudMessageIdRef.current = data.length
         ? String(data[data.length - 1].id || "") || null
         : null;
@@ -1367,7 +1401,7 @@ export default function ChatScreen() {
   const refreshIfCloudHistoryChanged = async () => {
     const id = conversationIdRef.current;
 
-    if (!id || historyRefreshInFlightRef.current) return;
+    if (!id || historyLocationModeRef.current || historyRefreshInFlightRef.current) return;
 
     historyRefreshInFlightRef.current = true;
 
@@ -1382,6 +1416,9 @@ export default function ChatScreen() {
       const latestCloudId = latest[0]?.id ? String(latest[0].id) : null;
 
       if (latestCloudId && latestCloudId !== latestCloudMessageIdRef.current) {
+        if (historyLocationModeRef.current) {
+          skipNextMessageAutoScrollRef.current = true;
+        }
         await restoreConversation({ silent: true });
       }
     } catch (error) {
@@ -1393,7 +1430,7 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const routeKey = `${incomingConversationId || "last"}:${shouldStartNewChat ? "new" : "restore"}`;
+      const routeKey = `${incomingConversationId || "last"}:${shouldStartNewChat ? "new" : "restore"}:${targetMessageId || "latest"}`;
       const routeChanged = lastRestoreRouteKeyRef.current !== routeKey;
       const isInitialRestore = !hasRestoredConversationRef.current || routeChanged;
       hasRestoredConversationRef.current = true;
@@ -1411,7 +1448,7 @@ export default function ChatScreen() {
         appStateSubscription.remove();
         clearInterval(refreshTimer);
       };
-    }, [incomingConversationId, shouldStartNewChat]),
+    }, [incomingConversationId, shouldStartNewChat, targetMessageId]),
   );
 
   const submitMessage = async (messageToSend: Message) => {
@@ -2016,8 +2053,27 @@ export default function ChatScreen() {
           {messages.map((item, index) => {
             const stableMessageId = getStableMessageId(item);
 
+            const isLocatedMessage = stableMessageId === locatedMessageId;
+
             return (
               <Fragment key={stableMessageId}>
+              <View
+                style={isLocatedMessage ? styles.locatedMessage : undefined}
+                onLayout={isLocatedMessage ? (event) => {
+                  const targetY = Math.max(0, event.nativeEvent.layout.y - 120);
+                  requestAnimationFrame(() => {
+                    scrollRef.current?.scrollTo({ y: targetY, animated: false });
+                  });
+                  if (locationHighlightTimerRef.current) {
+                    clearTimeout(locationHighlightTimerRef.current);
+                  }
+                  locationHighlightTimerRef.current = setTimeout(() => {
+                    setLocatedMessageId((current) =>
+                      current === stableMessageId ? null : current,
+                    );
+                  }, 2200);
+                } : undefined}
+              >
                 {shouldShowMessageTime(item, messages[index - 1]) && (
                   <Text style={styles.messageTime}>
                     {formatMessageTime(item.createdAt || "")}
@@ -2238,12 +2294,32 @@ export default function ChatScreen() {
                 </View>
               </AnimatedMessage>
             )}
+              </View>
               </Fragment>
             );
           })}
 
           {isTyping && <TypingDots />}
         </ScrollView>
+
+        {viewingLocatedHistory && conversationId && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="回到最新消息"
+            style={({ pressed }) => [
+              styles.historyLatestButton,
+              pressed && styles.historyLatestButtonPressed,
+            ]}
+            onPress={() => {
+              router.replace({
+                pathname: "/chat",
+                params: { conversationId },
+              } as never);
+            }}
+          >
+            <Text style={styles.historyLatestButtonText}>回到最新消息 ↓</Text>
+          </Pressable>
+        )}
 
         {!!deliveryNotice && (
           <Text style={styles.deliveryNotice}>{deliveryNotice}</Text>
@@ -2655,6 +2731,38 @@ const styles = StyleSheet.create({
     paddingTop: 16,
 
     paddingBottom: 24,
+  },
+
+  locatedMessage: {
+    borderRadius: 16,
+    backgroundColor: "rgba(74, 156, 246, 0.12)",
+  },
+
+  historyLatestButton: {
+    position: "absolute",
+    right: 16,
+    bottom: 116,
+    zIndex: 3,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(74, 156, 246, 0.35)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+  },
+
+  historyLatestButtonPressed: {
+    opacity: 0.72,
+  },
+
+  historyLatestButtonText: {
+    color: XiaoCColors.userBubble,
+    fontSize: 13,
+    fontWeight: "600",
   },
 
   empty: {

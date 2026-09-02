@@ -27,9 +27,14 @@ test("a result opens real messages on both sides of the target", () => {
   assert.match(historySource, /action === "context"/)
   assert.match(historySource, /created_at\.lt/)
   assert.match(historySource, /created_at\.gt/)
-  assert.match(searchSource, /action: "context"/)
-  assert.match(searchSource, /contextSelectedBubble/)
-  assert.match(searchSource, /contextScrollRef\.current\?\.scrollTo\(\{ y: targetY/)
+  assert.match(searchSource, /pathname: "\/chat"/)
+  assert.match(searchSource, /targetMessageId: result\.id/)
+  assert.match(chatSource, /action: "context", target_id: locatingMessageId/)
+  assert.match(chatSource, /stableMessageId === locatedMessageId/)
+  assert.match(chatSource, /scrollRef\.current\?\.scrollTo\(\{ y: targetY/)
+  assert.match(chatSource, /historyLocationModeRef/)
+  assert.match(chatSource, /回到最新消息/)
+  assert.match(chatSource, /if \(!id \|\| historyLocationModeRef\.current/)
 })
 
 test("the chat header exposes the iOS-style search entry without changing page size", () => {
