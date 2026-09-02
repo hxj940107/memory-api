@@ -327,10 +327,12 @@ function SearchHighlightedText({
   text,
   query,
   userMessage = false,
+  opacity,
 }: {
   text: string;
   query: string;
   userMessage?: boolean;
+  opacity: RNAnimated.Value;
 }) {
   const normalizedQuery = query.trim();
   if (!normalizedQuery) return text;
@@ -344,12 +346,15 @@ function SearchHighlightedText({
   while (matchIndex >= 0) {
     if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
     parts.push(
-      <Text
+      <RNAnimated.Text
         key={`search_match_${matchIndex}`}
-        style={userMessage ? styles.searchMatchUser : styles.searchMatchAssistant}
+        style={[
+          userMessage ? styles.searchMatchUser : styles.searchMatchAssistant,
+          { opacity },
+        ]}
       >
         {text.slice(matchIndex, matchIndex + normalizedQuery.length)}
-      </Text>,
+      </RNAnimated.Text>,
     );
     cursor = matchIndex + normalizedQuery.length;
     matchIndex = lowerText.indexOf(lowerQuery, cursor);
@@ -775,6 +780,7 @@ export default function ChatScreen() {
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [hasOlderHistory, setHasOlderHistory] = useState(false);
   const [locatedMessageId, setLocatedMessageId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [viewingLocatedHistory, setViewingLocatedHistory] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
@@ -787,6 +793,10 @@ export default function ChatScreen() {
   const skipNextMessageAutoScrollRef = useRef(false);
   const historyLocationModeRef = useRef(false);
   const locationHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const locationReadyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const locationHighlightGenerationRef = useRef(0);
+  const canDismissLocationHighlightRef = useRef(false);
+  const locationHighlightOpacity = useRef(new RNAnimated.Value(0)).current;
   const inputRef = useRef<TextInput>(null);
   const keyboardVisibleRef = useRef(false);
   const sendButtonProgress = useRef(new RNAnimated.Value(0)).current;
@@ -847,7 +857,42 @@ export default function ChatScreen() {
     if (locationHighlightTimerRef.current) {
       clearTimeout(locationHighlightTimerRef.current);
     }
+    if (locationReadyTimerRef.current) {
+      clearTimeout(locationReadyTimerRef.current);
+    }
+    locationHighlightOpacity.stopAnimation();
   }, []);
+
+  const endLocationHighlight = () => {
+    locationHighlightGenerationRef.current += 1;
+    if (locationHighlightTimerRef.current) {
+      clearTimeout(locationHighlightTimerRef.current);
+      locationHighlightTimerRef.current = null;
+    }
+    locationHighlightOpacity.stopAnimation();
+    setHighlightedMessageId(null);
+  };
+
+  const scheduleLocationHighlightFade = (messageId: string) => {
+    const generation = ++locationHighlightGenerationRef.current;
+    if (locationHighlightTimerRef.current) {
+      clearTimeout(locationHighlightTimerRef.current);
+    }
+    locationHighlightOpacity.stopAnimation();
+    locationHighlightOpacity.setValue(1);
+    setHighlightedMessageId(messageId);
+    locationHighlightTimerRef.current = setTimeout(() => {
+      RNAnimated.timing(locationHighlightOpacity, {
+        toValue: 0,
+        duration: 350,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished && locationHighlightGenerationRef.current === generation) {
+          setHighlightedMessageId(null);
+        }
+      });
+    }, 1450);
+  };
 
   const restoreHistoryItems = async (data: HistoryItem[]) => {
     let savedDiaryKeys = new Set<string>();
@@ -1360,10 +1405,13 @@ export default function ChatScreen() {
         historyLocationModeRef.current = true;
         setViewingLocatedHistory(true);
         setLocatedMessageId(locatingMessageId);
+        canDismissLocationHighlightRef.current = false;
+        scheduleLocationHighlightFade(locatingMessageId);
       } else if (!silent) {
         historyLocationModeRef.current = false;
         setViewingLocatedHistory(false);
         setLocatedMessageId(null);
+        endLocationHighlight();
       }
 
       setMessages((current) =>
@@ -2068,6 +2116,12 @@ export default function ChatScreen() {
           }
           onScroll={(event) => {
             scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+            if (
+              canDismissLocationHighlightRef.current &&
+              highlightedMessageId
+            ) {
+              endLocationHighlight();
+            }
           }}
           scrollEventThrottle={16}
           onContentSizeChange={(_width, height) => {
@@ -2098,7 +2152,7 @@ export default function ChatScreen() {
             const stableMessageId = getStableMessageId(item);
 
             const isLocatedMessage = stableMessageId === locatedMessageId;
-            const isSearchTarget = stableMessageId === targetMessageId;
+            const isSearchTarget = stableMessageId === highlightedMessageId;
 
             return (
               <Fragment key={stableMessageId}>
@@ -2108,14 +2162,15 @@ export default function ChatScreen() {
                   requestAnimationFrame(() => {
                     scrollRef.current?.scrollTo({ y: targetY, animated: false });
                   });
-                  if (locationHighlightTimerRef.current) {
-                    clearTimeout(locationHighlightTimerRef.current);
+                  if (locationReadyTimerRef.current) {
+                    clearTimeout(locationReadyTimerRef.current);
                   }
-                  locationHighlightTimerRef.current = setTimeout(() => {
+                  locationReadyTimerRef.current = setTimeout(() => {
                     setLocatedMessageId((current) =>
                       current === stableMessageId ? null : current,
                     );
-                  }, 2200);
+                    canDismissLocationHighlightRef.current = true;
+                  }, 250);
                 } : undefined}
               >
                 {shouldShowMessageTime(item, messages[index - 1]) && (
@@ -2233,6 +2288,7 @@ export default function ChatScreen() {
                             text={segment}
                             query={targetSearchQuery}
                             userMessage
+                            opacity={locationHighlightOpacity}
                           />
                         ) : segment}
                       </Text>
@@ -2310,6 +2366,7 @@ export default function ChatScreen() {
 	                    <MessageMarkdown
 	                      text={item.text}
 	                      highlight={isSearchTarget ? targetSearchQuery : undefined}
+	                      highlightOpacity={locationHighlightOpacity}
 	                      onLongPress={(event) =>
 	                        openMessageMenu(
 	                          item.text,
@@ -2340,6 +2397,7 @@ export default function ChatScreen() {
 	                          <InlineMarkdown
 	                            text={segment}
 	                            highlight={isSearchTarget ? targetSearchQuery : undefined}
+	                            highlightOpacity={locationHighlightOpacity}
 	                          />
 	                        </Text>
 	                      </Pressable>
@@ -2818,14 +2876,14 @@ const styles = StyleSheet.create({
 
   searchMatchAssistant: {
     color: XiaoCColors.userBubble,
-    backgroundColor: "rgba(74, 156, 246, 0.16)",
-    fontWeight: "700",
+    fontWeight: "600",
   },
 
   searchMatchUser: {
     color: "#FFFFFF",
-    backgroundColor: "rgba(20, 90, 180, 0.38)",
     fontWeight: "700",
+    textDecorationLine: "underline",
+    textDecorationColor: "rgba(255,255,255,0.72)",
   },
 
   empty: {

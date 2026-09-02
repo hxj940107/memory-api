@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   Platform,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,9 +26,11 @@ type MessageMarkdownVariant = "chat" | "detail";
 function HighlightedInlineText({
   text,
   highlight,
+  highlightOpacity,
 }: {
   text: string;
   highlight?: string;
+  highlightOpacity?: Animated.Value;
 }) {
   const query = String(highlight || "").trim();
   if (!query) return text;
@@ -41,9 +44,12 @@ function HighlightedInlineText({
   while (matchIndex >= 0) {
     if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
     parts.push(
-      <Text key={`match_${matchIndex}`} style={styles.searchMatch}>
+      <Animated.Text
+        key={`match_${matchIndex}`}
+        style={[styles.searchMatch, highlightOpacity ? { opacity: highlightOpacity } : undefined]}
+      >
         {text.slice(matchIndex, matchIndex + query.length)}
-      </Text>,
+      </Animated.Text>,
     );
     cursor = matchIndex + query.length;
     matchIndex = lowerText.indexOf(lowerQuery, cursor);
@@ -56,15 +62,21 @@ function HighlightedInlineText({
 export function InlineMarkdown({
   text,
   highlight,
+  highlightOpacity,
 }: {
   text: string;
   highlight?: string;
+  highlightOpacity?: Animated.Value;
 }) {
   return parseInlineMarkdown(text).map((token, index) => {
     if (token.type === "text") {
       return (
         <Text key={`text_${index}`}>
-          <HighlightedInlineText text={token.text} highlight={highlight} />
+          <HighlightedInlineText
+            text={token.text}
+            highlight={highlight}
+            highlightOpacity={highlightOpacity}
+          />
         </Text>
       );
     }
@@ -80,7 +92,11 @@ export function InlineMarkdown({
               : styles.inlineCode
         }
       >
-        <HighlightedInlineText text={token.text} highlight={highlight} />
+        <HighlightedInlineText
+          text={token.text}
+          highlight={highlight}
+          highlightOpacity={highlightOpacity}
+        />
       </Text>
     );
   });
@@ -138,10 +154,12 @@ function MarkdownContent({
   blocks,
   variant,
   highlight,
+  highlightOpacity,
 }: {
   blocks: MarkdownBlock[];
   variant: MessageMarkdownVariant;
   highlight?: string;
+  highlightOpacity?: Animated.Value;
 }) {
   const baseTextStyle = [
     styles.text,
@@ -160,7 +178,11 @@ function MarkdownContent({
             variant === "detail" && styles.detailHeading,
           ]}
         >
-          <InlineMarkdown text={block.text} highlight={highlight} />
+          <InlineMarkdown
+            text={block.text}
+            highlight={highlight}
+            highlightOpacity={highlightOpacity}
+          />
         </Text>
       );
     }
@@ -168,7 +190,11 @@ function MarkdownContent({
     if (block.type === "paragraph") {
       return (
         <Text key={`paragraph_${blockIndex}`} style={[baseTextStyle, styles.paragraph]}>
-          <InlineMarkdown text={block.text} highlight={highlight} />
+          <InlineMarkdown
+            text={block.text}
+            highlight={highlight}
+            highlightOpacity={highlightOpacity}
+          />
         </Text>
       );
     }
@@ -177,7 +203,11 @@ function MarkdownContent({
       return (
         <View key={`quote_${blockIndex}`} style={styles.quote}>
           <Text style={[baseTextStyle, styles.quoteText]}>
-            <InlineMarkdown text={block.text} highlight={highlight} />
+            <InlineMarkdown
+              text={block.text}
+              highlight={highlight}
+              highlightOpacity={highlightOpacity}
+            />
           </Text>
         </View>
       );
@@ -196,7 +226,11 @@ function MarkdownContent({
                 {block.type === "orderedList" ? `${itemIndex + 1}.` : "•"}
               </Text>
               <Text style={[baseTextStyle, styles.listText]}>
-                <InlineMarkdown text={item} highlight={highlight} />
+                <InlineMarkdown
+                  text={item}
+                  highlight={highlight}
+                  highlightOpacity={highlightOpacity}
+                />
               </Text>
             </View>
           ))}
@@ -213,11 +247,13 @@ export function MessageMarkdown({
   variant = "chat",
   onLongPress,
   highlight,
+  highlightOpacity,
 }: {
   text: string;
   variant?: MessageMarkdownVariant;
   onLongPress?: (event: GestureResponderEvent) => void;
   highlight?: string;
+  highlightOpacity?: Animated.Value;
 }) {
   const blocks = parseMarkdownBlocks(text);
   const content = (
@@ -235,6 +271,7 @@ export function MessageMarkdown({
             blocks={[block]}
             variant={variant}
             highlight={highlight}
+            highlightOpacity={highlightOpacity}
           />
         ),
       )}
@@ -291,8 +328,7 @@ const styles = StyleSheet.create({
   },
   searchMatch: {
     color: XiaoCColors.userBubble,
-    backgroundColor: "rgba(74, 156, 246, 0.16)",
-    fontWeight: "700",
+    fontWeight: "600",
   },
   heading: {
     fontSize: 18,
