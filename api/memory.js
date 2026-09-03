@@ -9,6 +9,7 @@ import {
   CONTEXT_BUDGET,
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   TREEHOLE_AUTONOMOUS_POLICY,
+  WEATHER_SHADOW_POLICY,
   getInactivityReachOutDelayMinutes,
   isProactiveAttentionSendEnabled,
   normalizeInactivityReachOutMode,
@@ -87,6 +88,15 @@ import {
   stripRetryMarker,
   withRetryMarker,
 } from "../lib/backgroundTaskReliability.js"
+import {
+  WEATHER_SHADOW_SOURCE_TYPE,
+  WEATHER_SHADOW_TASK_TYPE,
+  decideWeatherShadowEligibility,
+  evaluateWeatherSignal,
+  normalizeChinaDayType,
+  parseWeatherRhythmDecision,
+  planWeatherShadowChecks,
+} from "../lib/weatherShadow.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -1956,6 +1966,172 @@ function parseAutonomousTreeholeDrafts(raw, sourceMessages = []) {
   }
 }
 
+async function ensureWeatherShadowTasks(user_id, now = new Date()) {
+  if (!WEATHER_SHADOW_POLICY.enabled) return []
+  const plans = planWeatherShadowChecks(WEATHER_SHADOW_POLICY, now)
+  const rows = plans.map(plan => ({
+    user_id,
+    type: WEATHER_SHADOW_TASK_TYPE,
+    source_type: WEATHER_SHADOW_SOURCE_TYPE,
+    source_id: plan.sourceId,
+    status: "pending",
+    due_at: plan.dueAt,
+    reason: "天气生活节奏候选只读 Shadow 检查",
+    payload: {
+      weather_shadow_version: 1,
+      mode: "shadow",
+      location: WEATHER_SHADOW_POLICY.location,
+      timezone: WEATHER_SHADOW_POLICY.timezone,
+      local_date: plan.date,
+      rhythm_window: plan.window,
+      scheduled_at: new Date(now).toISOString(),
+    },
+    completed_at: null,
+    conversation_id: null,
+    message_id: null,
+    last_error: null,
+    updated_at: new Date(now).toISOString(),
+  }))
+  if (!rows.length) return []
+
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert(rows, {
+      onConflict: "user_id,type,source_type,source_id",
+      ignoreDuplicates: true,
+    })
+    .select("id,source_id,due_at,status")
+  if (error?.code === "42P01") return []
+  if (error) throw error
+  return data || []
+}
+
+async function fetchWeatherForecast(payload) {
+  const location = payload.location || WEATHER_SHADOW_POLICY.location
+  const url = new URL(AI_ENDPOINTS.weatherForecast)
+  url.searchParams.set("latitude", String(location.latitude))
+  url.searchParams.set("longitude", String(location.longitude))
+  url.searchParams.set("hourly", "precipitation_probability,apparent_temperature,wind_gusts_10m,weather_code")
+  url.searchParams.set("timezone", WEATHER_SHADOW_POLICY.timezone)
+  url.searchParams.set("past_days", "1")
+  url.searchParams.set("forecast_days", "2")
+  const response = await fetch(url, { headers: { Accept: "application/json" } })
+  if (!response.ok) throw new Error(`Weather forecast failed: ${response.status}`)
+  return response.json()
+}
+
+async function fetchChinaCalendarDay(localDate) {
+  try {
+    const response = await fetch(`${AI_ENDPOINTS.chinaHolidayInfo}/${localDate}`, {
+      headers: { Accept: "application/json" },
+    })
+    if (!response.ok) throw new Error(`Holiday calendar failed: ${response.status}`)
+    return normalizeChinaDayType(await response.json(), localDate)
+  } catch (error) {
+    return {
+      ...normalizeChinaDayType(null, localDate),
+      error: trimText(error?.message || "holiday calendar unavailable", 160),
+    }
+  }
+}
+
+async function loadWeatherShadowRecentContext(userId) {
+  const cutoff = new Date(
+    Date.now() - WEATHER_SHADOW_POLICY.recentLookbackHours * 60 * 60 * 1000
+  ).toISOString()
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id,role,content,created_at,metadata")
+    .eq("user_id", userId)
+    .in("role", ["user", "assistant"])
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(WEATHER_SHADOW_POLICY.maxRecentMessages)
+  if (error) throw error
+  return [...(data || [])].reverse().map(message => ({
+    id: message.id,
+    role: message.role,
+    content: trimText(normalizeAssistantOutput(message), 260),
+    created_at: message.created_at,
+  }))
+}
+
+function formatWeatherShadowRecentContext(messages) {
+  return messages.map(message =>
+    `[${message.created_at}] ${message.role === "user" ? "她" : "小C"}：${message.content}`
+  ).join("\n") || "没有近期对话证据"
+}
+
+async function judgeWeatherShadowRhythm({ payload, calendar, signal, recentMessages }) {
+  const raw = await callSmallLLM([
+    {
+      role: "system",
+      content: `你负责判断一条天气信息是否贴合她今天真实的生活节奏，不负责写消息。
+近期对话是她和小C已经共同经历的内容。只依据明确证据判断她今天是否上班、休息、请假、在家或准备外出，不要从昵称、天气或一般常识补造安排。
+默认作息只是弱背景：她通常早上约7:40出门、下午约5点下班。她明确说过的当天安排优先；周末、法定节假日或明确休息时，不能默认通勤。
+天气候选只表示可能有用，不代表必须联系。若没有出门证据，普通天气在休息日应判定无用；真正显著的恶劣天气可以独立保留。
+只输出 JSON：{"today_rhythm":"likely_commute|likely_rest|explicit_outing|unknown","explicit_rest":boolean,"explicit_outing":boolean,"weather_candidate_useful":boolean,"reason":"简短内部理由"}`,
+    },
+    {
+      role: "user",
+      content: `当前地点：${payload.location?.city || WEATHER_SHADOW_POLICY.location.city}
+本地日期：${payload.local_date}
+检查窗口：${payload.rhythm_window?.id}
+日历判断：${calendar.dayType}（${calendar.source}）
+天气信号：${JSON.stringify(signal)}
+
+近期共同经历：
+${formatWeatherShadowRecentContext(recentMessages)}`,
+    },
+  ], {
+    requestPurpose: "weather_shadow_rhythm_judge",
+    max_tokens: 130,
+    temperature: 0,
+    response_format: { type: "json_object" },
+  })
+  return parseWeatherRhythmDecision(raw)
+}
+
+async function executeWeatherShadowCheck(task) {
+  const payload = task.payload || {}
+  const [forecast, calendar, recentMessages] = await Promise.all([
+    fetchWeatherForecast(payload),
+    fetchChinaCalendarDay(payload.local_date),
+    loadWeatherShadowRecentContext(task.user_id),
+  ])
+  const signal = evaluateWeatherSignal(forecast, {
+    date: payload.local_date,
+    window: payload.rhythm_window,
+  })
+  let rhythm = null
+  let llmCalled = false
+  if (signal.significant) {
+    llmCalled = true
+    rhythm = await judgeWeatherShadowRhythm({ payload, calendar, signal, recentMessages })
+  }
+  const eligibility = signal.significant
+    ? decideWeatherShadowEligibility({ signal, calendar, rhythm })
+    : { eligible: false, reason: "no_significant_weather" }
+
+  return {
+    shadowOnly: true,
+    conversationId: task.conversation_id,
+    payload: {
+      ...payload,
+      checked_at: new Date().toISOString(),
+      weather_provider: "open_meteo",
+      calendar,
+      signal,
+      rhythm,
+      llm_called: llmCalled,
+      would_create_weather_candidate: eligibility.eligible,
+      shadow_reason: eligibility.reason,
+      message_generation_called: false,
+      actual_send_attempted: false,
+    },
+  }
+}
+
 async function getAutonomousTreeholeContext(user_id) {
   const [messagesResult, entriesResult] = await Promise.all([
     supabase
@@ -3383,7 +3559,7 @@ async function executeProactiveAttentionWakeup(task) {
 }
 
 async function executeProactiveTask(task) {
-  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE].includes(task.type)) {
+  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update", WEATHER_SHADOW_TASK_TYPE, PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
   }
 
@@ -3393,6 +3569,10 @@ async function executeProactiveTask(task) {
 
   if (task.type === "treehole_autonomous_update") {
     return executeAutonomousTreeholeUpdate(task)
+  }
+
+  if (task.type === WEATHER_SHADOW_TASK_TYPE) {
+    return executeWeatherShadowCheck(task)
   }
 
   if (task.type === "inactivity_reach_out") {
@@ -3502,7 +3682,10 @@ async function checkPendingProactiveTasks() {
       .eq("status", "processing")
   }
 
-  await ensureAutonomousTreeholeTask(APP_USER.defaultUserId)
+  await Promise.all([
+    ensureAutonomousTreeholeTask(APP_USER.defaultUserId),
+    ensureWeatherShadowTasks(APP_USER.defaultUserId, now),
+  ])
   let reconciliation
   try {
     reconciliation = await reconcileExistingProactiveAttentionWakeups({
@@ -3557,7 +3740,8 @@ async function checkPendingProactiveTasks() {
     proactive_attention_wakeup: 0,
     plan_follow_up: 1,
     inactivity_reach_out: 2,
-    treehole_autonomous_update: 3,
+    weather_shadow_check: 3,
+    treehole_autonomous_update: 4,
   }
   const processablePending = isProactiveQuietHours(now) ? shadowWakeups : pending
   const prioritizedPending = [...processablePending].sort((a, b) =>

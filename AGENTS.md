@@ -54,6 +54,7 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
   - 后续主动计划回访必须建立在统一 Attention Eligibility 上，不得把 Memory retrieval 或 prompt eligibility 直接当作主动提及资格。
   - 久未聊天后的主动靠近已接入，并区分早晨、白天、晚间语境；静默时段为 `23:30–07:00`。
   - 朋友圈 `private_follow_up` 属于 Moments 当场动作，不走上述二阶段主动任务。
+  - 南京天气生活节奏第一阶段已接入严格 Shadow：复用现有 background worker，每天在可配置的早间/下午范围内检查；天气地点与 `Asia/Shanghai` 系统时区分离；周末、法定节假日、调休及近期明确休息/外出语境参与判断。当前只记录候选诊断，不生成正文、不发送消息，也不参与主动消息仲裁。
 
 - 聊天消息同步与附件体验已完善：
   - 支持图片和文件附件；图片可在发送前后打开预览，历史记录刷新后仍能恢复显示。

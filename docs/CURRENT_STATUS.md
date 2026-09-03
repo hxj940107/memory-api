@@ -21,6 +21,7 @@ This section is the current planning authority. Dated milestone sections below a
 - Phase 1 health-check reliability changes are complete in the current working tree and awaiting deployment/production verification: bounded retries, stale `processing` recovery, task/message idempotency, protected post-chat continuations, Shared Context checkpoint recovery/backoff, and strict independent image provenance.
 - Vercel Hobby remains at the hard limit of 12 Serverless Functions; do not add a new `api/*.js` file without freeing a slot.
 - Current work is stabilization and production observation. Only confirmed production blockers should reopen frozen P1.5 semantics.
+- Weather-aware companionship Phase 1 is implemented in strict Shadow. Existing `api/memory.js` background checks schedule bounded morning and afternoon weather windows for Nanjing, query cached-by-task forecast/calendar context, and record whether a short-lived weather candidate would have been useful. It sends no message, generates no copy, adds no API Function, and keeps weather location separate from the `Asia/Shanghai` system timezone. Production deployment and Shadow observation are still required before any real-send decision.
 
 ## Current Delivery Gate — Phase 1 Health Check
 
