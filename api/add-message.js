@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { requirePrivateAppRequest } from '../lib/privateAppAuth.js'
+import { GENERATED_FILES_BUCKET } from '../lib/generatedFiles.js'
+import { normalizeMessageVoiceAsset } from '../lib/messageVoice.js'
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -34,6 +36,14 @@ export default async function handler(req, res) {
         })
       }
 
+      const { data: existingMessage } = await supabase
+        .from("messages")
+        .select("metadata")
+        .eq("user_id", user_id)
+        .eq("id", message_id)
+        .maybeSingle()
+      const voiceAsset = normalizeMessageVoiceAsset(existingMessage?.metadata)
+
       const { error } = await supabase
         .from("messages")
         .delete()
@@ -44,6 +54,15 @@ export default async function handler(req, res) {
         return res.status(500).json({
           error: error.message
         })
+      }
+
+      if (voiceAsset) {
+        const { error: voiceCleanupError } = await supabase.storage
+          .from(GENERATED_FILES_BUCKET)
+          .remove([voiceAsset.storage_path])
+        if (voiceCleanupError) {
+          console.error("MESSAGE VOICE CLEANUP FAILED:", voiceCleanupError)
+        }
       }
 
       return res.status(200).json({

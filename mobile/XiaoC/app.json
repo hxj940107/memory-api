@@ -55,7 +55,8 @@
         {
           "faceIDPermission": "允许小C使用 Face ID 保护你们的私人空间。"
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

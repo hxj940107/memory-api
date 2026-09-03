@@ -34,6 +34,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -84,6 +85,11 @@ import {
   MessageMarkdown,
 } from "../components/MessageMarkdown";
 import { stageSharedAlbumImport } from "../lib/sharedAlbumImportDraft";
+import {
+  formatVoiceDuration,
+  normalizeMessageVoiceAsset,
+  type MessageVoiceAsset,
+} from "../lib/messageVoice";
 
 type Message = {
   id: string;
@@ -113,6 +119,7 @@ type Message = {
     replyToUserMessageId?: string;
     replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
+    voice?: MessageVoiceAsset;
   };
 };
 
@@ -149,6 +156,7 @@ type HistoryItem = {
     replyToUserMessageId?: string;
     replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
+    voice?: MessageVoiceAsset;
   };
 };
 
@@ -167,6 +175,12 @@ type ChatResponse = {
 type SignedAttachmentResponse = {
   url: string;
   expires_in: number;
+};
+
+type MessageVoiceResponse = {
+  url: string;
+  expires_in: number;
+  voice: MessageVoiceAsset;
 };
 
 const MAX_IMAGES_PER_MESSAGE = 4;
@@ -771,6 +785,14 @@ export default function ChatScreen() {
 
   const [selectionText, setSelectionText] = useState<string | null>(null);
 
+  const audioPlayer = useAudioPlayer(undefined, {
+    updateInterval: 250,
+    downloadFirst: true,
+  });
+  const audioStatus = useAudioPlayerStatus(audioPlayer);
+  const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
+  const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
+
   const [messages, setMessages] = useState<Message[]>([]);
 
   const [isTyping, setIsTyping] = useState(false);
@@ -959,7 +981,10 @@ export default function ChatScreen() {
           diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
           imageUri: item.metadata?.imageUrl,
           createdAt: item.created_at,
-          metadata: item.metadata,
+          metadata: {
+            ...(item.metadata || {}),
+            voice: normalizeMessageVoiceAsset(item.metadata) || undefined,
+          },
           status: "sent",
         } satisfies Message;
       }),
@@ -1299,6 +1324,70 @@ export default function ChatScreen() {
     }
 
     pickFile();
+  };
+
+  const canOfferMessageVoice = (item?: Message) =>
+    !!item &&
+    item.role === "assistant" &&
+    !!item.cloudId &&
+    !!item.text.trim() &&
+    !item.treeholeDraft &&
+    !isDiaryText(item.text);
+
+  const playMessageVoice = async (item?: Message) => {
+    if (!canOfferMessageVoice(item) || !item?.cloudId || !conversationIdRef.current) {
+      return;
+    }
+
+    closeMessageMenu();
+
+    if (activeVoiceMessageId === item.id && audioStatus.isLoaded) {
+      if (audioStatus.playing) {
+        audioPlayer.pause();
+      } else {
+        if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
+          await audioPlayer.seekTo(0);
+        }
+        audioPlayer.play();
+      }
+      return;
+    }
+
+    setVoicePreparingId(item.id);
+    try {
+      const result = await postJson<MessageVoiceResponse>("/api/memory", {
+        type: "message_voice",
+        action: "prepare_playback",
+        user_id: APP_USER_ID,
+        conversation_id: conversationIdRef.current,
+        message_id: item.cloudId,
+      }, { timeoutMs: 45_000 });
+
+      setMessages((previous) => previous.map((messageItem) =>
+        messageItem.id === item.id
+          ? {
+              ...messageItem,
+              metadata: { ...(messageItem.metadata || {}), voice: result.voice },
+            }
+          : messageItem,
+      ));
+      audioPlayer.pause();
+      audioPlayer.replace(result.url);
+      setActiveVoiceMessageId(item.id);
+      requestAnimationFrame(() => audioPlayer.play());
+    } catch (error) {
+      const status = typeof error === "object" && error && "status" in error
+        ? Number(error.status)
+        : null;
+      Alert.alert(
+        status === 409 ? "声音还没选好" : "暂时没能播放",
+        status === 409
+          ? "等确定小C的声音后，这里就可以直接听了。"
+          : "稍后再试一次。",
+      );
+    } finally {
+      setVoicePreparingId(null);
+    }
   };
 
   const openConversationMenu = () => {
@@ -2197,6 +2286,7 @@ export default function ChatScreen() {
 
           {messages.map((item, index) => {
             const stableMessageId = getStableMessageId(item);
+            const voiceAsset = normalizeMessageVoiceAsset(item.metadata);
 
             const isLocatedMessage = stableMessageId === locatedMessageId;
             const isSearchTarget = stableMessageId === highlightedMessageId;
@@ -2450,6 +2540,47 @@ export default function ChatScreen() {
 	                      </Pressable>
 	                    ))
 	                      )}
+	                      {voiceAsset && (
+	                        <Pressable
+	                          accessibilityRole="button"
+	                          accessibilityLabel={
+	                            activeVoiceMessageId === item.id && audioStatus.playing
+	                              ? "暂停小C语音"
+	                              : "播放小C语音"
+	                          }
+	                          disabled={voicePreparingId === item.id}
+	                          style={({ pressed }) => [
+	                            styles.messageVoicePlayer,
+	                            pressed && styles.messageVoicePlayerPressed,
+	                          ]}
+	                          onPress={() => playMessageVoice(item)}
+	                        >
+	                          <Text style={styles.messageVoicePlayIcon}>
+	                            {voicePreparingId === item.id
+	                              ? "…"
+	                              : activeVoiceMessageId === item.id && audioStatus.playing
+	                                ? "Ⅱ"
+	                                : "▶"}
+	                          </Text>
+	                          <View style={styles.messageVoiceTrack}>
+	                            <View
+	                              style={[
+	                                styles.messageVoiceProgress,
+	                                activeVoiceMessageId === item.id && audioStatus.duration > 0
+	                                  ? { width: `${Math.min(100, (audioStatus.currentTime / audioStatus.duration) * 100)}%` }
+	                                  : undefined,
+	                              ]}
+	                            />
+	                          </View>
+	                          <Text style={styles.messageVoiceDuration}>
+	                            {formatVoiceDuration(
+	                              activeVoiceMessageId === item.id && audioStatus.duration > 0
+	                                ? audioStatus.duration
+	                                : voiceAsset.duration_seconds,
+	                            )}
+	                          </Text>
+	                        </Pressable>
+	                      )}
 	                    </>
 	                  )}
                 </View>
@@ -2645,7 +2776,8 @@ export default function ChatScreen() {
                   ),
                   top: Math.min(
                     Math.max(messageMenu.y - 18, 70),
-                    Dimensions.get("window").height - 230,
+                    Dimensions.get("window").height -
+                      (canOfferMessageVoice(messageMenu.message) && !moreMenuVisible ? 278 : 230),
                   ),
                 },
               ]}
@@ -2705,6 +2837,20 @@ export default function ChatScreen() {
                   >
                     <Text style={styles.messageMenuText}>选择</Text>
                   </Pressable>
+
+                  {canOfferMessageVoice(messageMenu?.message) && (
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.messageMenuItem,
+                        pressed && styles.messageMenuItemPressed,
+                      ]}
+                      onPress={() => playMessageVoice(messageMenu?.message)}
+                    >
+                      <Text style={styles.messageMenuText}>
+                        {voicePreparingId === messageMenu?.message?.id ? "正在准备…" : "听语音"}
+                      </Text>
+                    </Pressable>
+                  )}
 
                   <Pressable
                     style={({ pressed }) => [
@@ -3038,6 +3184,52 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     flexShrink: 1,
     includeFontPadding: false,
+  },
+
+  messageVoicePlayer: {
+    alignSelf: "flex-start",
+    minWidth: 132,
+    height: 32,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(74, 156, 246, 0.09)",
+  },
+
+  messageVoicePlayerPressed: {
+    backgroundColor: "rgba(74, 156, 246, 0.15)",
+  },
+
+  messageVoicePlayIcon: {
+    width: 18,
+    color: XiaoCColors.userBubble,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  messageVoiceTrack: {
+    width: 66,
+    height: 2,
+    marginHorizontal: 7,
+    borderRadius: 1,
+    overflow: "hidden",
+    backgroundColor: "rgba(74, 156, 246, 0.20)",
+  },
+
+  messageVoiceProgress: {
+    width: 0,
+    height: "100%",
+    borderRadius: 1,
+    backgroundColor: XiaoCColors.userBubble,
+  },
+
+  messageVoiceDuration: {
+    minWidth: 28,
+    color: XiaoCColors.textSecondary,
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
   },
 
   treeholeDraftCard: {

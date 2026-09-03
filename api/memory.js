@@ -47,6 +47,8 @@ import { isInvalidMomentText } from "../lib/momentPublishing.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { validateTreeholeSourceEvidence } from "../lib/treeholeProvenance.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
+import { prepareMessageVoicePlayback } from "../lib/messageVoice.js"
+import { getMessageVoiceSynthesizer } from "../lib/messageVoiceProvider.js"
 import { normalizeProactiveAttentionCandidates } from "../lib/proactiveAttentionCandidates.js"
 import {
   formatMentionPreferences,
@@ -4867,6 +4869,40 @@ export default async function handler(req, res) {
         }
         console.error("GENERATED FILE SIGN FAILED:", error)
         return res.status(500).json({ error: "文件暂时无法下载" })
+      }
+    }
+
+    if (req.method === "POST" && type === "message_voice") {
+      if (req.body?.action !== "prepare_playback") {
+        return res.status(405).json({ error: "Unsupported action" })
+      }
+
+      const { conversation_id, message_id } = req.body
+      if (!conversation_id || !message_id) {
+        return res.status(400).json({ error: "Missing message identity" })
+      }
+
+      try {
+        const result = await prepareMessageVoicePlayback({
+          supabase,
+          user_id,
+          conversation_id,
+          message_id,
+          synthesize: getMessageVoiceSynthesizer(),
+        })
+        return res.status(200).json(result)
+      } catch (error) {
+        if (error?.code === "MESSAGE_NOT_FOUND" || error?.code === "VOICE_NOT_FOUND") {
+          return res.status(404).json({ error: "Message voice not found", code: error.code })
+        }
+        if (error?.code === "VOICE_PROVIDER_NOT_CONFIGURED") {
+          return res.status(409).json({ error: "小C的声音还没有配置好", code: error.code })
+        }
+        if (error?.code === "VOICE_TEXT_EMPTY" || error?.code === "VOICE_TEXT_TOO_LONG") {
+          return res.status(400).json({ error: error.message, code: error.code })
+        }
+        console.error("MESSAGE VOICE PREPARE FAILED:", error)
+        return res.status(500).json({ error: "语音暂时没有准备好" })
       }
     }
 
