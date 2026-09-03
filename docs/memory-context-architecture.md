@@ -462,7 +462,7 @@ Main Chat Prompt
 - 周/月关系回顾，不替换现有 Wife Observation Diary；
 - 共读模式中阅读进度与长期观点分离。
 
-### Weather Reality Context：Phase 1 Shadow
+### Weather Reality Context：Shadow + Limited Send
 
 天气属于短期现实环境，不属于 Stable Memory、Active Context 或 Proactive Attention Event。第一阶段只建立短生命周期 Shadow 判断：
 
@@ -471,7 +471,10 @@ Main Chat Prompt
 - 每天在配置化的早间与下午生活节奏范围内检查，不使用固定整点通知；
 - 天气与中国节假日/调休日历先做确定性筛选，只有显著天气信号才使用一次 small model 读取有限近期共同经历，判断当天通勤、休息或明确外出语境；
 - 用户明确休息且没有外出证据时，普通通勤天气不形成可用候选；恶劣天气可以作为独立环境变化保留；
-- 当前只持久化 `would_create_weather_candidate`、原因、日历来源、天气窗口、是否调用 judge 等诊断，不生成正文、不发消息、不进入主动消息 arbitration；
+- 始终持久化 `would_create_weather_candidate`、原因、日历来源、天气窗口、judge、live boundary 与 final recheck diagnostics；默认 fail closed，只有 `WEATHER_LIVE_SEND_ENABLED=true` 才开放 limited send；
+- live candidate 必须继续通过 quiet hours、cooldown、daily proactive limit、近期用户活跃和同一天同天气过程去重；生成前后用户消息发生变化或最终天气信号改变时不发送；
+- 天气与到期 inactivity 同时存在时，只能由一个来源完成本轮联系；天气真正发送后接管该次 inactivity，不能连续发送两条；
+- 文案使用现有主聊天模型生成，但允许自然拒绝；代码没有固定天气话术或 fallback 文案；
 - Weather Shadow 不进入主聊天 prompt，不形成长期记忆，也不能刷新 Active Context attention。
 
 ### Low Priority TODO：Natural Rhythm for Inactivity Reach-out

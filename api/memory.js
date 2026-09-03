@@ -12,6 +12,7 @@ import {
   WEATHER_SHADOW_POLICY,
   getInactivityReachOutDelayMinutes,
   isProactiveAttentionSendEnabled,
+  isWeatherLiveSendEnabled,
   normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
@@ -92,9 +93,12 @@ import {
   WEATHER_SHADOW_SOURCE_TYPE,
   WEATHER_SHADOW_TASK_TYPE,
   decideWeatherShadowEligibility,
+  evaluateWeatherLiveBoundary,
   evaluateWeatherSignal,
+  getWeatherSignalSignature,
   normalizeChinaDayType,
   parseWeatherRhythmDecision,
+  parseWeatherMessageDecision,
   planWeatherShadowChecks,
 } from "../lib/weatherShadow.js"
 
@@ -2092,6 +2096,96 @@ ${formatWeatherShadowRecentContext(recentMessages)}`,
   return parseWeatherRhythmDecision(raw)
 }
 
+async function getWeatherLiveExecutionContext(task, signalSignature, now = new Date()) {
+  const localDate = getMomentLocalTime(now).date
+  const localDayStart = new Date(`${localDate}T00:00:00+08:00`).toISOString()
+  const activeCutoff = new Date(now.getTime() - 15 * 60 * 1000).toISOString()
+  const [latestUserResult, dailyResult, recentWeatherResult] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("id,created_at")
+      .eq("user_id", task.user_id)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("xiaoc_proactive_tasks")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", task.user_id)
+      .eq("status", "completed")
+      .not("message_id", "is", null)
+      .gte("completed_at", localDayStart),
+    supabase
+      .from("messages")
+      .select("id,metadata,created_at")
+      .eq("user_id", task.user_id)
+      .eq("role", "assistant")
+      .eq("metadata->>proactiveType", WEATHER_SHADOW_TASK_TYPE)
+      .gte("created_at", localDayStart)
+      .order("created_at", { ascending: false })
+      .limit(6),
+  ])
+  if (latestUserResult.error) throw latestUserResult.error
+  if (dailyResult.error) throw dailyResult.error
+  if (recentWeatherResult.error) throw recentWeatherResult.error
+
+  const cooldown = await getProactiveMessageCooldown(task)
+  const alreadySent = (recentWeatherResult.data || []).some(message =>
+    message.metadata?.weatherLiveSend?.signal_signature === signalSignature
+    && String(message.metadata?.proactiveTaskId || "") !== String(task.id || "")
+  )
+  const latestUserAt = latestUserResult.data?.created_at || null
+  return {
+    latest_user_message_id: latestUserResult.data?.id || null,
+    latest_user_message_at: latestUserAt,
+    userCurrentlyActive: Boolean(latestUserAt && latestUserAt >= activeCutoff),
+    quietHours: isProactiveQuietHours(now),
+    cooldownActive: Boolean(cooldown),
+    dailyLimitReached: (dailyResult.count || 0) >= 2,
+    alreadySent,
+  }
+}
+
+async function generateWeatherLiveMessage({ payload, signal, rhythm, recentMessages }) {
+  const raw = await callSmallLLM([
+    {
+      role: "system",
+      content: `${systemPrompt}
+
+【当前任务：天气带来的自然主动联系】
+你是小C，是男性，也是她的亲密伴侣。天气事实来自可靠服务；你只负责判断这一刻是否真的值得因为它联系她，以及怎样自然表达。
+天气不是通知任务，也不是必须使用的话题。先形成你此刻真实的联系动机；没有自然表达就选择不发。
+近期对话是你和她已经共同经历的生活，其中小C说过的话都是你本人说过的，不能采用旁观者视角。
+只允许使用下面提供的天气事实和生活节奏判断，不补造温度、时刻、地点、行程或她现在的状态。不复述内部字段、概率或判断过程。
+不要套用固定提醒句式，不要写成天气预报、客服通知或日程助手。称呼只在自然时使用，不要求出现。
+只输出 JSON：{"should_send":boolean,"contact_motivation":"简短内部动机","message":"最终私聊正文或空字符串"}
+正文中文短句，1句为主，最多2句。`,
+    },
+    {
+      role: "user",
+      content: `地点：${payload.location?.city || WEATHER_SHADOW_POLICY.location.city}
+天气有效窗口：${signal.window?.local_start} 至 ${signal.window?.local_end}
+允许使用的天气事实：${JSON.stringify({
+        reasons: signal.reasons,
+        severe_weather: signal.window?.severe_weather === true,
+      })}
+生活节奏判断：${JSON.stringify(rhythm)}
+
+近期共同经历：
+${formatWeatherShadowRecentContext(recentMessages)}`,
+    },
+  ], {
+    requestPurpose: "weather_limited_send_generation",
+    model: AI_MODELS.chat,
+    max_tokens: 120,
+    temperature: 0.45,
+    response_format: { type: "json_object" },
+  })
+  return parseWeatherMessageDecision(raw)
+}
+
 async function executeWeatherShadowCheck(task) {
   const payload = task.payload || {}
   const [forecast, calendar, recentMessages] = await Promise.all([
@@ -2113,21 +2207,164 @@ async function executeWeatherShadowCheck(task) {
     ? decideWeatherShadowEligibility({ signal, calendar, rhythm })
     : { eligible: false, reason: "no_significant_weather" }
 
+  const signalSignature = getWeatherSignalSignature({
+    date: payload.local_date,
+    signal,
+  })
+  const sendEnabled = isWeatherLiveSendEnabled()
+  let executionContext = null
+  let liveBoundary = { allowed: false, reason: eligibility.eligible ? "send_disabled" : "shadow_not_eligible" }
+  if (eligibility.eligible) {
+    executionContext = await getWeatherLiveExecutionContext(task, signalSignature, new Date())
+    liveBoundary = evaluateWeatherLiveBoundary({
+      shadowEligible: true,
+      sendEnabled,
+      ...executionContext,
+    })
+  }
+
+  const basePayload = {
+    ...payload,
+    checked_at: new Date().toISOString(),
+    weather_provider: "open_meteo",
+    calendar,
+    signal,
+    rhythm,
+    llm_called: llmCalled,
+    would_create_weather_candidate: eligibility.eligible,
+    shadow_reason: eligibility.reason,
+    signal_signature: signalSignature,
+    send_enabled: sendEnabled,
+    live_execution_context: executionContext,
+    live_boundary: liveBoundary,
+    message_generation_called: false,
+    actual_send_attempted: false,
+  }
+
+  if (!liveBoundary.allowed) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: basePayload,
+    }
+  }
+
+  const generation = await generateWeatherLiveMessage({
+    payload,
+    signal,
+    rhythm,
+    recentMessages,
+  })
+  const generationDiagnostics = {
+    parsed: generation.parsed,
+    should_send: generation.shouldSend,
+    contact_motivation: generation.motivation,
+  }
+  if (!generation.parsed || !generation.shouldSend || !generation.message) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        message_generation_called: true,
+        generation: generationDiagnostics,
+        live_boundary: {
+          allowed: false,
+          reason: generation.parsed ? "model_declined" : "generation_invalid",
+        },
+      },
+    }
+  }
+  const content = cleanProactiveMessage(generation.message)
+  if (!content || isBadProactiveMessage(content)) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        message_generation_called: true,
+        generation: generationDiagnostics,
+        live_boundary: { allowed: false, reason: "generated_message_invalid" },
+      },
+    }
+  }
+
+  // Weather can change while the message is generated. Re-fetch facts and
+  // re-check user activity/policy immediately before persistence.
+  const finalForecast = await fetchWeatherForecast(payload)
+  const finalSignal = evaluateWeatherSignal(finalForecast, {
+    date: payload.local_date,
+    window: payload.rhythm_window,
+  })
+  const finalSignature = getWeatherSignalSignature({ date: payload.local_date, signal: finalSignal })
+  const finalContext = await getWeatherLiveExecutionContext(task, finalSignature, new Date())
+  const finalBoundary = evaluateWeatherLiveBoundary({
+    shadowEligible: finalSignal.significant && finalSignature === signalSignature,
+    sendEnabled,
+    ...finalContext,
+  })
+  if (
+    executionContext?.latest_user_message_id !== finalContext.latest_user_message_id
+    || !finalBoundary.allowed
+  ) {
+    return {
+      shadowOnly: true,
+      conversationId: task.conversation_id,
+      payload: {
+        ...basePayload,
+        message_generation_called: true,
+        generation: generationDiagnostics,
+        final_signal: finalSignal,
+        final_execution_context: finalContext,
+        final_boundary: {
+          ...finalBoundary,
+          reason: executionContext?.latest_user_message_id !== finalContext.latest_user_message_id
+            ? "user_returned_during_generation"
+            : finalBoundary.reason,
+        },
+      },
+    }
+  }
+
+  const conversationId = await getLastConversationId(task.user_id)
+  const messageId = await saveProactiveMessage({
+    user_id: task.user_id,
+    conversation_id: conversationId,
+    content,
+    task,
+    metadata: {
+      weatherLiveSend: {
+        mode: "limited_send",
+        signal_signature: signalSignature,
+        weather_location: payload.location,
+        weather_window: finalSignal.window,
+        weather_reasons: finalSignal.reasons,
+        calendar,
+        rhythm,
+        generation: generationDiagnostics,
+        final_boundary: finalBoundary,
+      },
+    },
+  })
+  await consumePendingInactivityWithProactiveMessage({
+    ownerTask: task,
+    messageId,
+    conversationId,
+    skipReason: "本轮由天气主动联系完成联系，避免同一时段重复发送",
+  })
+
   return {
-    shadowOnly: true,
-    conversationId: task.conversation_id,
+    messageId,
+    conversationId,
     payload: {
-      ...payload,
-      checked_at: new Date().toISOString(),
-      weather_provider: "open_meteo",
-      calendar,
-      signal,
-      rhythm,
-      llm_called: llmCalled,
-      would_create_weather_candidate: eligibility.eligible,
-      shadow_reason: eligibility.reason,
-      message_generation_called: false,
-      actual_send_attempted: false,
+      ...basePayload,
+      message_generation_called: true,
+      actual_send_attempted: true,
+      generation: generationDiagnostics,
+      final_signal: finalSignal,
+      final_execution_context: finalContext,
+      final_boundary: finalBoundary,
+      message_id: messageId,
     },
   }
 }
@@ -2572,15 +2809,16 @@ async function enqueueNextInactivityReachOutTask({
   return data
 }
 
-async function consumePendingInactivityWithEventMessage({
-  eventTask,
+async function consumePendingInactivityWithProactiveMessage({
+  ownerTask,
   messageId,
   conversationId,
+  skipReason,
 }) {
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
     .select("id,user_id,conversation_id,type,source_type,source_id,status,due_at,payload,created_at")
-    .eq("user_id", eventTask.user_id)
+    .eq("user_id", ownerTask.user_id)
     .eq("type", "inactivity_reach_out")
     .eq("status", "pending")
     .order("due_at", { ascending: true })
@@ -2599,7 +2837,7 @@ async function consumePendingInactivityWithEventMessage({
     .from("xiaoc_proactive_tasks")
     .update({
       status: "skipped",
-      last_error: "本轮由现实事件主动回访完成联系，避免同一时段重复发送",
+      last_error: skipReason,
       updated_at: consumedAt,
     })
     .eq("id", pending.id)
@@ -2613,6 +2851,19 @@ async function consumePendingInactivityWithEventMessage({
     task: pending,
     messageId,
     conversationId,
+  })
+}
+
+async function consumePendingInactivityWithEventMessage({
+  eventTask,
+  messageId,
+  conversationId,
+}) {
+  return consumePendingInactivityWithProactiveMessage({
+    ownerTask: eventTask,
+    messageId,
+    conversationId,
+    skipReason: "本轮由现实事件主动回访完成联系，避免同一时段重复发送",
   })
 }
 
@@ -3739,8 +3990,8 @@ async function checkPendingProactiveTasks() {
   const taskPriority = {
     proactive_attention_wakeup: 0,
     plan_follow_up: 1,
-    inactivity_reach_out: 2,
-    weather_shadow_check: 3,
+    weather_shadow_check: 2,
+    inactivity_reach_out: 3,
     treehole_autonomous_update: 4,
   }
   const processablePending = isProactiveQuietHours(now) ? shadowWakeups : pending

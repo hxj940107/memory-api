@@ -2,11 +2,14 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import test from "node:test"
 
-import { WEATHER_SHADOW_POLICY } from "../lib/aiConfig.js"
+import { WEATHER_SHADOW_POLICY, isWeatherLiveSendEnabled } from "../lib/aiConfig.js"
 import {
   decideWeatherShadowEligibility,
+  evaluateWeatherLiveBoundary,
   evaluateWeatherSignal,
+  getWeatherSignalSignature,
   normalizeChinaDayType,
+  parseWeatherMessageDecision,
   parseWeatherRhythmDecision,
   planWeatherShadowChecks,
 } from "../lib/weatherShadow.js"
@@ -86,13 +89,65 @@ test("rest days suppress commute weather unless there is an outing or severe wea
   }).eligible, true)
 })
 
-test("weather phase remains strict Shadow and does not enter message send paths", () => {
+test("weather live send is fail-closed and disabled runs remain Shadow", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
+  assert.equal(isWeatherLiveSendEnabled({}), false)
+  assert.equal(isWeatherLiveSendEnabled({ WEATHER_LIVE_SEND_ENABLED: "false" }), false)
+  assert.equal(isWeatherLiveSendEnabled({ WEATHER_LIVE_SEND_ENABLED: "true" }), true)
   assert.match(source, /WEATHER_SHADOW_TASK_TYPE/)
   assert.match(source, /shadowOnly: true/)
-  assert.match(source, /message_generation_called: false/)
-  assert.match(source, /actual_send_attempted: false/)
-  assert.doesNotMatch(source, /saveProactiveMessage\(\{[^}]*weather_shadow/s)
+  assert.match(source, /isWeatherLiveSendEnabled/)
+  assert.match(source, /weather_limited_send_generation/)
+})
+
+test("weather live boundary preserves proactive policy and duplicate suppression", () => {
+  const eligible = {
+    shadowEligible: true,
+    sendEnabled: true,
+    quietHours: false,
+    cooldownActive: false,
+    dailyLimitReached: false,
+    userCurrentlyActive: false,
+    alreadySent: false,
+  }
+  assert.deepEqual(evaluateWeatherLiveBoundary(eligible), {
+    allowed: true,
+    reason: "limited_send_eligible",
+  })
+  assert.equal(evaluateWeatherLiveBoundary({ ...eligible, cooldownActive: true }).reason, "proactive_cooldown")
+  assert.equal(evaluateWeatherLiveBoundary({ ...eligible, userCurrentlyActive: true }).reason, "user_currently_active")
+  assert.equal(evaluateWeatherLiveBoundary({ ...eligible, alreadySent: true }).reason, "weather_signal_already_sent")
+})
+
+test("weather generation may naturally decline and has no fallback copy", () => {
+  assert.deepEqual(parseWeatherMessageDecision(JSON.stringify({
+    should_send: false,
+    contact_motivation: "现在不适合打扰她",
+    message: "",
+  })), {
+    parsed: true,
+    shouldSend: false,
+    motivation: "现在不适合打扰她",
+    message: "",
+  })
+  assert.equal(parseWeatherMessageDecision("broken").parsed, false)
+})
+
+test("same weather process has a stable daily signature", () => {
+  const signal = { reasons: ["strong_wind", "likely_precipitation"] }
+  assert.equal(
+    getWeatherSignalSignature({ date: "2026-09-03", signal }),
+    "2026-09-03:likely_precipitation+strong_wind",
+  )
+})
+
+test("weather wins before inactivity only when it passes live boundaries", () => {
+  const source = fs.readFileSync("api/memory.js", "utf8")
+  assert.match(source, /weather_shadow_check: 2,\s+inactivity_reach_out: 3/)
+  assert.match(source, /本轮由天气主动联系完成联系，避免同一时段重复发送/)
+  assert.match(source, /finalSignal\.significant && finalSignature === signalSignature/)
+  assert.match(source, /user_returned_during_generation/)
+  assert.match(source, /metadata\?\.proactiveTaskId[^]*task\.id/)
 })
 
 test("weather and timezone locations remain separate configuration facts", () => {
