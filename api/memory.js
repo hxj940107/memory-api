@@ -4891,6 +4891,7 @@ export default async function handler(req, res) {
           message_id,
           synthesize: voiceSynthesizer?.synthesize,
           expectedVoiceVersion: voiceSynthesizer?.voiceVersion,
+          presentation: req.body?.presentation === "voice_reply" ? "voice_reply" : null,
         })
         return res.status(200).json(result)
       } catch (error) {

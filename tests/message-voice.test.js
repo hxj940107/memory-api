@@ -34,11 +34,13 @@ test("message voice metadata only accepts a complete ready asset", () => {
     usage_characters: 26,
     estimated_cost_cny: 0.0091,
     price_cny_per_10k: 3.5,
+    presentation: "voice_reply",
   } })
   assert.equal(asset.id, "voice-1")
   assert.equal(asset.duration_seconds, 8.4)
   assert.equal(asset.usage_characters, 26)
   assert.equal(asset.estimated_cost_cny, 0.0091)
+  assert.equal(asset.presentation, "voice_reply")
 })
 
 test("message voice identity is content-based and storage path is isolated", () => {
@@ -78,7 +80,7 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /const \[expandedVoiceMessageId, setExpandedVoiceMessageId\]/)
   assert.match(chat, /onPress=\{\(\) => toggleMessageVoiceControl\(item\)\}/)
-  assert.match(chat, /\{expandedVoiceMessageId === item\.id && \(/)
+  assert.match(chat, /isVoiceReply \|\| expandedVoiceMessageId === item\.id/)
   assert.match(chat, /onPress=\{\(\) => playMessageVoice\(item\)\}/)
   const revealControl = chat.slice(
     chat.indexOf("const toggleMessageVoiceControl"),
@@ -94,7 +96,7 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
   assert.match(chat, /status === 409 \? "声音还没选好"/)
 })
 
-test("a one-shot voice reply request prepares the saved assistant message without autoplay", () => {
+test("a one-shot voice reply stays behind typing dots, then renders as voice with optional transcript", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /const \[voiceReplyRequested, setVoiceReplyRequested\]/)
   assert.match(chat, />\s*语音\s*<\/Text>/)
@@ -105,11 +107,19 @@ test("a one-shot voice reply request prepares the saved assistant message withou
     /messageToSend\.voiceReplyRequested[\s\S]*message_id: assistantCloudId[\s\S]*voice: voiceResult\.voice/,
   )
   const requestedReplyBlock = chat.slice(
-    chat.indexOf("if (\n        messageToSend.voiceReplyRequested"),
-    chat.indexOf("} catch (error) {", chat.indexOf("if (\n        messageToSend.voiceReplyRequested")),
+    chat.indexOf("const shouldPrepareVoiceReply"),
+    chat.indexOf("} catch (error) {", chat.indexOf("const shouldPrepareVoiceReply")),
   )
   assert.match(requestedReplyBlock, /audioPlayer\.replace\(voiceResult\.url\)/)
   assert.doesNotMatch(requestedReplyBlock, /audioPlayer\.play\(\)/)
+  assert.match(requestedReplyBlock, /presentation: "voice_reply"/)
+  assert.match(requestedReplyBlock, /setMessages\(\(prev\) => upsertCloudMessage\(prev, voiceMessage\)\)/)
+  assert.match(requestedReplyBlock, /finally \{\s*setIsTyping\(false\)/)
+  assert.match(chat, /voiceAsset\?\.presentation === "voice_reply"/)
+  assert.match(chat, /isVoiceReply \|\| expandedVoiceMessageId === item\.id/)
+  assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
+  assert.match(chat, /\{isTyping && <TypingDots \/>\}/)
+  assert.doesNotMatch(chat, /正在准备语音/)
 })
 
 test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => {

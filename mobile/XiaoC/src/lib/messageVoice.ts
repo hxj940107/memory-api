@@ -8,6 +8,7 @@ export type MessageVoiceAsset = {
   provider: string | null;
   voice_id: string | null;
   voice_version: string | null;
+  presentation: "voice_reply" | null;
   content_hash: string;
   created_at: string | null;
 };
@@ -38,6 +39,7 @@ export function normalizeMessageVoiceAsset(metadata: unknown): MessageVoiceAsset
     provider: typeof voice.provider === "string" ? voice.provider : null,
     voice_id: typeof voice.voice_id === "string" ? voice.voice_id : null,
     voice_version: typeof voice.voice_version === "string" ? voice.voice_version : null,
+    presentation: voice.presentation === "voice_reply" ? "voice_reply" : null,
     content_hash: voice.content_hash,
     created_at: typeof voice.created_at === "string" ? voice.created_at : null,
   };

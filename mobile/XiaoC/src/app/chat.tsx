@@ -795,6 +795,9 @@ export default function ChatScreen() {
   const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
+  const [revealedVoiceTranscriptIds, setRevealedVoiceTranscriptIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -1349,6 +1352,31 @@ export default function ChatScreen() {
     setExpandedVoiceMessageId(item.id);
   };
 
+  const toggleVoiceReplyTranscript = (item: Message) => {
+    const isRevealed = revealedVoiceTranscriptIds.has(item.id);
+    const apply = () => setRevealedVoiceTranscriptIds((current) => {
+      const next = new Set(current);
+      if (isRevealed) next.delete(item.id);
+      else next.add(item.id);
+      return next;
+    });
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["取消", isRevealed ? "收起文字" : "转文字"],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => buttonIndex === 1 && apply(),
+      );
+      return;
+    }
+    Alert.alert("小C的语音", undefined, [
+      { text: "取消", style: "cancel" },
+      { text: isRevealed ? "收起文字" : "转文字", onPress: apply },
+    ]);
+  };
+
   const playMessageVoice = async (item?: Message) => {
     if (!canOfferMessageVoice(item) || !item?.cloudId || !conversationIdRef.current) {
       return;
@@ -1368,9 +1396,13 @@ export default function ChatScreen() {
 
     setVoicePreparingId(item.id);
     try {
+      const existingVoice = normalizeMessageVoiceAsset(item.metadata);
       const result = await postJson<MessageVoiceResponse>("/api/memory", {
         type: "message_voice",
         action: "prepare_playback",
+        ...(existingVoice?.presentation === "voice_reply"
+          ? { presentation: "voice_reply" }
+          : {}),
         user_id: APP_USER_ID,
         conversation_id: conversationIdRef.current,
         message_id: item.cloudId,
@@ -1821,7 +1853,6 @@ export default function ChatScreen() {
       );
 
       pendingReplyClientIdRef.current = null;
-      setIsTyping(false);
       setDeliveryNotice(null);
 
       const treeholeDraft = parseTreeholeDraft(data.reply || "");
@@ -1832,6 +1863,7 @@ export default function ChatScreen() {
           type: typeof data.assistant_message_id,
         });
         latestCloudMessageIdRef.current = null;
+        setIsTyping(false);
         return;
       }
       const assistantMessage: Message = {
@@ -1845,50 +1877,47 @@ export default function ChatScreen() {
         status: "sent",
       };
 
-      setMessages((prev) =>
-        assistantCloudId
-          ? upsertCloudMessage(prev, assistantMessage)
-          : [...prev, assistantMessage],
-      );
       latestCloudMessageIdRef.current = assistantCloudId;
 
-      if (
+      const shouldPrepareVoiceReply =
         messageToSend.voiceReplyRequested &&
         assistantCloudId &&
         !treeholeDraft &&
-        canOfferMessageVoice(assistantMessage)
-      ) {
-        setExpandedVoiceMessageId(assistantMessage.id);
-        setVoicePreparingId(assistantMessage.id);
+        canOfferMessageVoice(assistantMessage);
+
+      if (shouldPrepareVoiceReply) {
         try {
           const voiceResult = await postJson<MessageVoiceResponse>("/api/memory", {
             type: "message_voice",
             action: "prepare_playback",
+            presentation: "voice_reply",
             user_id: APP_USER_ID,
             conversation_id: data.conversation_id || conversationIdRef.current,
             message_id: assistantCloudId,
           }, { timeoutMs: 45_000 });
 
-          setMessages((previous) => previous.map((messageItem) =>
-            messageItem.id === assistantMessage.id
-              ? {
-                  ...messageItem,
-                  metadata: {
-                    ...(messageItem.metadata || {}),
-                    voice: voiceResult.voice,
-                  },
-                }
-              : messageItem,
-          ));
+          const voiceMessage: Message = {
+            ...assistantMessage,
+            metadata: { ...(assistantMessage.metadata || {}), voice: voiceResult.voice },
+          };
+          setMessages((prev) => upsertCloudMessage(prev, voiceMessage));
           audioPlayer.pause();
           audioPlayer.replace(voiceResult.url);
           setActiveVoiceMessageId(assistantMessage.id);
         } catch (voiceError) {
           console.log("Requested voice reply preparation failed:", voiceError);
-          Alert.alert("文字回复已经收到", "这次语音暂时没有准备好，可以稍后再点气泡试听。");
+          setMessages((prev) => upsertCloudMessage(prev, assistantMessage));
+          Alert.alert("这次语音没准备好", "已经为你保留了小C的文字回复。");
         } finally {
-          setVoicePreparingId(null);
+          setIsTyping(false);
         }
+      } else {
+        setMessages((prev) =>
+          assistantCloudId
+            ? upsertCloudMessage(prev, assistantMessage)
+            : [...prev, assistantMessage],
+        );
+        setIsTyping(false);
       }
     } catch (error) {
       console.log("CHAT ERROR:", error);
@@ -2345,6 +2374,8 @@ export default function ChatScreen() {
           {messages.map((item, index) => {
             const stableMessageId = getStableMessageId(item);
             const voiceAsset = normalizeMessageVoiceAsset(item.metadata);
+            const isVoiceReply = voiceAsset?.presentation === "voice_reply";
+            const isVoiceTranscriptRevealed = revealedVoiceTranscriptIds.has(item.id);
 
             const isLocatedMessage = stableMessageId === locatedMessageId;
             const isSearchTarget = stableMessageId === highlightedMessageId;
@@ -2507,7 +2538,8 @@ export default function ChatScreen() {
 	                <View
 	                  style={[
 	                    styles.aiWrap,
-	                    hasBlockMarkdown(item.text) && styles.aiWrapStructured,
+	                    (!isVoiceReply || isVoiceTranscriptRevealed) &&
+	                      hasBlockMarkdown(item.text) && styles.aiWrapStructured,
 	                    shouldShowMessageTime(item, messages[index - 1])
 	                      ? styles.messageAfterTime
 	                      : index > 0 && messages[index - 1].role === item.role
@@ -2557,7 +2589,8 @@ export default function ChatScreen() {
 	                          ))}
 	                        </View>
 	                      )}
-	                      {hasBlockMarkdown(item.text) ? (
+	                      {(!isVoiceReply || isVoiceTranscriptRevealed) && (
+	                      hasBlockMarkdown(item.text) ? (
 	                    <MessageMarkdown
 	                      text={item.text}
 	                      onPress={() => toggleMessageVoiceControl(item)}
@@ -2599,8 +2632,8 @@ export default function ChatScreen() {
 	                        </Text>
 	                      </Pressable>
 	                    ))
-	                      )}
-	                      {expandedVoiceMessageId === item.id && (
+	                      ))}
+	                      {isVoiceReply || expandedVoiceMessageId === item.id ? (
 	                        <Pressable
 	                          accessibilityRole="button"
 	                          accessibilityLabel={
@@ -2614,6 +2647,7 @@ export default function ChatScreen() {
 	                            pressed && styles.messageVoicePlayerPressed,
 	                          ]}
 	                          onPress={() => playMessageVoice(item)}
+	                          onLongPress={() => isVoiceReply && toggleVoiceReplyTranscript(item)}
 	                        >
 	                          <Text style={styles.messageVoicePlayIcon}>
 	                            {voicePreparingId === item.id
@@ -2648,7 +2682,7 @@ export default function ChatScreen() {
 	                            <Text style={styles.messageVoicePrompt}>听语音</Text>
 	                          )}
 	                        </Pressable>
-	                      )}
+	                      ) : null}
 	                    </>
 	                  )}
                 </View>
