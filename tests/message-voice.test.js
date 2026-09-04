@@ -66,10 +66,22 @@ test("provider-neutral prepare boundary refuses generation when no provider is s
   )
 })
 
-test("mobile voice UI stays hidden until a ready asset exists", () => {
+test("mobile voice UI uses a two-step reveal before generating audio", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
-  assert.match(chat, /canOfferMessageVoice\(messageMenu\?\.message\)/)
-  assert.match(chat, /\{voiceAsset && \(/)
+  assert.match(chat, /const \[expandedVoiceMessageId, setExpandedVoiceMessageId\]/)
+  assert.match(chat, /onPress=\{\(\) => toggleMessageVoiceControl\(item\)\}/)
+  assert.match(chat, /\{expandedVoiceMessageId === item\.id && \(/)
+  assert.match(chat, /onPress=\{\(\) => playMessageVoice\(item\)\}/)
+  const revealControl = chat.slice(
+    chat.indexOf("const toggleMessageVoiceControl"),
+    chat.indexOf("const playMessageVoice"),
+  )
+  assert.doesNotMatch(revealControl, /postJson|prepare_playback/)
+  const messageMenu = chat.slice(
+    chat.indexOf("{messageMenu && ("),
+    chat.indexOf("{selectionModalVisible && ("),
+  )
+  assert.doesNotMatch(messageMenu, />听语音</)
   assert.match(chat, /type: "message_voice"[\s\S]*action: "prepare_playback"/)
   assert.match(chat, /status === 409 \? "声音还没选好"/)
 })

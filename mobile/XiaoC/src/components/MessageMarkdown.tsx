@@ -245,12 +245,14 @@ function MarkdownContent({
 export function MessageMarkdown({
   text,
   variant = "chat",
+  onPress,
   onLongPress,
   highlight,
   highlightOpacity,
 }: {
   text: string;
   variant?: MessageMarkdownVariant;
+  onPress?: (event: GestureResponderEvent) => void;
   onLongPress?: (event: GestureResponderEvent) => void;
   highlight?: string;
   highlightOpacity?: Animated.Value;
@@ -278,8 +280,8 @@ export function MessageMarkdown({
     </View>
   );
 
-  return onLongPress ? (
-    <Pressable onLongPress={onLongPress}>{content}</Pressable>
+  return onPress || onLongPress ? (
+    <Pressable onPress={onPress} onLongPress={onLongPress}>{content}</Pressable>
   ) : (
     content
   );

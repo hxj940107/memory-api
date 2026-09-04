@@ -790,8 +790,10 @@ export default function ChatScreen() {
     downloadFirst: true,
   });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
+  const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
+  const voiceCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -1334,12 +1336,31 @@ export default function ChatScreen() {
     !item.treeholeDraft &&
     !isDiaryText(item.text);
 
+  const toggleMessageVoiceControl = (item?: Message) => {
+    if (!canOfferMessageVoice(item) || !item) return;
+    if (voicePreparingId === item.id) return;
+
+    if (voiceCollapseTimerRef.current) {
+      clearTimeout(voiceCollapseTimerRef.current);
+      voiceCollapseTimerRef.current = null;
+    }
+
+    if (expandedVoiceMessageId === item.id) {
+      if (activeVoiceMessageId === item.id && audioStatus.playing) {
+        audioPlayer.pause();
+      }
+      setExpandedVoiceMessageId(null);
+      return;
+    }
+
+    if (audioStatus.playing) audioPlayer.pause();
+    setExpandedVoiceMessageId(item.id);
+  };
+
   const playMessageVoice = async (item?: Message) => {
     if (!canOfferMessageVoice(item) || !item?.cloudId || !conversationIdRef.current) {
       return;
     }
-
-    closeMessageMenu();
 
     if (activeVoiceMessageId === item.id && audioStatus.isLoaded) {
       if (audioStatus.playing) {
@@ -1389,6 +1410,30 @@ export default function ChatScreen() {
       setVoicePreparingId(null);
     }
   };
+
+  useEffect(() => {
+    if (!audioStatus.didJustFinish || !activeVoiceMessageId) return;
+
+    if (voiceCollapseTimerRef.current) {
+      clearTimeout(voiceCollapseTimerRef.current);
+    }
+    const completedMessageId = activeVoiceMessageId;
+    voiceCollapseTimerRef.current = setTimeout(() => {
+      setExpandedVoiceMessageId((current) =>
+        current === completedMessageId ? null : current,
+      );
+      voiceCollapseTimerRef.current = null;
+    }, 1600);
+  }, [audioStatus.didJustFinish, activeVoiceMessageId]);
+
+  useEffect(() => {
+    return () => {
+      if (voiceCollapseTimerRef.current) {
+        clearTimeout(voiceCollapseTimerRef.current);
+        voiceCollapseTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const openConversationMenu = () => {
     const currentConversationId = conversationIdRef.current;
@@ -1475,6 +1520,10 @@ export default function ChatScreen() {
 
       setConversationId(id);
       if (conversationIdRef.current !== id) {
+        audioPlayer.pause();
+        setExpandedVoiceMessageId(null);
+        setActiveVoiceMessageId(null);
+        setVoicePreparingId(null);
         prependAnchorRef.current = null;
         skipNextMessageAutoScrollRef.current = false;
         scrollOffsetYRef.current = 0;
@@ -2255,6 +2304,14 @@ export default function ChatScreen() {
               endLocationHighlight();
             }
           }}
+          onScrollBeginDrag={() => {
+            const voiceIsPlaying =
+              expandedVoiceMessageId === activeVoiceMessageId && audioStatus.playing;
+            const voiceIsPreparing = expandedVoiceMessageId === voicePreparingId;
+            if (!voiceIsPlaying && !voiceIsPreparing) {
+              setExpandedVoiceMessageId(null);
+            }
+          }}
           scrollEventThrottle={16}
           onContentSizeChange={(_width, height) => {
             const anchor = prependAnchorRef.current;
@@ -2502,6 +2559,7 @@ export default function ChatScreen() {
 	                      {hasBlockMarkdown(item.text) ? (
 	                    <MessageMarkdown
 	                      text={item.text}
+	                      onPress={() => toggleMessageVoiceControl(item)}
 	                      highlight={isSearchTarget ? targetSearchQuery : undefined}
 	                      highlightOpacity={locationHighlightOpacity}
 	                      onLongPress={(event) =>
@@ -2529,6 +2587,7 @@ export default function ChatScreen() {
 	                            event.nativeEvent.pageY,
 	                          )
 	                        }
+	                        onPress={() => toggleMessageVoiceControl(item)}
 	                      >
 	                        <Text style={styles.aiText}>
 	                          <InlineMarkdown
@@ -2540,7 +2599,7 @@ export default function ChatScreen() {
 	                      </Pressable>
 	                    ))
 	                      )}
-	                      {voiceAsset && (
+	                      {expandedVoiceMessageId === item.id && (
 	                        <Pressable
 	                          accessibilityRole="button"
 	                          accessibilityLabel={
@@ -2562,23 +2621,31 @@ export default function ChatScreen() {
 	                                ? "Ⅱ"
 	                                : "▶"}
 	                          </Text>
-	                          <View style={styles.messageVoiceTrack}>
-	                            <View
-	                              style={[
-	                                styles.messageVoiceProgress,
-	                                activeVoiceMessageId === item.id && audioStatus.duration > 0
-	                                  ? { width: `${Math.min(100, (audioStatus.currentTime / audioStatus.duration) * 100)}%` }
-	                                  : undefined,
-	                              ]}
-	                            />
-	                          </View>
-	                          <Text style={styles.messageVoiceDuration}>
-	                            {formatVoiceDuration(
-	                              activeVoiceMessageId === item.id && audioStatus.duration > 0
-	                                ? audioStatus.duration
-	                                : voiceAsset.duration_seconds,
-	                            )}
-	                          </Text>
+	                          {voicePreparingId === item.id ? (
+	                            <Text style={styles.messageVoicePrompt}>正在准备</Text>
+	                          ) : voiceAsset ? (
+	                            <>
+	                              <View style={styles.messageVoiceTrack}>
+	                                <View
+	                                  style={[
+	                                    styles.messageVoiceProgress,
+	                                    activeVoiceMessageId === item.id && audioStatus.duration > 0
+	                                      ? { width: `${Math.min(100, (audioStatus.currentTime / audioStatus.duration) * 100)}%` }
+	                                      : undefined,
+	                                  ]}
+	                                />
+	                              </View>
+	                              <Text style={styles.messageVoiceDuration}>
+	                                {formatVoiceDuration(
+	                                  activeVoiceMessageId === item.id && audioStatus.duration > 0
+	                                    ? audioStatus.duration
+	                                    : voiceAsset.duration_seconds,
+	                                )}
+	                              </Text>
+	                            </>
+	                          ) : (
+	                            <Text style={styles.messageVoicePrompt}>听语音</Text>
+	                          )}
 	                        </Pressable>
 	                      )}
 	                    </>
@@ -2776,8 +2843,7 @@ export default function ChatScreen() {
                   ),
                   top: Math.min(
                     Math.max(messageMenu.y - 18, 70),
-                    Dimensions.get("window").height -
-                      (canOfferMessageVoice(messageMenu.message) && !moreMenuVisible ? 278 : 230),
+                    Dimensions.get("window").height - 230,
                   ),
                 },
               ]}
@@ -2837,20 +2903,6 @@ export default function ChatScreen() {
                   >
                     <Text style={styles.messageMenuText}>选择</Text>
                   </Pressable>
-
-                  {canOfferMessageVoice(messageMenu?.message) && (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.messageMenuItem,
-                        pressed && styles.messageMenuItemPressed,
-                      ]}
-                      onPress={() => playMessageVoice(messageMenu?.message)}
-                    >
-                      <Text style={styles.messageMenuText}>
-                        {voicePreparingId === messageMenu?.message?.id ? "正在准备…" : "听语音"}
-                      </Text>
-                    </Pressable>
-                  )}
 
                   <Pressable
                     style={({ pressed }) => [
@@ -3230,6 +3282,13 @@ const styles = StyleSheet.create({
     color: XiaoCColors.textSecondary,
     fontSize: 11,
     fontVariant: ["tabular-nums"],
+  },
+
+  messageVoicePrompt: {
+    marginLeft: 4,
+    marginRight: 2,
+    color: XiaoCColors.textSecondary,
+    fontSize: 12,
   },
 
   treeholeDraftCard: {
