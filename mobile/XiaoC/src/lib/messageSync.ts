@@ -45,6 +45,8 @@ const sameMessageMetadata = (left?: object, right?: object) => {
     "proactiveTaskId",
     "proactiveActivityId",
     "attachments",
+    "voice",
+    "userVoice",
   ];
 
   return keys.every((key) => sameJsonValue(leftValue[key], rightValue[key]));

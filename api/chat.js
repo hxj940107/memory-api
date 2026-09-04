@@ -41,6 +41,7 @@ import {
 } from "../lib/imageUnderstanding.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
+import { normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import {
   buildProactivePushMessage,
   sendExpoPushMessage,
@@ -942,7 +943,8 @@ async function saveUserMessage(
   clientMessageId = "",
   imageUrls = [],
   imageKinds = [],
-  fileInfo = null
+  fileInfo = null,
+  userVoice = null
 ) {
   const metadata = {}
 
@@ -961,6 +963,9 @@ async function saveUserMessage(
     metadata.fileMimeType = fileInfo.fileMimeType || null
     metadata.fileSize = fileInfo.fileSize || null
   }
+
+  const normalizedUserVoice = normalizeUserVoiceAsset(userVoice)
+  if (normalizedUserVoice) metadata.userVoice = normalizedUserVoice
 
   const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
@@ -3052,6 +3057,7 @@ export default async function handler(req, res) {
       fileText,
       fileMimeType,
       fileSize,
+      userVoice,
       model
     } = req.body
 
@@ -3122,13 +3128,14 @@ const userMessageId = await saveUserMessage(
   normalizedClientMessageId,
   normalizedImageUrls,
   normalizedImageKinds,
-  normalizedFileName
+    normalizedFileName
     ? {
         fileName: normalizedFileName,
         fileMimeType,
         fileSize
       }
-    : null
+    : null,
+  userVoice
 )
 // 2. history
 const historyCandidates = await getRecentMessages(

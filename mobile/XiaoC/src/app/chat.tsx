@@ -34,7 +34,15 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -90,6 +98,7 @@ import {
   normalizeMessageVoiceAsset,
   type MessageVoiceAsset,
 } from "../lib/messageVoice";
+import { normalizeUserVoiceAsset, type UserVoiceAsset } from "../lib/userVoice";
 
 type Message = {
   id: string;
@@ -107,6 +116,8 @@ type Message = {
   imageAsset?: ImagePicker.ImagePickerAsset;
   imageAssets?: ImagePicker.ImagePickerAsset[];
   voiceReplyRequested?: boolean;
+  localAudioUri?: string;
+  localAudioDuration?: number;
   status?: "sending" | "syncing" | "sent" | "failed";
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
   treeholeDraft?: TreeholeDraft;
@@ -121,6 +132,7 @@ type Message = {
     replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
     voice?: MessageVoiceAsset;
+    userVoice?: UserVoiceAsset;
   };
 };
 
@@ -158,6 +170,7 @@ type HistoryItem = {
     replyToClientMessageId?: string;
     attachments?: GeneratedAttachment[];
     voice?: MessageVoiceAsset;
+    userVoice?: UserVoiceAsset;
   };
 };
 
@@ -184,9 +197,15 @@ type MessageVoiceResponse = {
   voice: MessageVoiceAsset;
 };
 
+type UserVoiceTranscriptionResponse = {
+  transcript: string;
+  voice: UserVoiceAsset;
+};
+
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_FILE_CHARS = 12000;
 const HISTORY_PAGE_SIZE = 60;
+const MAX_USER_VOICE_SECONDS = 120;
 const VOICE_WAVE_HEIGHTS = [7, 12, 17, 10, 15, 20, 13, 18, 9, 14, 7];
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
@@ -793,12 +812,17 @@ export default function ChatScreen() {
     downloadFirst: true,
   });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
+  const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const audioRecorderState = useAudioRecorderState(audioRecorder, 100);
+  const recordingIntentRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
   const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
   const [revealedVoiceTranscriptIds, setRevealedVoiceTranscriptIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -991,6 +1015,7 @@ export default function ChatScreen() {
           metadata: {
             ...(item.metadata || {}),
             voice: normalizeMessageVoiceAsset(item.metadata) || undefined,
+            userVoice: normalizeUserVoiceAsset(item.metadata) || undefined,
           },
           status: "sent",
         } satisfies Message;
@@ -1812,6 +1837,7 @@ export default function ChatScreen() {
         fileText: messageToSend.fileText,
         fileMimeType: messageToSend.fileMimeType,
         fileSize: messageToSend.fileSize,
+        userVoice: messageToSend.metadata?.userVoice,
       }, {
         timeoutMs: 45000,
       });
@@ -2047,6 +2073,159 @@ export default function ChatScreen() {
     setSelectedFile(null);
 
     await submitMessage(newMessage);
+  };
+
+  const toggleUserVoiceTranscript = (item: Message) => {
+    const isRevealed = revealedVoiceTranscriptIds.has(item.id);
+    const apply = () => setRevealedVoiceTranscriptIds((current) => {
+      const next = new Set(current);
+      if (isRevealed) next.delete(item.id);
+      else next.add(item.id);
+      return next;
+    });
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ["取消", isRevealed ? "收起文字" : "转文字"], cancelButtonIndex: 0 },
+        (buttonIndex) => buttonIndex === 1 && apply(),
+      );
+      return;
+    }
+    apply();
+  };
+
+  const playUserVoice = async (item: Message) => {
+    const voice = normalizeUserVoiceAsset(item.metadata);
+    if (!voice && !item.localAudioUri) return;
+    if (activeVoiceMessageId === item.id && audioStatus.isLoaded) {
+      if (audioStatus.playing) audioPlayer.pause();
+      else {
+        if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
+          await audioPlayer.seekTo(0);
+        }
+        audioPlayer.play();
+      }
+      return;
+    }
+    setVoicePreparingId(item.id);
+    try {
+      let uri = item.localAudioUri;
+      if (!uri && item.cloudId && conversationIdRef.current) {
+        const result = await postJson<MessageVoiceResponse>("/api/memory", {
+          type: "user_voice",
+          action: "sign_playback",
+          user_id: APP_USER_ID,
+          conversation_id: conversationIdRef.current,
+          message_id: item.cloudId,
+        });
+        uri = result.url;
+      }
+      if (!uri) return;
+      audioPlayer.pause();
+      audioPlayer.replace(uri);
+      setActiveVoiceMessageId(item.id);
+      requestAnimationFrame(() => audioPlayer.play());
+    } catch (error) {
+      console.log("User voice playback failed:", error);
+      Alert.alert("暂时没能播放", "稍后再试一次。");
+    } finally {
+      setVoicePreparingId(null);
+    }
+  };
+
+  const sendRecordedVoice = async (uri: string, durationSeconds: number) => {
+    const id = conversationIdRef.current || `chat_${Date.now()}`;
+    if (!conversationIdRef.current) {
+      setConversationId(id);
+      conversationIdRef.current = id;
+    }
+    const localMessageId = createLocalMessageId();
+    const pendingMessage: Message = {
+      id: localMessageId,
+      clientId: localMessageId,
+      role: "user",
+      text: "",
+      localAudioUri: uri,
+      localAudioDuration: durationSeconds,
+      createdAt: new Date().toISOString(),
+      status: "sending",
+    };
+    setMessages((prev) => [...prev, pendingMessage]);
+    scrollToLatestMessage(true);
+    try {
+      const audioBase64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const result = await postJson<UserVoiceTranscriptionResponse>("/api/memory", {
+        type: "user_voice",
+        action: "transcribe",
+        user_id: APP_USER_ID,
+        conversation_id: id,
+        audio_base64: audioBase64,
+        mime_type: "audio/mp4",
+        duration_seconds: durationSeconds,
+      }, { timeoutMs: 45_000 });
+      const readyMessage: Message = {
+        ...pendingMessage,
+        text: result.transcript,
+        metadata: { userVoice: result.voice },
+      };
+      setMessages((prev) => prev.map((item) => item.id === localMessageId ? readyMessage : item));
+      await submitMessage(readyMessage);
+    } catch (error) {
+      console.log("User voice send failed:", error);
+      setMessages((prev) => prev.map((item) =>
+        item.id === localMessageId ? { ...item, status: "failed" } : item,
+      ));
+      Alert.alert("这段语音没有发出去", "可以稍后再试，或者重新录一遍。");
+    }
+  };
+
+  const startUserVoiceRecording = async () => {
+    if (isTyping || audioRecorderState.isRecording) return;
+    recordingIntentRef.current = true;
+    const permission = await requestRecordingPermissionsAsync();
+    if (!permission.granted) {
+      recordingIntentRef.current = false;
+      Alert.alert("需要麦克风权限", "请先允许小C使用麦克风，才能发送语音。");
+      return;
+    }
+    if (!recordingIntentRef.current) return;
+    try {
+      audioPlayer.pause();
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      if (!recordingIntentRef.current) return;
+      recordingStartedAtRef.current = Date.now();
+      audioRecorder.record({ forDuration: MAX_USER_VOICE_SECONDS });
+      setIsRecordingVoice(true);
+    } catch (error) {
+      recordingIntentRef.current = false;
+      recordingStartedAtRef.current = null;
+      setIsRecordingVoice(false);
+      console.log("Voice recording start failed:", error);
+    }
+  };
+
+  const stopUserVoiceRecording = async () => {
+    recordingIntentRef.current = false;
+    if (!recordingStartedAtRef.current) return;
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    try {
+      await audioRecorder.stop();
+      setIsRecordingVoice(false);
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const durationSeconds = Math.max(0, (Date.now() - startedAt) / 1000);
+      const uri = audioRecorder.uri;
+      if (!uri || durationSeconds < 0.6) {
+        Alert.alert("按得太短了", "再多说一点点吧。");
+        return;
+      }
+      await sendRecordedVoice(uri, durationSeconds);
+    } catch (error) {
+      setIsRecordingVoice(false);
+      console.log("Voice recording stop failed:", error);
+    }
   };
 
   const retryMessage = async (messageToRetry: Message) => {
@@ -2384,6 +2563,8 @@ export default function ChatScreen() {
           {messages.map((item, index) => {
             const stableMessageId = getStableMessageId(item);
             const voiceAsset = normalizeMessageVoiceAsset(item.metadata);
+            const userVoiceAsset = normalizeUserVoiceAsset(item.metadata);
+            const isUserVoice = item.role === "user" && (!!userVoiceAsset || !!item.localAudioUri);
             const isVoiceReply = voiceAsset?.presentation === "voice_reply";
             const isVoiceTranscriptRevealed = revealedVoiceTranscriptIds.has(item.id);
             const displayedVoiceDuration =
@@ -2439,6 +2620,48 @@ export default function ChatScreen() {
                       : styles.messageFromNewSender,
                   ]}
                 >
+                  {isUserVoice && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        activeVoiceMessageId === item.id && audioStatus.playing
+                          ? "暂停我的语音"
+                          : "播放我的语音"
+                      }
+                      style={({ pressed }) => [
+                        styles.userVoicePlayer,
+                        pressed && styles.userVoicePlayerPressed,
+                      ]}
+                      onPress={() => playUserVoice(item)}
+                      onLongPress={() => toggleUserVoiceTranscript(item)}
+                    >
+                      <Text style={styles.userVoicePlayIcon}>
+                        {voicePreparingId === item.id
+                          ? "…"
+                          : activeVoiceMessageId === item.id && audioStatus.playing
+                            ? "Ⅱ"
+                            : "▶"}
+                      </Text>
+                      <View style={styles.messageVoiceWave}>
+                        {VOICE_WAVE_HEIGHTS.map((height, waveIndex) => (
+                          <View
+                            key={`${stableMessageId}_user_wave_${waveIndex}`}
+                            style={[
+                              styles.userVoiceWaveBar,
+                              { height },
+                            ]}
+                          />
+                        ))}
+                      </View>
+                      <Text style={styles.userVoiceDuration}>
+                        {formatVoiceDuration(
+                          activeVoiceMessageId === item.id && audioStatus.duration > 0
+                            ? audioStatus.duration
+                            : userVoiceAsset?.duration_seconds || item.localAudioDuration || 0,
+                        )}
+                      </Text>
+                    </Pressable>
+                  )}
                   {(item.imageUris?.length || item.imageUri) && (
                     <View style={styles.messageImageWrap}>
                       <View
@@ -2514,7 +2737,7 @@ export default function ChatScreen() {
                     </View>
                   )}
 
-                  {!!item.text && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
+                  {!!item.text && (!isUserVoice || isVoiceTranscriptRevealed) && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
                     <Pressable
                       key={`${stableMessageId}_user_segment_${segmentIndex}`}
                       style={[
@@ -2545,6 +2768,7 @@ export default function ChatScreen() {
 
                   {!item.imageUri &&
                     !item.imageUris?.length &&
+                    !isUserVoice &&
                     item.status === "failed" && (
                     <Pressable
                       style={styles.textRetryButton}
@@ -2813,17 +3037,23 @@ export default function ChatScreen() {
           <View style={styles.inputControls}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="语音消息（即将支持）"
+              accessibilityLabel={isRecordingVoice ? "松开发送语音" : "按住发送语音"}
               style={({ pressed }) => [
                 styles.voiceInputButton,
-                pressed && styles.voiceInputButtonPressed,
+                (pressed || isRecordingVoice) && styles.voiceInputButtonPressed,
               ]}
+              onPressIn={startUserVoiceRecording}
+              onPressOut={stopUserVoiceRecording}
             >
               <View style={styles.voiceInputWave}>
                 {[8, 15, 21, 13, 7].map((height, index) => (
                   <View
                     key={`voice_input_wave_${index}`}
-                    style={[styles.voiceInputWaveBar, { height }]}
+                    style={[
+                      styles.voiceInputWaveBar,
+                      isRecordingVoice && styles.voiceInputWaveBarRecording,
+                      { height },
+                    ]}
                   />
                 ))}
               </View>
@@ -3387,6 +3617,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
+  userVoicePlayer: {
+    alignSelf: "flex-end",
+    minWidth: 150,
+    height: 42,
+    paddingHorizontal: 13,
+    borderRadius: 21,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: XiaoCColors.userBubble,
+  },
+
+  userVoicePlayerPressed: {
+    opacity: 0.82,
+  },
+
+  userVoicePlayIcon: {
+    width: 20,
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  userVoiceWaveBar: {
+    width: 2,
+    minHeight: 4,
+    borderRadius: 1,
+    backgroundColor: "rgba(255,255,255,0.86)",
+  },
+
+  userVoiceDuration: {
+    minWidth: 32,
+    color: "rgba(255,255,255,0.92)",
+    fontSize: 13,
+    fontVariant: ["tabular-nums"],
+  },
+
   treeholeDraftCard: {
     width: 285,
     backgroundColor: "#191927",
@@ -3890,6 +4156,10 @@ const styles = StyleSheet.create({
     width: 2.5,
     borderRadius: 2,
     backgroundColor: XiaoCColors.userBubble,
+  },
+
+  voiceInputWaveBarRecording: {
+    backgroundColor: "#FF3B30",
   },
 
   attachButton: {

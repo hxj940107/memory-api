@@ -49,6 +49,7 @@ import { validateTreeholeSourceEvidence } from "../lib/treeholeProvenance.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
 import { prepareMessageVoicePlayback } from "../lib/messageVoice.js"
 import { getMessageVoiceSynthesizer } from "../lib/messageVoiceProvider.js"
+import { signUserVoicePlayback, transcribeAndStoreUserVoice } from "../lib/userVoice.js"
 import { normalizeProactiveAttentionCandidates } from "../lib/proactiveAttentionCandidates.js"
 import {
   formatMentionPreferences,
@@ -4906,6 +4907,53 @@ export default async function handler(req, res) {
         }
         console.error("MESSAGE VOICE PREPARE FAILED:", error)
         return res.status(500).json({ error: "语音暂时没有准备好" })
+      }
+    }
+
+    if (req.method === "POST" && type === "user_voice") {
+      const action = req.body?.action
+      const { conversation_id } = req.body
+      if (!conversation_id) return res.status(400).json({ error: "Missing conversation identity" })
+      try {
+        if (action === "transcribe") {
+          const result = await transcribeAndStoreUserVoice({
+            supabase,
+            user_id,
+            conversation_id,
+            audio_base64: req.body?.audio_base64,
+            mime_type: req.body?.mime_type,
+            duration_seconds: req.body?.duration_seconds,
+          })
+          console.log("USER VOICE TRANSCRIBED:", {
+            provider: result.voice.provider,
+            model: result.voice.model,
+            duration_seconds: result.voice.duration_seconds,
+            estimated_cost_usd: result.voice.estimated_cost_usd,
+          })
+          return res.status(200).json(result)
+        }
+        if (action === "sign_playback") {
+          const result = await signUserVoicePlayback({
+            supabase,
+            user_id,
+            conversation_id,
+            message_id: req.body?.message_id,
+          })
+          return res.status(200).json(result)
+        }
+        return res.status(405).json({ error: "Unsupported action" })
+      } catch (error) {
+        if (error?.code === "USER_VOICE_NOT_FOUND") {
+          return res.status(404).json({ error: "User voice not found", code: error.code })
+        }
+        if (["USER_VOICE_DURATION_INVALID", "USER_VOICE_FILE_INVALID", "USER_VOICE_EMPTY_TRANSCRIPT"].includes(error?.code)) {
+          return res.status(400).json({ error: error.message, code: error.code })
+        }
+        if (error?.code === "GROQ_NOT_CONFIGURED") {
+          return res.status(409).json({ error: "语音识别还没有配置好", code: error.code })
+        }
+        console.error("USER VOICE FAILED:", { code: error?.code || null, error: error?.message || String(error) })
+        return res.status(502).json({ error: "这段语音暂时没有听清楚" })
       }
     }
 

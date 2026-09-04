@@ -56,7 +56,12 @@
           "faceIDPermission": "允许小C使用 Face ID 保护你们的私人空间。"
         }
       ],
-      "expo-audio"
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "允许小C使用麦克风，接收你发来的语音。"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
