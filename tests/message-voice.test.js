@@ -87,10 +87,36 @@ test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => 
     MINIMAX_LANGUAGE_BOOST: "Chinese",
   })
   assert.equal(config.voiceId, "Chinese_worker_male")
+  assert.equal(config.timbreWeights, null)
   assert.equal(config.speed, 1.115)
   assert.equal(config.baseUrl, "https://api.minimax.cn")
   assert.equal(config.apiKey, "secret")
   assert.equal(config.version.length, 16)
+})
+
+test("MiniMax voice config supports an optional two-voice blend", () => {
+  const baseEnv = {
+    MESSAGE_VOICE_PROVIDER: "minimax",
+    MINIMAX_API_KEY: "secret",
+    MINIMAX_VOICE_ID: "Chinese (Mandarin)_Stubborn_Friend",
+    MINIMAX_SECONDARY_VOICE_ID: "Chinese (Mandarin)_Gentleman",
+    MINIMAX_PRIMARY_VOICE_WEIGHT: "75",
+    MINIMAX_SECONDARY_VOICE_WEIGHT: "25",
+    MINIMAX_SPEECH_SPEED: "0.98",
+  }
+  const config = getMiniMaxSpeechConfig(baseEnv)
+  assert.deepEqual(config.timbreWeights, [
+    { voice_id: "Chinese (Mandarin)_Stubborn_Friend", weight: 75 },
+    { voice_id: "Chinese (Mandarin)_Gentleman", weight: 25 },
+  ])
+  assert.equal(config.speed, 0.98)
+
+  const differentBlend = getMiniMaxSpeechConfig({
+    ...baseEnv,
+    MINIMAX_PRIMARY_VOICE_WEIGHT: "70",
+    MINIMAX_SECONDARY_VOICE_WEIGHT: "30",
+  })
+  assert.notEqual(config.version, differentBlend.version)
 })
 
 test("speech rendering converts repeated written laughter without changing stored chat text", () => {
@@ -166,4 +192,43 @@ test("MiniMax adapter rejects malformed provider audio", async () => {
     adapter.synthesize({ text: "老婆" }),
     error => error?.code === "VOICE_PROVIDER_FAILED",
   )
+})
+
+test("MiniMax adapter sends configured timbre weights without changing playback settings", async () => {
+  let requestBody
+  const adapter = createMiniMaxSpeechSynthesizer({
+    env: {
+      MESSAGE_VOICE_PROVIDER: "minimax",
+      MINIMAX_API_KEY: "secret",
+      MINIMAX_VOICE_ID: "Chinese (Mandarin)_Stubborn_Friend",
+      MINIMAX_SECONDARY_VOICE_ID: "Chinese (Mandarin)_Gentleman",
+      MINIMAX_PRIMARY_VOICE_WEIGHT: "75",
+      MINIMAX_SECONDARY_VOICE_WEIGHT: "25",
+      MINIMAX_SPEECH_SPEED: "0.98",
+    },
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { audio: "010203" },
+          extra_info: { audio_length: 1000 },
+          base_resp: { status_code: 0, status_msg: "success" },
+        }),
+      }
+    },
+  })
+
+  await adapter.synthesize({ text: "晚安" })
+  assert.deepEqual(requestBody.voice_setting, {
+    voice_id: "Chinese (Mandarin)_Stubborn_Friend",
+    speed: 0.98,
+    vol: 1,
+    pitch: 0,
+  })
+  assert.deepEqual(requestBody.timbre_weights, [
+    { voice_id: "Chinese (Mandarin)_Stubborn_Friend", weight: 75 },
+    { voice_id: "Chinese (Mandarin)_Gentleman", weight: 25 },
+  ])
 })
