@@ -94,6 +94,24 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
   assert.match(chat, /status === 409 \? "声音还没选好"/)
 })
 
+test("a one-shot voice reply request prepares the saved assistant message without autoplay", () => {
+  const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+  assert.match(chat, /const \[voiceReplyRequested, setVoiceReplyRequested\]/)
+  assert.match(chat, />\s*语音\s*<\/Text>/)
+  assert.match(chat, /voiceReplyRequested,\s*\n/)
+  assert.match(chat, /setVoiceReplyRequested\(false\)/)
+  assert.match(
+    chat,
+    /messageToSend\.voiceReplyRequested[\s\S]*message_id: assistantCloudId[\s\S]*voice: voiceResult\.voice/,
+  )
+  const requestedReplyBlock = chat.slice(
+    chat.indexOf("if (\n        messageToSend.voiceReplyRequested"),
+    chat.indexOf("} catch (error) {", chat.indexOf("if (\n        messageToSend.voiceReplyRequested")),
+  )
+  assert.match(requestedReplyBlock, /audioPlayer\.replace\(voiceResult\.url\)/)
+  assert.doesNotMatch(requestedReplyBlock, /audioPlayer\.play\(\)/)
+})
+
 test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => {
   const config = getMiniMaxSpeechConfig({
     MESSAGE_VOICE_PROVIDER: "minimax",

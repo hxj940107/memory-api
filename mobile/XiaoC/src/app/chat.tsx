@@ -106,6 +106,7 @@ type Message = {
   imageUris?: string[];
   imageAsset?: ImagePicker.ImagePickerAsset;
   imageAssets?: ImagePicker.ImagePickerAsset[];
+  voiceReplyRequested?: boolean;
   status?: "sending" | "syncing" | "sent" | "failed";
   diarySaveStatus?: "idle" | "saving" | "saved" | "failed";
   treeholeDraft?: TreeholeDraft;
@@ -768,6 +769,7 @@ export default function ChatScreen() {
   const shouldStartNewChat = params.newChat === "1";
 
   const [message, setMessage] = useState("");
+  const [voiceReplyRequested, setVoiceReplyRequested] = useState(false);
 
   const [selectedImages, setSelectedImages] = useState<
     ImagePicker.ImagePickerAsset[]
@@ -1849,6 +1851,45 @@ export default function ChatScreen() {
           : [...prev, assistantMessage],
       );
       latestCloudMessageIdRef.current = assistantCloudId;
+
+      if (
+        messageToSend.voiceReplyRequested &&
+        assistantCloudId &&
+        !treeholeDraft &&
+        canOfferMessageVoice(assistantMessage)
+      ) {
+        setExpandedVoiceMessageId(assistantMessage.id);
+        setVoicePreparingId(assistantMessage.id);
+        try {
+          const voiceResult = await postJson<MessageVoiceResponse>("/api/memory", {
+            type: "message_voice",
+            action: "prepare_playback",
+            user_id: APP_USER_ID,
+            conversation_id: data.conversation_id || conversationIdRef.current,
+            message_id: assistantCloudId,
+          }, { timeoutMs: 45_000 });
+
+          setMessages((previous) => previous.map((messageItem) =>
+            messageItem.id === assistantMessage.id
+              ? {
+                  ...messageItem,
+                  metadata: {
+                    ...(messageItem.metadata || {}),
+                    voice: voiceResult.voice,
+                  },
+                }
+              : messageItem,
+          ));
+          audioPlayer.pause();
+          audioPlayer.replace(voiceResult.url);
+          setActiveVoiceMessageId(assistantMessage.id);
+        } catch (voiceError) {
+          console.log("Requested voice reply preparation failed:", voiceError);
+          Alert.alert("文字回复已经收到", "这次语音暂时没有准备好，可以稍后再点气泡试听。");
+        } finally {
+          setVoicePreparingId(null);
+        }
+      }
     } catch (error) {
       console.log("CHAT ERROR:", error);
 
@@ -1950,6 +1991,7 @@ export default function ChatScreen() {
       imageUris: selectedImages.map((image) => image.uri),
       imageAsset: selectedImages[0],
       imageAssets: selectedImages,
+      voiceReplyRequested,
       createdAt: new Date().toISOString(),
       status: "sending",
     };
@@ -1961,6 +2003,7 @@ export default function ChatScreen() {
     }, 100);
 
     setMessage("");
+    setVoiceReplyRequested(false);
     setSelectedImages([]);
     setSelectedFile(null);
 
@@ -2719,6 +2762,26 @@ export default function ChatScreen() {
                 }}
                 multiline
               />
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={voiceReplyRequested ? "取消小C语音回复" : "让小C用语音回复"}
+                style={({ pressed }) => [
+                  styles.voiceReplyToggle,
+                  voiceReplyRequested && styles.voiceReplyToggleActive,
+                  pressed && styles.voiceReplyTogglePressed,
+                ]}
+                onPress={() => setVoiceReplyRequested((current) => !current)}
+              >
+                <Text
+                  style={[
+                    styles.voiceReplyToggleText,
+                    voiceReplyRequested && styles.voiceReplyToggleTextActive,
+                  ]}
+                >
+                  语音
+                </Text>
+              </Pressable>
 
               <RNAnimated.View
                 pointerEvents={canSendMessage ? "auto" : "none"}
@@ -3744,6 +3807,35 @@ const styles = StyleSheet.create({
   sendButtonSlot: {
     width: 36,
     height: 36,
+  },
+
+  voiceReplyToggle: {
+    height: 28,
+    minWidth: 42,
+    marginHorizontal: 4,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+
+  voiceReplyToggleActive: {
+    backgroundColor: "rgba(53, 120, 246, 0.12)",
+  },
+
+  voiceReplyTogglePressed: {
+    opacity: 0.58,
+  },
+
+  voiceReplyToggleText: {
+    fontSize: 12,
+    color: "#9A9A9F",
+  },
+
+  voiceReplyToggleTextActive: {
+    color: "#3578F6",
+    fontWeight: "600",
   },
 
   sendButton: {
