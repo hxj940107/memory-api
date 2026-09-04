@@ -6,6 +6,7 @@ import {
   normalizeInactivityReachOutMode,
 } from "../lib/aiConfig.js"
 import {
+  fetchMiniMaxAccountBalance,
   getShanghaiMonthStartIso,
   summarizeMiniMaxVoiceUsage,
 } from "../lib/minimaxVoiceUsage.js"
@@ -187,19 +188,23 @@ export default async function handler(req, res) {
         new Date(dayStart).getTime(),
         new Date(monthStart).getTime(),
       )).toISOString()
-      const result = await supabase
-        .from("messages")
-        .select("id,metadata")
-        .eq("user_id", user_id)
-        .eq("role", "assistant")
-        .eq("metadata->voice->>provider", "minimax")
-        .gte("metadata->voice->>created_at", queryStart)
-        .limit(2000)
+      const [result, accountBalance] = await Promise.all([
+        supabase
+          .from("messages")
+          .select("id,metadata")
+          .eq("user_id", user_id)
+          .eq("role", "assistant")
+          .eq("metadata->voice->>provider", "minimax")
+          .gte("metadata->voice->>created_at", queryStart)
+          .limit(2000),
+        fetchMiniMaxAccountBalance().catch(() => null),
+      ])
       if (result.error) return res.status(500).json({ error: result.error.message })
 
       return res.status(200).json({
         currency: "CNY",
         source: "provider_usage_estimate",
+        account_balance: accountBalance,
         pricing_note: "MiniMax official usage_characters × current model unit price",
         last24h: summarizeMiniMaxVoiceUsage(result.data, dayStart),
         month: summarizeMiniMaxVoiceUsage(result.data, monthStart),

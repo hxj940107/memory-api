@@ -187,6 +187,7 @@ type MessageVoiceResponse = {
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_FILE_CHARS = 12000;
 const HISTORY_PAGE_SIZE = 60;
+const VOICE_WAVE_HEIGHTS = [7, 12, 17, 10, 15, 20, 13, 18, 9, 14, 7];
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -1313,7 +1314,12 @@ export default function ChatScreen() {
       // Keep this menu small and native-feeling for now.
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ["取消", "选择图片", "选择文件"],
+          options: [
+            "取消",
+            "选择图片",
+            "选择文件",
+            voiceReplyRequested ? "取消小C语音回复" : "让小C语音回复",
+          ],
           cancelButtonIndex: 0,
         },
         (buttonIndex) => {
@@ -1323,6 +1329,10 @@ export default function ChatScreen() {
 
           if (buttonIndex === 2) {
             pickFile();
+          }
+
+          if (buttonIndex === 3) {
+            setVoiceReplyRequested((current) => !current);
           }
         },
       );
@@ -2376,6 +2386,18 @@ export default function ChatScreen() {
             const voiceAsset = normalizeMessageVoiceAsset(item.metadata);
             const isVoiceReply = voiceAsset?.presentation === "voice_reply";
             const isVoiceTranscriptRevealed = revealedVoiceTranscriptIds.has(item.id);
+            const displayedVoiceDuration =
+              activeVoiceMessageId === item.id && audioStatus.duration > 0
+                ? audioStatus.duration
+                : voiceAsset?.duration_seconds || 0;
+            const displayedVoiceProgress =
+              activeVoiceMessageId === item.id && audioStatus.duration > 0
+                ? Math.min(1, audioStatus.currentTime / audioStatus.duration)
+                : 0;
+            const voiceBubbleWidth = Math.min(
+              220,
+              150 + Math.max(0, displayedVoiceDuration) * 3,
+            );
 
             const isLocatedMessage = stableMessageId === locatedMessageId;
             const isSearchTarget = stableMessageId === highlightedMessageId;
@@ -2644,6 +2666,7 @@ export default function ChatScreen() {
 	                          disabled={voicePreparingId === item.id}
 	                          style={({ pressed }) => [
 	                            styles.messageVoicePlayer,
+	                            { width: voiceBubbleWidth },
 	                            pressed && styles.messageVoicePlayerPressed,
 	                          ]}
 	                          onPress={() => playMessageVoice(item)}
@@ -2660,21 +2683,22 @@ export default function ChatScreen() {
 	                            <Text style={styles.messageVoicePrompt}>正在准备</Text>
 	                          ) : voiceAsset ? (
 	                            <>
-	                              <View style={styles.messageVoiceTrack}>
-	                                <View
-	                                  style={[
-	                                    styles.messageVoiceProgress,
-	                                    activeVoiceMessageId === item.id && audioStatus.duration > 0
-	                                      ? { width: `${Math.min(100, (audioStatus.currentTime / audioStatus.duration) * 100)}%` }
-	                                      : undefined,
-	                                  ]}
-	                                />
+	                              <View style={styles.messageVoiceWave}>
+	                                {VOICE_WAVE_HEIGHTS.map((height, waveIndex) => (
+	                                  <View
+	                                    key={`${stableMessageId}_voice_wave_${waveIndex}`}
+	                                    style={[
+	                                      styles.messageVoiceWaveBar,
+	                                      { height },
+	                                      displayedVoiceProgress > waveIndex / VOICE_WAVE_HEIGHTS.length &&
+	                                        styles.messageVoiceWaveBarPlayed,
+	                                    ]}
+	                                  />
+	                                ))}
 	                              </View>
 	                              <Text style={styles.messageVoiceDuration}>
 	                                {formatVoiceDuration(
-	                                  activeVoiceMessageId === item.id && audioStatus.duration > 0
-	                                    ? audioStatus.duration
-	                                    : voiceAsset.duration_seconds,
+	                                  displayedVoiceDuration,
 	                                )}
 	                              </Text>
 	                            </>
@@ -2772,9 +2796,37 @@ export default function ChatScreen() {
             </View>
           )}
 
+          {voiceReplyRequested && (
+            <View style={styles.voiceReplyNotice}>
+              <Text style={styles.voiceReplyNoticeText}>小C将用语音回复</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="取消小C语音回复"
+                hitSlop={8}
+                onPress={() => setVoiceReplyRequested(false)}
+              >
+                <Text style={styles.voiceReplyNoticeClose}>×</Text>
+              </Pressable>
+            </View>
+          )}
+
           <View style={styles.inputControls}>
-            <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
-              <Text style={styles.attachText}>＋</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="语音消息（即将支持）"
+              style={({ pressed }) => [
+                styles.voiceInputButton,
+                pressed && styles.voiceInputButtonPressed,
+              ]}
+            >
+              <View style={styles.voiceInputWave}>
+                {[8, 15, 21, 13, 7].map((height, index) => (
+                  <View
+                    key={`voice_input_wave_${index}`}
+                    style={[styles.voiceInputWaveBar, { height }]}
+                  />
+                ))}
+              </View>
             </Pressable>
 
             <View style={styles.inputBox}>
@@ -2796,26 +2848,6 @@ export default function ChatScreen() {
                 }}
                 multiline
               />
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={voiceReplyRequested ? "取消小C语音回复" : "让小C用语音回复"}
-                style={({ pressed }) => [
-                  styles.voiceReplyToggle,
-                  voiceReplyRequested && styles.voiceReplyToggleActive,
-                  pressed && styles.voiceReplyTogglePressed,
-                ]}
-                onPress={() => setVoiceReplyRequested((current) => !current)}
-              >
-                <Text
-                  style={[
-                    styles.voiceReplyToggleText,
-                    voiceReplyRequested && styles.voiceReplyToggleTextActive,
-                  ]}
-                >
-                  语音
-                </Text>
-              </Pressable>
 
               <RNAnimated.View
                 pointerEvents={canSendMessage ? "auto" : "none"}
@@ -2846,6 +2878,10 @@ export default function ChatScreen() {
                 </Pressable>
               </RNAnimated.View>
             </View>
+
+            <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
+              <Text style={styles.attachText}>＋</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -3295,55 +3331,60 @@ const styles = StyleSheet.create({
 
   messageVoicePlayer: {
     alignSelf: "flex-start",
-    minWidth: 132,
-    height: 32,
+    minWidth: 150,
+    maxWidth: 220,
+    height: 42,
     marginTop: 6,
-    paddingHorizontal: 10,
-    borderRadius: 16,
+    paddingHorizontal: 13,
+    borderRadius: 21,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(74, 156, 246, 0.09)",
+    backgroundColor: XiaoCColors.voiceBubble,
   },
 
   messageVoicePlayerPressed: {
-    backgroundColor: "rgba(74, 156, 246, 0.15)",
+    backgroundColor: XiaoCColors.voiceBubblePressed,
   },
 
   messageVoicePlayIcon: {
-    width: 18,
+    width: 20,
     color: XiaoCColors.userBubble,
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
   },
 
-  messageVoiceTrack: {
-    width: 66,
-    height: 2,
-    marginHorizontal: 7,
-    borderRadius: 1,
-    overflow: "hidden",
-    backgroundColor: "rgba(74, 156, 246, 0.20)",
+  messageVoiceWave: {
+    flex: 1,
+    height: 22,
+    marginHorizontal: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
 
-  messageVoiceProgress: {
-    width: 0,
-    height: "100%",
+  messageVoiceWaveBar: {
+    width: 2,
+    minHeight: 4,
     borderRadius: 1,
+    backgroundColor: XiaoCColors.voiceWaveInactive,
+  },
+
+  messageVoiceWaveBarPlayed: {
     backgroundColor: XiaoCColors.userBubble,
   },
 
   messageVoiceDuration: {
-    minWidth: 28,
-    color: XiaoCColors.textSecondary,
-    fontSize: 11,
+    minWidth: 32,
+    color: XiaoCColors.voiceDuration,
+    fontSize: 13,
     fontVariant: ["tabular-nums"],
   },
 
   messageVoicePrompt: {
-    marginLeft: 4,
-    marginRight: 2,
-    color: XiaoCColors.textSecondary,
-    fontSize: 12,
+    marginLeft: 7,
+    marginRight: 3,
+    color: XiaoCColors.voiceDuration,
+    fontSize: 13,
   },
 
   treeholeDraftCard: {
@@ -3794,7 +3835,61 @@ const styles = StyleSheet.create({
   inputControls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
+  },
+
+  voiceReplyNotice: {
+    alignSelf: "flex-start",
+    minHeight: 28,
+    marginBottom: 7,
+    marginLeft: 54,
+    paddingLeft: 11,
+    paddingRight: 8,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: XiaoCColors.voiceBubble,
+  },
+
+  voiceReplyNoticeText: {
+    color: XiaoCColors.voiceDuration,
+    fontSize: 12,
+  },
+
+  voiceReplyNoticeClose: {
+    marginLeft: 7,
+    color: XiaoCColors.icon,
+    fontSize: 17,
+    lineHeight: 20,
+  },
+
+  voiceInputButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: XiaoCColors.inputSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: XiaoCColors.inputBorder,
+  },
+
+  voiceInputButtonPressed: {
+    opacity: 0.72,
+  },
+
+  voiceInputWave: {
+    width: 25,
+    height: 23,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  voiceInputWaveBar: {
+    width: 2.5,
+    borderRadius: 2,
+    backgroundColor: XiaoCColors.userBubble,
   },
 
   attachButton: {
@@ -3841,35 +3936,6 @@ const styles = StyleSheet.create({
   sendButtonSlot: {
     width: 36,
     height: 36,
-  },
-
-  voiceReplyToggle: {
-    height: 28,
-    minWidth: 42,
-    marginHorizontal: 4,
-    paddingHorizontal: 8,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-
-  voiceReplyToggleActive: {
-    backgroundColor: "rgba(53, 120, 246, 0.12)",
-  },
-
-  voiceReplyTogglePressed: {
-    opacity: 0.58,
-  },
-
-  voiceReplyToggleText: {
-    fontSize: 12,
-    color: "#9A9A9F",
-  },
-
-  voiceReplyToggleTextActive: {
-    color: "#3578F6",
-    fontWeight: "600",
   },
 
   sendButton: {

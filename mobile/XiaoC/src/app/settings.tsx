@@ -76,6 +76,13 @@ type MiniMaxVoiceUsageResponse = {
   source: "provider_usage_estimate";
   last24h: MiniMaxVoiceUsagePeriod;
   month: MiniMaxVoiceUsagePeriod;
+  account_balance?: {
+    available_amount: number;
+    cash_balance: number | null;
+    voucher_balance: number | null;
+    credit_balance: number | null;
+    owed_amount: number | null;
+  } | null;
   error?: string;
 };
 
@@ -733,6 +740,10 @@ export default function SettingsScreen() {
 
           <View style={styles.costDivider} />
           <Text style={styles.costProviderTitle}>MiniMax 语音</Text>
+          <InfoRow
+            label="账户余额"
+            value={formatCny(voiceUsage?.account_balance?.available_amount)}
+          />
           <InfoRow
             label="24h 花费"
             value={formatCny(voiceUsage?.last24h.estimated_cost_cny)}

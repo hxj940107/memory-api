@@ -99,7 +99,8 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
 test("a one-shot voice reply stays behind typing dots, then renders as voice with optional transcript", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /const \[voiceReplyRequested, setVoiceReplyRequested\]/)
-  assert.match(chat, />\s*语音\s*<\/Text>/)
+  assert.match(chat, /voiceReplyRequested \? "取消小C语音回复" : "让小C语音回复"/)
+  assert.match(chat, /小C将用语音回复/)
   assert.match(chat, /voiceReplyRequested,\s*\n/)
   assert.match(chat, /setVoiceReplyRequested\(false\)/)
   assert.match(
@@ -120,6 +121,23 @@ test("a one-shot voice reply stays behind typing dots, then renders as voice wit
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
   assert.match(chat, /\{isTyping && <TypingDots \/>\}/)
   assert.doesNotMatch(chat, /正在准备语音/)
+  assert.match(chat, /const VOICE_WAVE_HEIGHTS = \[/)
+  assert.match(chat, /height: 42/)
+  assert.match(chat, /backgroundColor: XiaoCColors\.voiceBubble/)
+  assert.match(chat, /150 \+ Math\.max\(0, displayedVoiceDuration\) \* 3/)
+})
+
+test("composer reserves the left wave for user voice and moves attachments outside right", () => {
+  const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+  const composer = chat.slice(
+    chat.indexOf("<View style={styles.inputControls}>") ,
+    chat.indexOf("</KeyboardAvoidingView>"),
+  )
+  assert.ok(composer.indexOf("styles.voiceInputButton") < composer.indexOf("styles.inputBox"))
+  assert.ok(composer.indexOf("styles.inputBox") < composer.lastIndexOf("styles.attachButton"))
+  assert.match(composer, /voiceInputWaveBar/)
+  assert.doesNotMatch(composer, /voiceReplyToggle/)
+  assert.match(chat, /options: \[[\s\S]*"选择图片"[\s\S]*"选择文件"[\s\S]*"让小C语音回复"/)
 })
 
 test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => {

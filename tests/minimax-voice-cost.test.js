@@ -2,9 +2,44 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  fetchMiniMaxAccountBalance,
   getShanghaiMonthStartIso,
+  normalizeMiniMaxAccountBalance,
   summarizeMiniMaxVoiceUsage,
 } from "../lib/minimaxVoiceUsage.js"
+
+test("MiniMax pay-as-you-go balance keeps provider amounts separate", async () => {
+  const payload = {
+    available_amount: "14.11",
+    cash_balance: "0.00",
+    voucher_balance: "14.11",
+    credit_balance: "0.00",
+    owed_amount: "0.00",
+    base_resp: { status_code: 0, status_msg: "success" },
+  }
+  assert.deepEqual(normalizeMiniMaxAccountBalance(payload), {
+    available_amount: 14.11,
+    cash_balance: 0,
+    voucher_balance: 14.11,
+    credit_balance: 0,
+    owed_amount: 0,
+  })
+
+  let request
+  const balance = await fetchMiniMaxAccountBalance({
+    env: {
+      MINIMAX_API_KEY: "server-secret",
+      MINIMAX_API_BASE_URL: "https://api.minimaxi.com/",
+    },
+    fetchImpl: async (url, options) => {
+      request = { url, options }
+      return new Response(JSON.stringify(payload), { status: 200 })
+    },
+  })
+  assert.equal(request.url, "https://api.minimaxi.com/account/query_balance")
+  assert.equal(request.options.headers.Authorization, "Bearer server-secret")
+  assert.equal(balance.available_amount, 14.11)
+})
 
 test("MiniMax voice usage only counts persisted provider-reported billing", () => {
   const since = "2026-09-01T00:00:00.000Z"
