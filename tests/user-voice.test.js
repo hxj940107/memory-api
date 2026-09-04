@@ -122,6 +122,45 @@ test("an implausibly short recording cannot enter chat as a hallucinated transcr
   }
 })
 
+test("a valid short Chinese transcript is not rejected by Whisper confidence metadata", async () => {
+  const previousKey = process.env.GROQ_API_KEY
+  process.env.GROQ_API_KEY = "server-only-secret"
+  let uploadCalled = false
+  const supabase = {
+    storage: {
+      from() {
+        return {
+          async upload() {
+            uploadCalled = true
+            return { error: null }
+          },
+        }
+      },
+    },
+  }
+  try {
+    const result = await transcribeAndStoreUserVoice({
+      supabase,
+      user_id: "user",
+      conversation_id: "chat-one",
+      audio_base64: Buffer.from("valid short audio").toString("base64"),
+      mime_type: "audio/mp4",
+      duration_seconds: 3,
+      fetchImpl: async () => new Response(JSON.stringify({
+        text: "小C，你能听清吗？",
+        duration: 3.1,
+        language: "zh",
+        segments: [{ no_speech_prob: 0.91 }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    })
+    assert.equal(result.transcript, "小C，你能听清吗？")
+    assert.equal(uploadCalled, true)
+  } finally {
+    if (previousKey === undefined) delete process.env.GROQ_API_KEY
+    else process.env.GROQ_API_KEY = previousKey
+  }
+})
+
 test("mobile voice input switches modes before the large hold area records and sends", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /useAudioRecorder\(RecordingPresets\.LOW_QUALITY\)/)
@@ -136,6 +175,8 @@ test("mobile voice input switches modes before the large hold area records and s
   assert.match(holdButton, /onResponderRelease=\{stopUserVoiceRecording\}/)
   assert.match(chat, /audioRecorder\.getStatus\(\)/)
   assert.match(chat, /durationSeconds < 0\.6/)
+  assert.match(chat, /XiaoCColors\.voiceHoldRecording/)
+  assert.match(chat, /XiaoCColors\.voiceHoldRecordingText/)
   assert.match(chat, /type: "user_voice"[\s\S]*action: "transcribe"/)
   assert.match(chat, /userVoice: messageToSend\.metadata\?\.userVoice/)
   assert.match(chat, /!isUserVoice \|\| isVoiceTranscriptRevealed/)

@@ -30,6 +30,8 @@ export const XiaoCColors = {
   voiceDuration: dynamicColor('#68717D', '#B7C0CC'),
   inputSurface: dynamicColor('#FFFFFF', 'rgba(44,44,46,0.72)'),
   inputBorder: dynamicColor('rgba(60,60,67,0.18)', 'rgba(255,255,255,0.12)'),
+  voiceHoldRecording: dynamicColor('#686A70', '#484A50'),
+  voiceHoldRecordingText: '#FFFFFF',
   overlay: dynamicColor('rgba(0,0,0,0.10)', 'rgba(0,0,0,0.48)'),
   selected: systemColor('tertiarySystemFillColor', 'rgba(118,118,128,0.12)'),
   icon: systemColor('secondaryLabelColor', '#626267'),

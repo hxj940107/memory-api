@@ -2177,7 +2177,13 @@ export default function ChatScreen() {
       setMessages((prev) => prev.map((item) =>
         item.id === localMessageId ? { ...item, status: "failed" } : item,
       ));
-      Alert.alert("这段语音没有发出去", "可以稍后再试，或者重新录一遍。");
+      const detail = error instanceof Error ? error.message : "";
+      const explanation = detail.includes("No speech was recognized")
+        ? "没有听清这段语音，再录一遍试试。"
+        : detail.includes("Request timeout")
+          ? "语音识别超时了，稍后再试一次。"
+          : "可以稍后再试，或者重新录一遍。";
+      Alert.alert("这段语音没有发出去", explanation);
     }
   };
 
@@ -4215,7 +4221,8 @@ const styles = StyleSheet.create({
   },
 
   voiceHoldButtonRecording: {
-    backgroundColor: XiaoCColors.selected,
+    backgroundColor: XiaoCColors.voiceHoldRecording,
+    borderColor: XiaoCColors.voiceHoldRecording,
   },
 
   voiceHoldButtonText: {
@@ -4225,7 +4232,7 @@ const styles = StyleSheet.create({
   },
 
   voiceHoldButtonTextRecording: {
-    color: XiaoCColors.userBubble,
+    color: XiaoCColors.voiceHoldRecordingText,
   },
 
   attachButton: {
