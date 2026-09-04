@@ -4883,12 +4883,14 @@ export default async function handler(req, res) {
       }
 
       try {
+        const voiceSynthesizer = getMessageVoiceSynthesizer()
         const result = await prepareMessageVoicePlayback({
           supabase,
           user_id,
           conversation_id,
           message_id,
-          synthesize: getMessageVoiceSynthesizer(),
+          synthesize: voiceSynthesizer?.synthesize,
+          expectedVoiceVersion: voiceSynthesizer?.voiceVersion,
         })
         return res.status(200).json(result)
       } catch (error) {
