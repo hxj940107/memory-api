@@ -11,7 +11,9 @@ import {
 import {
   buildMiniMaxSpeechText,
   createMiniMaxSpeechSynthesizer,
+  estimateMiniMaxSpeechCostCny,
   getMiniMaxSpeechConfig,
+  getMiniMaxSpeechPriceCnyPer10k,
 } from "../lib/minimaxSpeech.js"
 
 test("message voice metadata only accepts a complete ready asset", () => {
@@ -28,9 +30,15 @@ test("message voice metadata only accepts a complete ready asset", () => {
     content_hash: "hash",
     provider: "provider",
     voice_id: "voice",
+    model: "speech-2.8-hd",
+    usage_characters: 26,
+    estimated_cost_cny: 0.0091,
+    price_cny_per_10k: 3.5,
   } })
   assert.equal(asset.id, "voice-1")
   assert.equal(asset.duration_seconds, 8.4)
+  assert.equal(asset.usage_characters, 26)
+  assert.equal(asset.estimated_cost_cny, 0.0091)
 })
 
 test("message voice identity is content-based and storage path is isolated", () => {
@@ -106,6 +114,19 @@ test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => 
   assert.equal(config.version.length, 16)
 })
 
+test("MiniMax speech cost uses the official China character price", () => {
+  assert.equal(getMiniMaxSpeechPriceCnyPer10k("speech-2.8-hd"), 3.5)
+  assert.equal(getMiniMaxSpeechPriceCnyPer10k("speech-2.8-turbo"), 2)
+  assert.equal(estimateMiniMaxSpeechCostCny({
+    model: "speech-2.8-hd",
+    usageCharacters: 100,
+  }), 0.035)
+  assert.equal(estimateMiniMaxSpeechCostCny({
+    model: "unknown",
+    usageCharacters: 100,
+  }), null)
+})
+
 test("MiniMax voice config supports an optional two-voice blend", () => {
   const baseEnv = {
     MESSAGE_VOICE_PROVIDER: "minimax",
@@ -159,7 +180,7 @@ test("MiniMax adapter sends a non-streaming MP3 request and decodes returned aud
         status: 200,
         json: async () => ({
           data: { audio: "010203" },
-          extra_info: { audio_length: 2450 },
+          extra_info: { audio_length: 2450, usage_characters: 26 },
           base_resp: { status_code: 0, status_msg: "success" },
         }),
       }
@@ -180,6 +201,9 @@ test("MiniMax adapter sends a non-streaming MP3 request and decodes returned aud
   assert.equal(request.body.audio_setting.format, "mp3")
   assert.deepEqual(result.buffer, Buffer.from([1, 2, 3]))
   assert.equal(result.duration_seconds, 2.45)
+  assert.equal(result.usage_characters, 26)
+  assert.equal(result.estimated_cost_cny, 0.0091)
+  assert.equal(result.price_cny_per_10k, 3.5)
   assert.equal(result.voice_version, adapter.voiceVersion)
 })
 

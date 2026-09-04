@@ -793,7 +793,6 @@ export default function ChatScreen() {
   const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
-  const voiceCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -1340,16 +1339,7 @@ export default function ChatScreen() {
     if (!canOfferMessageVoice(item) || !item) return;
     if (voicePreparingId === item.id) return;
 
-    if (voiceCollapseTimerRef.current) {
-      clearTimeout(voiceCollapseTimerRef.current);
-      voiceCollapseTimerRef.current = null;
-    }
-
     if (expandedVoiceMessageId === item.id) {
-      if (activeVoiceMessageId === item.id && audioStatus.playing) {
-        audioPlayer.pause();
-      }
-      setExpandedVoiceMessageId(null);
       return;
     }
 
@@ -1410,30 +1400,6 @@ export default function ChatScreen() {
       setVoicePreparingId(null);
     }
   };
-
-  useEffect(() => {
-    if (!audioStatus.didJustFinish || !activeVoiceMessageId) return;
-
-    if (voiceCollapseTimerRef.current) {
-      clearTimeout(voiceCollapseTimerRef.current);
-    }
-    const completedMessageId = activeVoiceMessageId;
-    voiceCollapseTimerRef.current = setTimeout(() => {
-      setExpandedVoiceMessageId((current) =>
-        current === completedMessageId ? null : current,
-      );
-      voiceCollapseTimerRef.current = null;
-    }, 1600);
-  }, [audioStatus.didJustFinish, activeVoiceMessageId]);
-
-  useEffect(() => {
-    return () => {
-      if (voiceCollapseTimerRef.current) {
-        clearTimeout(voiceCollapseTimerRef.current);
-        voiceCollapseTimerRef.current = null;
-      }
-    };
-  }, []);
 
   const openConversationMenu = () => {
     const currentConversationId = conversationIdRef.current;
@@ -2302,14 +2268,6 @@ export default function ChatScreen() {
               highlightedMessageId
             ) {
               endLocationHighlight();
-            }
-          }}
-          onScrollBeginDrag={() => {
-            const voiceIsPlaying =
-              expandedVoiceMessageId === activeVoiceMessageId && audioStatus.playing;
-            const voiceIsPreparing = expandedVoiceMessageId === voicePreparingId;
-            if (!voiceIsPlaying && !voiceIsPreparing) {
-              setExpandedVoiceMessageId(null);
             }
           }}
           scrollEventThrottle={16}

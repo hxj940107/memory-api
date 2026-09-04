@@ -66,6 +66,9 @@ test("settings prefers real monthly usage and keeps the local fallback", () => {
     source,
     /credits\?\.usage_monthly \?\? summary\.monthCost/,
   )
+  assert.match(source, /action: "minimax-voice-usage"/)
+  assert.match(source, />MiniMax 语音</)
+  assert.match(source, /本月计费字符/)
 })
 
 test("credits remain available when current-key usage is unavailable", async () => {

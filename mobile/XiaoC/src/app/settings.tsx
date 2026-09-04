@@ -65,6 +65,20 @@ type CreditsResponse = {
   error?: string;
 };
 
+type MiniMaxVoiceUsagePeriod = {
+  request_count: number;
+  usage_characters: number;
+  estimated_cost_cny: number;
+};
+
+type MiniMaxVoiceUsageResponse = {
+  currency: "CNY";
+  source: "provider_usage_estimate";
+  last24h: MiniMaxVoiceUsagePeriod;
+  month: MiniMaxVoiceUsagePeriod;
+  error?: string;
+};
+
 const emptySummary: CostSummary = {
   last24hCost: null,
   monthCost: null,
@@ -81,6 +95,13 @@ const formatUsd = (value?: number | null) => {
   }
 
   return `$${value.toFixed(value < 0.01 ? 4 : 2)}`;
+};
+
+const formatCny = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "暂无";
+  }
+  return `¥${value.toFixed(value > 0 && value < 0.01 ? 4 : 2)}`;
 };
 
 const formatCostSource = (source?: string) => {
@@ -207,6 +228,7 @@ export default function SettingsScreen() {
     useState<ChatModelOption>(DEFAULT_CHAT_MODEL);
   const [summary, setSummary] = useState<CostSummary>(emptySummary);
   const [credits, setCredits] = useState<CreditsResponse | null>(null);
+  const [voiceUsage, setVoiceUsage] = useState<MiniMaxVoiceUsageResponse | null>(null);
   const [account, setAccount] = useState<AccountSettings>({
     displayName: DEFAULT_ACCOUNT_NAME,
     hasPassword: false,
@@ -242,7 +264,7 @@ export default function SettingsScreen() {
       await syncClientPreferences().catch((error) => {
         console.log("Client preferences sync failed:", error);
       });
-      const [model, costSummary, creditsData, accountSettings, inactivityMode, localPushSettings] = await Promise.all([
+      const [model, costSummary, creditsData, voiceUsageData, accountSettings, inactivityMode, localPushSettings] = await Promise.all([
         getSelectedChatModel(),
         getCostSummary(),
         apiJson<CreditsResponse>("/api/user-state", {
@@ -255,6 +277,19 @@ export default function SettingsScreen() {
           balance: null,
           error: error.message,
         })),
+        apiJson<MiniMaxVoiceUsageResponse>("/api/user-state", {
+          query: {
+            user_id: APP_USER_ID,
+            action: "minimax-voice-usage",
+          },
+          timeoutMs: 12000,
+        }).catch((error) => ({
+          currency: "CNY" as const,
+          source: "provider_usage_estimate" as const,
+          last24h: { request_count: 0, usage_characters: 0, estimated_cost_cny: 0 },
+          month: { request_count: 0, usage_characters: 0, estimated_cost_cny: 0 },
+          error: error.message,
+        })),
         getAccountSettings(),
         getInactivityReachOutMode().catch(() => DEFAULT_INACTIVITY_REACH_OUT_MODE),
         getLocalPushSettings(),
@@ -263,6 +298,7 @@ export default function SettingsScreen() {
       setSelectedModel(model);
       setSummary(costSummary);
       setCredits(creditsData);
+      setVoiceUsage(voiceUsageData);
       setAccount(accountSettings);
       setReachOutMode(inactivityMode);
       setPushSettings(localPushSettings);
@@ -657,10 +693,11 @@ export default function SettingsScreen() {
 
         <SectionCard
           title="💲 花费"
-          summary={`24h ${formatUsd(summary.last24hCost)}`}
+          summary={`OpenRouter ${formatUsd(summary.last24hCost)} · 语音 ${formatCny(voiceUsage?.last24h.estimated_cost_cny)}`}
           expanded={expandedSections.cost}
           onToggle={() => toggleSection("cost")}
         >
+          <Text style={styles.costProviderTitle}>OpenRouter</Text>
           <InfoRow label="24h 消耗" value={formatUsd(summary.last24hCost)} />
           <InfoRow label="账户余额" value={formatUsd(credits?.balance)} />
           <InfoRow
@@ -693,6 +730,28 @@ export default function SettingsScreen() {
               <Text style={styles.tokenLine}>还没有记录。</Text>
             )}
           </View>
+
+          <View style={styles.costDivider} />
+          <Text style={styles.costProviderTitle}>MiniMax 语音</Text>
+          <InfoRow
+            label="24h 花费"
+            value={formatCny(voiceUsage?.last24h.estimated_cost_cny)}
+          />
+          <InfoRow
+            label="本月花费"
+            value={formatCny(voiceUsage?.month.estimated_cost_cny)}
+          />
+          <InfoRow
+            label="本月生成"
+            value={`${voiceUsage?.month.request_count ?? 0} 次`}
+          />
+          <InfoRow
+            label="本月计费字符"
+            value={`${voiceUsage?.month.usage_characters ?? 0}`}
+          />
+          <Text style={styles.costEstimateNote}>
+            按 MiniMax 返回的计费字符与当前模型单价估算；从本版本生成的语音开始记录。
+          </Text>
 
           <Pressable
             style={({ pressed }) => [
@@ -1082,6 +1141,27 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+
+  costProviderTitle: {
+    marginTop: 2,
+    marginBottom: 4,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#55555A",
+  },
+
+  costDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 16,
+    backgroundColor: "#E5E5E7",
+  },
+
+  costEstimateNote: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#A0A0A5",
   },
 
   pressableInfoRow: {
