@@ -790,6 +790,7 @@ export default function ChatScreen() {
 
   const [message, setMessage] = useState("");
   const [voiceReplyRequested, setVoiceReplyRequested] = useState(false);
+  const [voiceInputMode, setVoiceInputMode] = useState(false);
 
   const [selectedImages, setSelectedImages] = useState<
     ImagePicker.ImagePickerAsset[]
@@ -2209,14 +2210,19 @@ export default function ChatScreen() {
   const stopUserVoiceRecording = async () => {
     recordingIntentRef.current = false;
     if (!recordingStartedAtRef.current) return;
-    const startedAt = recordingStartedAtRef.current;
     recordingStartedAtRef.current = null;
     try {
+      const statusBeforeStop = audioRecorder.getStatus();
       await audioRecorder.stop();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const statusAfterStop = audioRecorder.getStatus();
       setIsRecordingVoice(false);
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      const durationSeconds = Math.max(0, (Date.now() - startedAt) / 1000);
-      const uri = audioRecorder.uri;
+      const durationSeconds = Math.max(
+        Number(statusBeforeStop.durationMillis) || 0,
+        Number(statusAfterStop.durationMillis) || 0,
+      ) / 1000;
+      const uri = statusAfterStop.url || statusBeforeStop.url || audioRecorder.uri;
       if (!uri || durationSeconds < 0.6) {
         Alert.alert("按得太短了", "再多说一点点吧。");
         return;
@@ -3037,28 +3043,56 @@ export default function ChatScreen() {
           <View style={styles.inputControls}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={isRecordingVoice ? "松开发送语音" : "按住发送语音"}
+              accessibilityLabel={voiceInputMode ? "切换到文字输入" : "切换到语音输入"}
               style={({ pressed }) => [
                 styles.voiceInputButton,
-                (pressed || isRecordingVoice) && styles.voiceInputButtonPressed,
+                pressed && styles.voiceInputButtonPressed,
               ]}
-              onPressIn={startUserVoiceRecording}
-              onPressOut={stopUserVoiceRecording}
+              onPress={() => {
+                if (isRecordingVoice) return;
+                setVoiceInputMode((current) => {
+                  const next = !current;
+                  if (next) Keyboard.dismiss();
+                  else requestAnimationFrame(() => inputRef.current?.focus());
+                  return next;
+                });
+              }}
             >
-              <View style={styles.voiceInputWave}>
-                {[8, 15, 21, 13, 7].map((height, index) => (
-                  <View
-                    key={`voice_input_wave_${index}`}
-                    style={[
-                      styles.voiceInputWaveBar,
-                      isRecordingVoice && styles.voiceInputWaveBarRecording,
-                      { height },
-                    ]}
-                  />
-                ))}
-              </View>
+              {voiceInputMode ? (
+                <Text style={styles.keyboardModeIcon}>⌨︎</Text>
+              ) : (
+                <View style={styles.voiceInputWave}>
+                  {[8, 15, 21, 13, 7].map((height, index) => (
+                    <View
+                      key={`voice_input_wave_${index}`}
+                      style={[styles.voiceInputWaveBar, { height }]}
+                    />
+                  ))}
+                </View>
+              )}
             </Pressable>
 
+            {voiceInputMode ? (
+              <View
+                accessibilityRole="button"
+                accessibilityLabel={isRecordingVoice ? "松开发送" : "按住说话"}
+                style={[
+                  styles.voiceHoldButton,
+                  isRecordingVoice && styles.voiceHoldButtonRecording,
+                ]}
+                onStartShouldSetResponder={() => true}
+                onResponderTerminationRequest={() => false}
+                onResponderGrant={startUserVoiceRecording}
+                onResponderRelease={stopUserVoiceRecording}
+              >
+                <Text style={[
+                  styles.voiceHoldButtonText,
+                  isRecordingVoice && styles.voiceHoldButtonTextRecording,
+                ]}>
+                  {isRecordingVoice ? "松开 发送" : "按住 说话"}
+                </Text>
+              </View>
+            ) : (
             <View style={styles.inputBox}>
               <TextInput
                 ref={inputRef}
@@ -3108,6 +3142,7 @@ export default function ChatScreen() {
                 </Pressable>
               </RNAnimated.View>
             </View>
+            )}
 
             <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
               <Text style={styles.attachText}>＋</Text>
@@ -4160,6 +4195,37 @@ const styles = StyleSheet.create({
 
   voiceInputWaveBarRecording: {
     backgroundColor: "#FF3B30",
+  },
+
+  keyboardModeIcon: {
+    color: XiaoCColors.icon,
+    fontSize: 23,
+    lineHeight: 25,
+  },
+
+  voiceHoldButton: {
+    flex: 1,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: XiaoCColors.inputSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: XiaoCColors.inputBorder,
+  },
+
+  voiceHoldButtonRecording: {
+    backgroundColor: XiaoCColors.selected,
+  },
+
+  voiceHoldButtonText: {
+    color: XiaoCColors.textPrimary,
+    fontSize: 16,
+    fontWeight: "500",
+  },
+
+  voiceHoldButtonTextRecording: {
+    color: XiaoCColors.userBubble,
   },
 
   attachButton: {

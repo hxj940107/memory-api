@@ -82,11 +82,60 @@ test("user voice is transcribed before being stored privately", async () => {
   }
 })
 
-test("mobile voice input records, transcribes, sends, and keeps transcript hidden", () => {
+test("an implausibly short recording cannot enter chat as a hallucinated transcript", async () => {
+  const previousKey = process.env.GROQ_API_KEY
+  process.env.GROQ_API_KEY = "server-only-secret"
+  let uploadCalled = false
+  const supabase = {
+    storage: {
+      from() {
+        return {
+          async upload() {
+            uploadCalled = true
+            return { error: null }
+          },
+        }
+      },
+    },
+  }
+  try {
+    await assert.rejects(
+      transcribeAndStoreUserVoice({
+        supabase,
+        user_id: "user",
+        conversation_id: "chat-one",
+        audio_base64: Buffer.from("nearly empty audio").toString("base64"),
+        mime_type: "audio/mp4",
+        duration_seconds: 8,
+        fetchImpl: async () => new Response(JSON.stringify({
+          text: "优优独播剧场——YoYo Television Series Exclusive",
+          duration: 0.139,
+          language: "zh",
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      }),
+      error => error?.code === "USER_VOICE_EMPTY_TRANSCRIPT",
+    )
+    assert.equal(uploadCalled, false)
+  } finally {
+    if (previousKey === undefined) delete process.env.GROQ_API_KEY
+    else process.env.GROQ_API_KEY = previousKey
+  }
+})
+
+test("mobile voice input switches modes before the large hold area records and sends", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /useAudioRecorder\(RecordingPresets\.LOW_QUALITY\)/)
-  assert.match(chat, /onPressIn=\{startUserVoiceRecording\}/)
-  assert.match(chat, /onPressOut=\{stopUserVoiceRecording\}/)
+  assert.match(chat, /const \[voiceInputMode, setVoiceInputMode\]/)
+  assert.match(chat, /voiceInputMode \? "切换到文字输入" : "切换到语音输入"/)
+  assert.match(chat, /styles\.voiceHoldButton/)
+  assert.match(chat, /\{isRecordingVoice \? "松开 发送" : "按住 说话"\}/)
+  const holdButton = chat.slice(chat.indexOf("styles.voiceHoldButton"), chat.indexOf("styles.inputBox", chat.indexOf("styles.voiceHoldButton")))
+  assert.match(holdButton, /onStartShouldSetResponder=\{\(\) => true\}/)
+  assert.match(holdButton, /onResponderTerminationRequest=\{\(\) => false\}/)
+  assert.match(holdButton, /onResponderGrant=\{startUserVoiceRecording\}/)
+  assert.match(holdButton, /onResponderRelease=\{stopUserVoiceRecording\}/)
+  assert.match(chat, /audioRecorder\.getStatus\(\)/)
+  assert.match(chat, /durationSeconds < 0\.6/)
   assert.match(chat, /type: "user_voice"[\s\S]*action: "transcribe"/)
   assert.match(chat, /userVoice: messageToSend\.metadata\?\.userVoice/)
   assert.match(chat, /!isUserVoice \|\| isVoiceTranscriptRevealed/)
