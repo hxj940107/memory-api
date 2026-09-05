@@ -130,6 +130,8 @@ type Message = {
   };
 };
 
+type ReplyModeOverride = "follow" | "text" | "voice";
+
 type SelectedFile = {
   name: string;
   text: string;
@@ -787,7 +789,7 @@ export default function ChatScreen() {
   const shouldStartNewChat = params.newChat === "1";
 
   const [message, setMessage] = useState("");
-  const [voiceReplyRequested, setVoiceReplyRequested] = useState(false);
+  const [replyModeOverride, setReplyModeOverride] = useState<ReplyModeOverride>("follow");
   const [voiceInputMode, setVoiceInputMode] = useState(false);
 
   const [selectedImages, setSelectedImages] = useState<
@@ -1386,7 +1388,9 @@ export default function ChatScreen() {
             "取消",
             "选择图片",
             "选择文件",
-            voiceReplyRequested ? "取消小C语音回复" : "让小C语音回复",
+            `${replyModeOverride === "follow" ? "✓ " : ""}回复方式：跟随我`,
+            `${replyModeOverride === "text" ? "✓ " : ""}下一条回复文字`,
+            `${replyModeOverride === "voice" ? "✓ " : ""}下一条回复语音`,
           ],
           cancelButtonIndex: 0,
         },
@@ -1400,7 +1404,15 @@ export default function ChatScreen() {
           }
 
           if (buttonIndex === 3) {
-            setVoiceReplyRequested((current) => !current);
+            setReplyModeOverride("follow");
+          }
+
+          if (buttonIndex === 4) {
+            setReplyModeOverride("text");
+          }
+
+          if (buttonIndex === 5) {
+            setReplyModeOverride("voice");
           }
         },
       );
@@ -1416,7 +1428,10 @@ export default function ChatScreen() {
     !!item.cloudId &&
     !!item.text.trim() &&
     !item.treeholeDraft &&
-    !isDiaryText(item.text);
+    !isDiaryText(item.text) &&
+    !item.attachments?.length &&
+    !hasBlockMarkdown(item.text) &&
+    !/https?:\/\//i.test(item.text);
 
   const toggleMessageVoiceControl = (item?: Message) => {
     if (!canOfferMessageVoice(item) || !item) return;
@@ -2096,7 +2111,7 @@ export default function ChatScreen() {
       imageUris: selectedImages.map((image) => image.uri),
       imageAsset: selectedImages[0],
       imageAssets: selectedImages,
-      voiceReplyRequested,
+      voiceReplyRequested: replyModeOverride === "voice",
       createdAt: new Date().toISOString(),
       status: "sending",
     };
@@ -2108,7 +2123,7 @@ export default function ChatScreen() {
     }, 100);
 
     setMessage("");
-    setVoiceReplyRequested(false);
+    setReplyModeOverride("follow");
     setSelectedImages([]);
     setSelectedFile(null);
 
@@ -2185,9 +2200,11 @@ export default function ChatScreen() {
       text: "",
       localAudioUri: uri,
       localAudioDuration: durationSeconds,
+      voiceReplyRequested: replyModeOverride !== "text",
       createdAt: new Date().toISOString(),
       status: "sending",
     };
+    setReplyModeOverride("follow");
     setMessages((prev) => [...prev, pendingMessage]);
     scrollToLatestMessage(true);
     try {
@@ -3189,14 +3206,16 @@ export default function ChatScreen() {
             </View>
           )}
 
-          {voiceReplyRequested && (
+          {replyModeOverride !== "follow" && (
             <View style={styles.voiceReplyNotice}>
-              <Text style={styles.voiceReplyNoticeText}>小C将用语音回复</Text>
+              <Text style={styles.voiceReplyNoticeText}>
+                {replyModeOverride === "voice" ? "下一条回复语音" : "下一条回复文字"}
+              </Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="取消小C语音回复"
+                accessibilityLabel="恢复跟随输入方式"
                 hitSlop={8}
-                onPress={() => setVoiceReplyRequested(false)}
+                onPress={() => setReplyModeOverride("follow")}
               >
                 <Text style={styles.voiceReplyNoticeClose}>×</Text>
               </Pressable>

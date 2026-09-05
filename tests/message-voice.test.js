@@ -98,11 +98,13 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
 
 test("a one-shot voice reply stays behind typing dots, then renders as voice with optional transcript", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
-  assert.match(chat, /const \[voiceReplyRequested, setVoiceReplyRequested\]/)
-  assert.match(chat, /voiceReplyRequested \? "取消小C语音回复" : "让小C语音回复"/)
-  assert.match(chat, /小C将用语音回复/)
-  assert.match(chat, /voiceReplyRequested,\s*\n/)
-  assert.match(chat, /setVoiceReplyRequested\(false\)/)
+  assert.match(chat, /const \[replyModeOverride, setReplyModeOverride\]/)
+  assert.match(chat, /回复方式：跟随我/)
+  assert.match(chat, /下一条回复文字/)
+  assert.match(chat, /下一条回复语音/)
+  assert.match(chat, /voiceReplyRequested: replyModeOverride === "voice"/)
+  assert.match(chat, /voiceReplyRequested: replyModeOverride !== "text"/)
+  assert.match(chat, /setReplyModeOverride\("follow"\)/)
   assert.match(
     chat,
     /messageToSend\.voiceReplyRequested[\s\S]*message_id: assistantCloudId[\s\S]*voice: voiceResult\.voice/,
@@ -139,7 +141,7 @@ test("composer reserves the left wave for user voice and moves attachments outsi
   assert.ok(composer.indexOf("styles.inputBox") < composer.lastIndexOf("styles.attachButton"))
   assert.match(composer, /voiceInputWaveBar/)
   assert.doesNotMatch(composer, /voiceReplyToggle/)
-  assert.match(chat, /options: \[[\s\S]*"选择图片"[\s\S]*"选择文件"[\s\S]*"让小C语音回复"/)
+  assert.match(chat, /options: \[[\s\S]*"选择图片"[\s\S]*"选择文件"[\s\S]*回复方式：跟随我[\s\S]*下一条回复文字[\s\S]*下一条回复语音/)
 })
 
 test("MiniMax voice config keeps XiaoC's selected voice and tuned speed", () => {
