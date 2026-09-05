@@ -12,12 +12,13 @@ import {
   getInactivityAttemptLimit,
   getNextInactivityDelayMinutes,
   hasUserRepliedToInactivityTask,
+  shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
 
 test("inactivity reach-out modes preserve the configured delay ranges", () => {
   const cases = [
     ["frequent", "open", 60, 120],
-    ["frequent", "conversation_end", 240, 360],
+    ["frequent", "conversation_end", 120, 180],
     ["normal", "open", 150, 240],
     ["normal", "conversation_end", 480, 540],
     ["relaxed", "open", 300, 480],
@@ -31,6 +32,31 @@ test("inactivity reach-out modes preserve the configured delay ranges", () => {
       max,
     )
   }
+})
+
+test("frequent conversation endings protect the near term but reach Judge within three hours", () => {
+  const earliestJudgeOpportunity = getInactivityReachOutDelayMinutes(
+    "frequent",
+    "conversation_end",
+    () => 0,
+  )
+  const latestJudgeOpportunity = getInactivityReachOutDelayMinutes(
+    "frequent",
+    "conversation_end",
+    () => 0.999999,
+  )
+
+  assert.equal(earliestJudgeOpportunity, 120)
+  assert.equal(latestJudgeOpportunity, 180)
+  assert.ok(earliestJudgeOpportunity > 60)
+})
+
+test("frequent open conversations keep their existing one-to-two-hour Judge window", () => {
+  assert.equal(getInactivityReachOutDelayMinutes("frequent", "open", () => 0), 60)
+  assert.equal(
+    getInactivityReachOutDelayMinutes("frequent", "open", () => 0.999999),
+    120,
+  )
 })
 
 test("missing modes fall back to normal and off disables scheduling", () => {
@@ -110,6 +136,29 @@ test("a newer user message closes the previous silence episode", () => {
     hasUserRepliedToInactivityTask(task, { id: "new-user-reply" }),
     true,
   )
+})
+
+test("existing cooldown and frequency gates remain effective after the first Judge opportunity", () => {
+  const task = { id: "current-task" }
+
+  assert.equal(
+    shouldApplyProactiveCooldown({
+      metadata: {
+        proactive: true,
+        proactiveTaskId: "earlier-task",
+      },
+    }, task),
+    true,
+  )
+  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 3 } }, "frequent"), false)
+})
+
+test("quiet hours still defer due inactivity tasks before execution", () => {
+  const chatSource = readFileSync("api/chat.js", "utf8")
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(chatSource, /return deferOutOfQuietHours\(/)
+  assert.match(memorySource, /if \(isProactiveQuietHours\(now\) && quietDeferred\.length\)/)
 })
 
 test("a continuation keeps the silence root so any later user reply cancels it", () => {
