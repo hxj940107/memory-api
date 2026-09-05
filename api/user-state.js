@@ -29,6 +29,65 @@ const CLIENT_PREFERENCE_KEYS = new Set([
   "migration_complete",
 ])
 
+const MAX_FAVORITE_TEXT_LENGTH = 20000
+
+function normalizeFavorite(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const text = String(value.text || "").trim().slice(0, MAX_FAVORITE_TEXT_LENGTH)
+  const role = value.role === "user" ? "user" : value.role === "assistant" ? "assistant" : null
+  const createdAt = new Date(value.createdAt || "")
+  if (!text || !role || Number.isNaN(createdAt.getTime())) return null
+  return {
+    id: String(value.id || `favorite_${createdAt.getTime()}`).slice(0, 160),
+    text,
+    role,
+    createdAt: createdAt.toISOString(),
+    conversationId: value.conversationId
+      ? String(value.conversationId).slice(0, 160)
+      : null,
+  }
+}
+
+function normalizeFavorites(value) {
+  const seen = new Set()
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeFavorite)
+    .filter(Boolean)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .filter((item) => {
+      const identity = `${item.role}:${item.text.replace(/\s+/g, " ").trim()}`
+      if (seen.has(identity)) return false
+      seen.add(identity)
+      return true
+    })
+}
+
+async function readClientPreferences(userId) {
+  const { data, error } = await supabase
+    .from("user_state")
+    .select("client_preferences")
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error) throw error
+  return data?.client_preferences || {}
+}
+
+async function writeFavorites(userId, currentPreferences, favorites) {
+  const nextPreferences = {
+    ...currentPreferences,
+    favorites: normalizeFavorites(favorites),
+  }
+  const { error } = await supabase
+    .from("user_state")
+    .upsert({
+      user_id: userId,
+      client_preferences: nextPreferences,
+      updated_at: new Date().toISOString(),
+    })
+  if (error) throw error
+  return nextPreferences.favorites
+}
+
 function normalizePreferencePatch(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
   return Object.fromEntries(
@@ -222,12 +281,18 @@ export default async function handler(req, res) {
       }
       if (error) return res.status(500).json({ error: error.message })
       const preferences = data?.client_preferences || {}
-      const signedImages = await signPreferenceImages(preferences)
+      const { favorites: _favorites, ...clientPreferences } = preferences
+      const signedImages = await signPreferenceImages(clientPreferences)
       return res.status(200).json({
-        preferences: { ...preferences, ...signedImages },
-        has_preferences: Object.keys(preferences).length > 0,
+        preferences: { ...clientPreferences, ...signedImages },
+        has_preferences: Object.keys(clientPreferences).length > 0,
         schema_ready: true,
       })
+    }
+
+    if (req.method === "GET" && req.query.action === "favorites") {
+      const preferences = await readClientPreferences(user_id)
+      return res.status(200).json({ favorites: normalizeFavorites(preferences.favorites) })
     }
 
     if (req.method === "GET" && req.query.action === "inactivity-reach-out-mode") {
@@ -271,6 +336,27 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
+      if (req.body.action === "merge-favorites") {
+        const preferences = await readClientPreferences(user_id)
+        const favorites = await writeFavorites(user_id, preferences, [
+          ...normalizeFavorites(req.body.favorites),
+          ...normalizeFavorites(preferences.favorites),
+        ])
+        return res.status(200).json({ favorites })
+      }
+
+      if (req.body.action === "delete-favorite") {
+        const favoriteId = String(req.body.favorite_id || "")
+        if (!favoriteId) return res.status(400).json({ error: "favorite_id required" })
+        const preferences = await readClientPreferences(user_id)
+        const favorites = await writeFavorites(
+          user_id,
+          preferences,
+          normalizeFavorites(preferences.favorites).filter(item => item.id !== favoriteId),
+        )
+        return res.status(200).json({ favorites })
+      }
+
       if (req.body.action === "set-client-preferences") {
         const patch = normalizePreferencePatch(req.body.preferences)
         const { data: current, error: readError } = await supabase

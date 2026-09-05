@@ -59,8 +59,13 @@ export default function FavoritesScreen() {
         text: "移除",
         style: "destructive",
         onPress: async () => {
-          await deleteFavorite(favorite.id);
-          loadFavorites();
+          try {
+            await deleteFavorite(favorite.id);
+            loadFavorites();
+          } catch (error) {
+            console.log("Favorite delete failed:", error);
+            Alert.alert("暂时没有移除", "网络恢复后再试一次。收藏仍然保留着。");
+          }
         },
       },
     ]);
@@ -111,8 +116,8 @@ export default function FavoritesScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backText}>‹</Text>
         </Pressable>
-
-        <Text style={styles.gentleLine}>有些话，我想替你留着</Text>
+        <Text style={styles.title}>收藏</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
       <FlatList
@@ -186,9 +191,12 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    paddingTop: 58,
-    paddingHorizontal: 24,
-    paddingBottom: 10,
+    paddingTop: 56,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
 
   backButton: {
@@ -198,7 +206,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(120,120,128,0.08)",
-    marginBottom: 34,
   },
 
   backText: {
@@ -207,10 +214,15 @@ const styles = StyleSheet.create({
     color: "#555",
   },
 
-  gentleLine: {
-    fontSize: 17,
-    color: "#A9A2A0",
-    letterSpacing: 0.4,
+  title: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#4B4643",
+  },
+
+  headerSpacer: {
+    width: 36,
+    height: 36,
   },
 
   scroll: {
@@ -218,8 +230,8 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    paddingHorizontal: 24,
-    paddingTop: 18,
+    paddingHorizontal: 20,
+    paddingTop: 10,
     paddingBottom: 52,
   },
 
@@ -244,10 +256,10 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderRadius: 24,
-    marginBottom: 14,
+    paddingHorizontal: 17,
+    paddingVertical: 14,
+    borderRadius: 19,
+    marginBottom: 10,
     backgroundColor: "rgba(255,255,255,0.82)",
     shadowColor: "#B8AFA7",
     shadowOpacity: 0.08,
@@ -266,7 +278,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 8,
   },
 
   cardMeta: {
@@ -293,8 +305,8 @@ const styles = StyleSheet.create({
   },
 
   text: {
-    fontSize: 18,
-    lineHeight: 29,
+    fontSize: 17,
+    lineHeight: 25,
     color: "#3F3A37",
   },
 
