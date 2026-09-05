@@ -111,14 +111,15 @@ test("a one-shot voice reply stays behind typing dots, then renders as voice wit
     chat.indexOf("const shouldPrepareVoiceReply"),
     chat.indexOf("} catch (error) {", chat.indexOf("const shouldPrepareVoiceReply")),
   )
-  assert.match(requestedReplyBlock, /audioPlayer\.replace\(voiceResult\.url\)/)
-  assert.doesNotMatch(requestedReplyBlock, /audioPlayer\.play\(\)/)
+  assert.match(requestedReplyBlock, /loadAudio\(voiceResult\.url, assistantMessage\.id, false\)/)
   assert.match(requestedReplyBlock, /presentation: "voice_reply"/)
   assert.match(requestedReplyBlock, /setMessages\(\(prev\) => upsertCloudMessage\(prev, voiceMessage\)\)/)
   assert.match(requestedReplyBlock, /finally \{\s*setIsTyping\(false\)/)
   assert.match(chat, /voiceAsset\?\.presentation === "voice_reply"/)
   assert.match(chat, /isVoiceReply \|\| expandedVoiceMessageId === item\.id/)
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
+  assert.match(chat, /isVoiceReply && isVoiceTranscriptRevealed && !!item\.text/)
+  assert.match(chat, /styles\.assistantVoiceTranscript/)
   assert.match(chat, /\{isTyping && <TypingDots \/>\}/)
   assert.doesNotMatch(chat, /正在准备语音/)
   assert.match(chat, /const VOICE_WAVE_HEIGHTS = \[/)

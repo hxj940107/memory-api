@@ -35,11 +35,8 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
-import { Audio as ExpoAVAudio } from "expo-av";
-import {
-  useAudioPlayer,
-  useAudioPlayerStatus,
-} from "expo-audio";
+import * as Haptics from "expo-haptics";
+import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -806,11 +803,14 @@ export default function ChatScreen() {
 
   const [selectionText, setSelectionText] = useState<string | null>(null);
 
-  const audioPlayer = useAudioPlayer(undefined, {
-    updateInterval: 250,
-    downloadFirst: true,
+  const audioSoundRef = useRef<ExpoAVAudio.Sound | null>(null);
+  const [audioStatus, setAudioStatus] = useState({
+    isLoaded: false,
+    playing: false,
+    didJustFinish: false,
+    currentTime: 0,
+    duration: 0,
   });
-  const audioStatus = useAudioPlayerStatus(audioPlayer);
   const userVoiceRecordingRef = useRef<ExpoAVAudio.Recording | null>(null);
   const userVoiceRecordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingIntentRef = useRef(false);
@@ -825,6 +825,44 @@ export default function ChatScreen() {
   );
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isCancellingVoice, setIsCancellingVoice] = useState(false);
+
+  const updateAudioStatus = (status: AVPlaybackStatus) => {
+    if (!status.isLoaded) {
+      setAudioStatus({
+        isLoaded: false,
+        playing: false,
+        didJustFinish: false,
+        currentTime: 0,
+        duration: 0,
+      });
+      return;
+    }
+    setAudioStatus({
+      isLoaded: true,
+      playing: status.isPlaying,
+      didJustFinish: status.didJustFinish,
+      currentTime: status.positionMillis / 1000,
+      duration: (status.durationMillis || 0) / 1000,
+    });
+  };
+
+  const stopAudioPlayback = async () => {
+    const sound = audioSoundRef.current;
+    audioSoundRef.current = null;
+    if (sound) await sound.unloadAsync().catch(() => {});
+    updateAudioStatus({ isLoaded: false, error: "unloaded" });
+  };
+
+  const loadAudio = async (uri: string, messageId: string, shouldPlay = true) => {
+    await stopAudioPlayback();
+    const { sound } = await ExpoAVAudio.Sound.createAsync(
+      { uri },
+      { shouldPlay, progressUpdateIntervalMillis: 250 },
+      updateAudioStatus,
+    );
+    audioSoundRef.current = sound;
+    setActiveVoiceMessageId(messageId);
+  };
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -1385,7 +1423,7 @@ export default function ChatScreen() {
       return;
     }
 
-    if (audioStatus.playing) audioPlayer.pause();
+    if (audioStatus.playing) void audioSoundRef.current?.pauseAsync();
     setExpandedVoiceMessageId(item.id);
   };
 
@@ -1420,13 +1458,15 @@ export default function ChatScreen() {
     }
 
     if (activeVoiceMessageId === item.id && audioStatus.isLoaded) {
+      const sound = audioSoundRef.current;
+      if (!sound) return;
       if (audioStatus.playing) {
-        audioPlayer.pause();
+        await sound.pauseAsync();
       } else {
         if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
-          await audioPlayer.seekTo(0);
+          await sound.setPositionAsync(0);
         }
-        audioPlayer.play();
+        await sound.playAsync();
       }
       return;
     }
@@ -1453,10 +1493,7 @@ export default function ChatScreen() {
             }
           : messageItem,
       ));
-      audioPlayer.pause();
-      audioPlayer.replace(result.url);
-      setActiveVoiceMessageId(item.id);
-      requestAnimationFrame(() => audioPlayer.play());
+      await loadAudio(result.url, item.id);
     } catch (error) {
       const status = typeof error === "object" && error && "status" in error
         ? Number(error.status)
@@ -1557,7 +1594,7 @@ export default function ChatScreen() {
 
       setConversationId(id);
       if (conversationIdRef.current !== id) {
-        audioPlayer.pause();
+        void audioSoundRef.current?.pauseAsync();
         setExpandedVoiceMessageId(null);
         setActiveVoiceMessageId(null);
         setVoicePreparingId(null);
@@ -1939,9 +1976,7 @@ export default function ChatScreen() {
             metadata: { ...(assistantMessage.metadata || {}), voice: voiceResult.voice },
           };
           setMessages((prev) => upsertCloudMessage(prev, voiceMessage));
-          audioPlayer.pause();
-          audioPlayer.replace(voiceResult.url);
-          setActiveVoiceMessageId(assistantMessage.id);
+          await loadAudio(voiceResult.url, assistantMessage.id, false);
         } catch (voiceError) {
           console.log("Requested voice reply preparation failed:", voiceError);
           setMessages((prev) => upsertCloudMessage(prev, assistantMessage));
@@ -2099,12 +2134,14 @@ export default function ChatScreen() {
     const voice = normalizeUserVoiceAsset(item.metadata);
     if (!voice && !item.localAudioUri) return;
     if (activeVoiceMessageId === item.id && audioStatus.isLoaded) {
-      if (audioStatus.playing) audioPlayer.pause();
+      const sound = audioSoundRef.current;
+      if (!sound) return;
+      if (audioStatus.playing) await sound.pauseAsync();
       else {
         if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
-          await audioPlayer.seekTo(0);
+          await sound.setPositionAsync(0);
         }
-        audioPlayer.play();
+        await sound.playAsync();
       }
       return;
     }
@@ -2122,10 +2159,7 @@ export default function ChatScreen() {
         uri = result.url;
       }
       if (!uri) return;
-      audioPlayer.pause();
-      audioPlayer.replace(uri);
-      setActiveVoiceMessageId(item.id);
-      requestAnimationFrame(() => audioPlayer.play());
+      await loadAudio(uri, item.id);
     } catch (error) {
       console.log("User voice playback failed:", error);
       Alert.alert("暂时没能播放", "稍后再试一次。");
@@ -2199,13 +2233,20 @@ export default function ChatScreen() {
     }
     if (!recordingIntentRef.current) return;
     try {
-      audioPlayer.pause();
+      await stopAudioPlayback();
       await ExpoAVAudio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
         staysActiveInBackground: false,
       });
-      if (!recordingIntentRef.current) return;
+      if (!recordingIntentRef.current) {
+        await ExpoAVAudio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+        });
+        return;
+      }
       const { recording } = await ExpoAVAudio.Recording.createAsync(
         ExpoAVAudio.RecordingOptionsPresets.HIGH_QUALITY,
       );
@@ -2215,11 +2256,17 @@ export default function ChatScreen() {
         if (abandonedUri) {
           await FileSystem.deleteAsync(abandonedUri, { idempotent: true }).catch(() => {});
         }
+        await ExpoAVAudio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+        }).catch(() => {});
         return;
       }
       userVoiceRecordingRef.current = recording;
       recordingStartedAtRef.current = Date.now();
       setIsRecordingVoice(true);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       userVoiceRecordingTimeoutRef.current = setTimeout(() => {
         void finishUserVoiceRecording(false);
       }, MAX_USER_VOICE_SECONDS * 1000);
@@ -2236,6 +2283,7 @@ export default function ChatScreen() {
         staysActiveInBackground: false,
       }).catch(() => {});
       console.log("Voice recording start failed:", error);
+      Alert.alert("录音没有启动", "请再按一次；如果仍然失败，请确认 Expo Go 的麦克风权限已开启。");
     }
   };
 
@@ -2297,6 +2345,9 @@ export default function ChatScreen() {
     if (voiceCancelIntentRef.current === shouldCancel) return;
     voiceCancelIntentRef.current = shouldCancel;
     setIsCancellingVoice(shouldCancel);
+    if (shouldCancel) {
+      void Haptics.selectionAsync().catch(() => {});
+    }
   };
 
   const handleVoiceResponderRelease = () => {
@@ -2817,7 +2868,7 @@ export default function ChatScreen() {
                     </View>
                   )}
 
-                  {!!item.text && (!isUserVoice || isVoiceTranscriptRevealed) && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
+                  {!!item.text && !isUserVoice && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
                     <Pressable
                       key={`${stableMessageId}_user_segment_${segmentIndex}`}
                       style={[
@@ -2845,6 +2896,22 @@ export default function ChatScreen() {
                       </Text>
                     </Pressable>
                   ))}
+
+                  {isUserVoice && isVoiceTranscriptRevealed && !!item.text && (
+                    <Pressable
+                      style={styles.userVoiceTranscript}
+                      onLongPress={(event) =>
+                        openMessageMenu(
+                          item.text,
+                          item,
+                          event.nativeEvent.pageX,
+                          event.nativeEvent.pageY,
+                        )
+                      }
+                    >
+                      <Text style={styles.userVoiceTranscriptText}>{item.text}</Text>
+                    </Pressable>
+                  )}
 
                   {!item.imageUri &&
                     !item.imageUris?.length &&
@@ -2915,7 +2982,7 @@ export default function ChatScreen() {
 	                          ))}
 	                        </View>
 	                      )}
-	                      {(!isVoiceReply || isVoiceTranscriptRevealed) && (
+	                      {!isVoiceReply && (
 	                      hasBlockMarkdown(item.text) ? (
 	                    <MessageMarkdown
 	                      text={item.text}
@@ -3011,6 +3078,27 @@ export default function ChatScreen() {
 	                          )}
 	                        </Pressable>
 	                      ) : null}
+	                      {isVoiceReply && isVoiceTranscriptRevealed && !!item.text && (
+	                        <Pressable
+	                          style={styles.assistantVoiceTranscript}
+	                          onLongPress={(event) =>
+	                            openMessageMenu(
+	                              item.text,
+	                              item,
+	                              event.nativeEvent.pageX,
+	                              event.nativeEvent.pageY,
+	                            )
+	                          }
+	                        >
+	                          <Text style={styles.assistantVoiceTranscriptText}>
+	                            <InlineMarkdown
+	                              text={item.text}
+	                              highlight={isSearchTarget ? targetSearchQuery : undefined}
+	                              highlightOpacity={locationHighlightOpacity}
+	                            />
+	                          </Text>
+	                        </Pressable>
+	                      )}
 	                    </>
 	                  )}
                 </View>
@@ -3768,6 +3856,42 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.92)",
     fontSize: 13,
     fontVariant: ["tabular-nums"],
+  },
+
+  userVoiceTranscript: {
+    alignSelf: "flex-end",
+    maxWidth: "78%",
+    marginTop: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 14,
+    borderTopRightRadius: 6,
+    backgroundColor: XiaoCColors.userVoiceTranscript,
+  },
+
+  userVoiceTranscriptText: {
+    color: XiaoCColors.userVoiceTranscriptText,
+    fontSize: 15,
+    lineHeight: 21,
+    includeFontPadding: false,
+  },
+
+  assistantVoiceTranscript: {
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+    marginTop: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 14,
+    borderTopLeftRadius: 6,
+    backgroundColor: XiaoCColors.assistantVoiceTranscript,
+  },
+
+  assistantVoiceTranscriptText: {
+    color: XiaoCColors.assistantVoiceTranscriptText,
+    fontSize: 15,
+    lineHeight: 22,
+    includeFontPadding: false,
   },
 
   treeholeDraftCard: {
