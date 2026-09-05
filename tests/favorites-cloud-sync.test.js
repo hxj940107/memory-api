@@ -12,7 +12,7 @@ test("favorites reuse user-state without adding a serverless function", () => {
   assert.match(api, /action === "favorites"/)
   assert.match(api, /action === "merge-favorites"/)
   assert.match(api, /action === "delete-favorite"/)
-  assert.match(api, /client_preferences: nextPreferences/)
+  assert.match(api, /patchClientPreferences\(userId, \{[\s\S]*favorites:/)
 })
 
 test("each app sandbox merges its legacy local favorites once", () => {

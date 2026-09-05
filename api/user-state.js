@@ -72,20 +72,20 @@ async function readClientPreferences(userId) {
   return data?.client_preferences || {}
 }
 
-async function writeFavorites(userId, currentPreferences, favorites) {
-  const nextPreferences = {
-    ...currentPreferences,
-    favorites: normalizeFavorites(favorites),
-  }
-  const { error } = await supabase
-    .from("user_state")
-    .upsert({
-      user_id: userId,
-      client_preferences: nextPreferences,
-      updated_at: new Date().toISOString(),
-    })
+async function patchClientPreferences(userId, patch) {
+  const { data, error } = await supabase.rpc("patch_client_preferences", {
+    p_user_id: userId,
+    p_patch: patch,
+  })
   if (error) throw error
-  return nextPreferences.favorites
+  return data || {}
+}
+
+async function writeFavorites(userId, favorites) {
+  const nextPreferences = await patchClientPreferences(userId, {
+    favorites: normalizeFavorites(favorites),
+  })
+  return normalizeFavorites(nextPreferences.favorites)
 }
 
 function normalizePreferencePatch(value) {
@@ -338,7 +338,7 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       if (req.body.action === "merge-favorites") {
         const preferences = await readClientPreferences(user_id)
-        const favorites = await writeFavorites(user_id, preferences, [
+        const favorites = await writeFavorites(user_id, [
           ...normalizeFavorites(req.body.favorites),
           ...normalizeFavorites(preferences.favorites),
         ])
@@ -351,7 +351,6 @@ export default async function handler(req, res) {
         const preferences = await readClientPreferences(user_id)
         const favorites = await writeFavorites(
           user_id,
-          preferences,
           normalizeFavorites(preferences.favorites).filter(item => item.id !== favoriteId),
         )
         return res.status(200).json({ favorites })
@@ -359,17 +358,7 @@ export default async function handler(req, res) {
 
       if (req.body.action === "set-client-preferences") {
         const patch = normalizePreferencePatch(req.body.preferences)
-        const { data: current, error: readError } = await supabase
-          .from("user_state")
-          .select("client_preferences")
-          .eq("user_id", user_id)
-          .maybeSingle()
-        if (readError) return res.status(500).json({ error: readError.message })
-        const next = { ...(current?.client_preferences || {}), ...patch }
-        const { error } = await supabase
-          .from("user_state")
-          .upsert({ user_id, client_preferences: next, updated_at: new Date().toISOString() })
-        if (error) return res.status(500).json({ error: error.message })
+        const next = await patchClientPreferences(user_id, patch)
         return res.status(200).json({ preferences: next })
       }
 
@@ -382,17 +371,7 @@ export default async function handler(req, res) {
           String(req.body.image_mime_type || "image/jpeg")
         )
         const key = `${kind}_path`
-        const { data: current, error: readError } = await supabase
-          .from("user_state")
-          .select("client_preferences")
-          .eq("user_id", user_id)
-          .maybeSingle()
-        if (readError) return res.status(500).json({ error: readError.message })
-        const next = { ...(current?.client_preferences || {}), [key]: path }
-        const { error } = await supabase
-          .from("user_state")
-          .upsert({ user_id, client_preferences: next, updated_at: new Date().toISOString() })
-        if (error) return res.status(500).json({ error: error.message })
+        const next = await patchClientPreferences(user_id, { [key]: path })
         const signed = await signPreferenceImages(next)
         return res.status(200).json({ path, uri: signed[key.replace(/_path$/, "_uri")] || null })
       }
@@ -432,17 +411,10 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: "valid Expo push token required" })
         }
 
-        const { data: current, error: currentError } = await supabase
-          .from("user_state")
-          .select("client_preferences")
-          .eq("user_id", user_id)
-          .maybeSingle()
-        if (currentError) return res.status(500).json({ error: currentError.message })
-        const clientPreferences = {
-          ...(current?.client_preferences || {}),
+        const clientPreferences = await patchClientPreferences(user_id, {
           push_moments_enabled: req.body.moments_enabled === false ? "false" : "true",
           push_treehole_enabled: req.body.treehole_enabled === false ? "false" : "true",
-        }
+        })
 
         const { error } = await supabase
           .from("user_state")
@@ -451,7 +423,6 @@ export default async function handler(req, res) {
             push_preview_enabled: previewEnabled,
             ...(token ? { push_token: token } : {}),
             push_token_updated_at: token ? new Date().toISOString() : null,
-            client_preferences: clientPreferences,
             updated_at: new Date().toISOString(),
           })
           .eq("user_id", user_id)

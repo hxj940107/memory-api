@@ -73,3 +73,44 @@ test("welcome initialization never waits for cloud preferences and always exits 
     /LocalAuthentication\.authenticateAsync\([\s\S]*\.catch\([\s\S]*setUnlockReady\(true\)/,
   )
 })
+
+test("client preference patches are merged atomically without cross-field lost updates", () => {
+  const api = readFileSync("api/user-state.js", "utf8")
+  const migration = readFileSync("supabase_client_preferences.sql", "utf8")
+
+  assert.match(api, /supabase\.rpc\("patch_client_preferences"/)
+  assert.match(migration, /create or replace function public\.patch_client_preferences/)
+  assert.match(migration, /on conflict \(user_id\) do update/)
+  assert.match(
+    migration,
+    /client_preferences = coalesce\(user_state\.client_preferences, '\{\}'::jsonb\)[\s\S]*\|\| excluded\.client_preferences/,
+  )
+
+  const favoritesPatch = { favorites: [{ id: "favorite-1" }] }
+  const ordinaryPatch = { display_name: "大天使长" }
+  const notificationPatch = {
+    push_moments_enabled: "false",
+    push_treehole_enabled: "true",
+  }
+  const applyPatch = (current, patch) => ({ ...current, ...patch })
+
+  assert.deepEqual(
+    applyPatch(applyPatch({}, favoritesPatch), ordinaryPatch),
+    { ...favoritesPatch, ...ordinaryPatch },
+  )
+  assert.deepEqual(
+    applyPatch(applyPatch({}, favoritesPatch), notificationPatch),
+    { ...favoritesPatch, ...notificationPatch },
+  )
+  assert.deepEqual(
+    applyPatch(applyPatch({}, ordinaryPatch), notificationPatch),
+    { ...ordinaryPatch, ...notificationPatch },
+  )
+
+  const notificationSection = api.slice(
+    api.indexOf('req.body.action === "set-push-notification-settings"'),
+    api.indexOf("const { last_conversation", api.indexOf('req.body.action === "set-push-notification-settings"')),
+  )
+  assert.match(notificationSection, /patchClientPreferences\(user_id, \{/)
+  assert.doesNotMatch(notificationSection, /client_preferences: clientPreferences/)
+})
