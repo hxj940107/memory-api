@@ -332,6 +332,9 @@ const normalizeShortAiText = (text: string) =>
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 
+const normalizeVoiceTranscriptText = (text: string) =>
+  text.replace(/[ \t]*\n+[ \t]*/g, "\n").trim();
+
 const shouldUseSimpleAiText = (text: string) =>
   normalizeShortAiText(text).length <= 32;
 
@@ -2266,7 +2269,6 @@ export default function ChatScreen() {
       userVoiceRecordingRef.current = recording;
       recordingStartedAtRef.current = Date.now();
       setIsRecordingVoice(true);
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       userVoiceRecordingTimeoutRef.current = setTimeout(() => {
         void finishUserVoiceRecording(false);
       }, MAX_USER_VOICE_SECONDS * 1000);
@@ -2335,6 +2337,7 @@ export default function ChatScreen() {
     recordingStartPageYRef.current = event.nativeEvent.pageY;
     voiceCancelIntentRef.current = false;
     setIsCancellingVoice(false);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     void startUserVoiceRecording();
   };
 
@@ -2909,7 +2912,9 @@ export default function ChatScreen() {
                         )
                       }
                     >
-                      <Text style={styles.userVoiceTranscriptText}>{item.text}</Text>
+                      <Text style={styles.userVoiceTranscriptText}>
+                        {normalizeVoiceTranscriptText(item.text)}
+                      </Text>
                     </Pressable>
                   )}
 
@@ -3091,11 +3096,7 @@ export default function ChatScreen() {
 	                          }
 	                        >
 	                          <Text style={styles.assistantVoiceTranscriptText}>
-	                            <InlineMarkdown
-	                              text={item.text}
-	                              highlight={isSearchTarget ? targetSearchQuery : undefined}
-	                              highlightOpacity={locationHighlightOpacity}
-	                            />
+	                            {normalizeVoiceTranscriptText(item.text)}
 	                          </Text>
 	                        </Pressable>
 	                      )}

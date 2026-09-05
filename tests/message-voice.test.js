@@ -120,6 +120,7 @@ test("a one-shot voice reply stays behind typing dots, then renders as voice wit
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
   assert.match(chat, /isVoiceReply && isVoiceTranscriptRevealed && !!item\.text/)
   assert.match(chat, /styles\.assistantVoiceTranscript/)
+  assert.match(chat, /normalizeVoiceTranscriptText\(item\.text\)/)
   assert.match(chat, /\{isTyping && <TypingDots \/>\}/)
   assert.doesNotMatch(chat, /正在准备语音/)
   assert.match(chat, /const VOICE_WAVE_HEIGHTS = \[/)
