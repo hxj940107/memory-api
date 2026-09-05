@@ -35,17 +35,10 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import { Audio as ExpoAVAudio } from "expo-av";
 import {
-  AudioQuality,
-  IOSOutputFormat,
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  setAudioModeAsync,
   useAudioPlayer,
   useAudioPlayerStatus,
-  useAudioRecorder,
-  useAudioRecorderState,
-  type RecordingOptions,
 } from "expo-audio";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
@@ -211,26 +204,6 @@ const MAX_FILE_CHARS = 12000;
 const HISTORY_PAGE_SIZE = 60;
 const MAX_USER_VOICE_SECONDS = 60;
 const USER_VOICE_CANCEL_DISTANCE = 56;
-const USER_VOICE_RECORDING_OPTIONS: RecordingOptions = {
-  ...RecordingPresets.HIGH_QUALITY,
-  extension: ".wav",
-  sampleRate: 16000,
-  numberOfChannels: 1,
-  bitRate: 256000,
-  android: {
-    extension: ".m4a",
-    outputFormat: "mpeg4",
-    audioEncoder: "aac",
-  },
-  ios: {
-    outputFormat: IOSOutputFormat.LINEARPCM,
-    audioQuality: AudioQuality.HIGH,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
-  },
-  web: RecordingPresets.HIGH_QUALITY.web,
-};
 const VOICE_WAVE_HEIGHTS = [7, 12, 17, 10, 15, 20, 13, 18, 9, 14, 7];
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
@@ -838,8 +811,8 @@ export default function ChatScreen() {
     downloadFirst: true,
   });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
-  const audioRecorder = useAudioRecorder(USER_VOICE_RECORDING_OPTIONS);
-  const audioRecorderState = useAudioRecorderState(audioRecorder, 100);
+  const userVoiceRecordingRef = useRef<ExpoAVAudio.Recording | null>(null);
+  const userVoiceRecordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingStartPageYRef = useRef<number | null>(null);
@@ -2190,7 +2163,7 @@ export default function ChatScreen() {
         user_id: APP_USER_ID,
         conversation_id: id,
         audio_base64: audioBase64,
-        mime_type: Platform.OS === "ios" ? "audio/wav" : "audio/mp4",
+        mime_type: "audio/mp4",
         duration_seconds: durationSeconds,
       }, { timeoutMs: 45_000 });
       const readyMessage: Message = {
@@ -2216,9 +2189,9 @@ export default function ChatScreen() {
   };
 
   const startUserVoiceRecording = async () => {
-    if (isTyping || audioRecorderState.isRecording) return;
+    if (isTyping || userVoiceRecordingRef.current) return;
     recordingIntentRef.current = true;
-    const permission = await requestRecordingPermissionsAsync();
+    const permission = await ExpoAVAudio.requestPermissionsAsync();
     if (!permission.granted) {
       recordingIntentRef.current = false;
       Alert.alert("需要麦克风权限", "请先允许小C使用麦克风，才能发送语音。");
@@ -2227,14 +2200,29 @@ export default function ChatScreen() {
     if (!recordingIntentRef.current) return;
     try {
       audioPlayer.pause();
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      // Supplying the options creates a fresh native AVAudioRecorder and file URL.
-      // Re-preparing without options can reuse the previous iOS recording file.
-      await audioRecorder.prepareToRecordAsync(USER_VOICE_RECORDING_OPTIONS);
+      await ExpoAVAudio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
       if (!recordingIntentRef.current) return;
+      const { recording } = await ExpoAVAudio.Recording.createAsync(
+        ExpoAVAudio.RecordingOptionsPresets.HIGH_QUALITY,
+      );
+      if (!recordingIntentRef.current) {
+        await recording.stopAndUnloadAsync().catch(() => {});
+        const abandonedUri = recording.getURI();
+        if (abandonedUri) {
+          await FileSystem.deleteAsync(abandonedUri, { idempotent: true }).catch(() => {});
+        }
+        return;
+      }
+      userVoiceRecordingRef.current = recording;
       recordingStartedAtRef.current = Date.now();
-      audioRecorder.record({ forDuration: MAX_USER_VOICE_SECONDS });
       setIsRecordingVoice(true);
+      userVoiceRecordingTimeoutRef.current = setTimeout(() => {
+        void finishUserVoiceRecording(false);
+      }, MAX_USER_VOICE_SECONDS * 1000);
     } catch (error) {
       recordingIntentRef.current = false;
       recordingStartedAtRef.current = null;
@@ -2242,29 +2230,39 @@ export default function ChatScreen() {
       setIsCancellingVoice(false);
       recordingStartPageYRef.current = null;
       voiceCancelIntentRef.current = false;
+      await ExpoAVAudio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      }).catch(() => {});
       console.log("Voice recording start failed:", error);
     }
   };
 
   const finishUserVoiceRecording = async (cancelled: boolean) => {
     recordingIntentRef.current = false;
-    if (!recordingStartedAtRef.current) return;
+    const recording = userVoiceRecordingRef.current;
+    if (!recordingStartedAtRef.current || !recording) return;
     recordingStartedAtRef.current = null;
+    userVoiceRecordingRef.current = null;
+    if (userVoiceRecordingTimeoutRef.current) {
+      clearTimeout(userVoiceRecordingTimeoutRef.current);
+      userVoiceRecordingTimeoutRef.current = null;
+    }
     try {
-      const statusBeforeStop = audioRecorder.getStatus();
-      await audioRecorder.stop();
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      const statusAfterStop = audioRecorder.getStatus();
+      const statusBeforeStop = await recording.getStatusAsync();
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
       setIsRecordingVoice(false);
       setIsCancellingVoice(false);
       recordingStartPageYRef.current = null;
       voiceCancelIntentRef.current = false;
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      const durationSeconds = Math.max(
-        Number(statusBeforeStop.durationMillis) || 0,
-        Number(statusAfterStop.durationMillis) || 0,
-      ) / 1000;
-      const uri = statusAfterStop.url || statusBeforeStop.url || audioRecorder.uri;
+      await ExpoAVAudio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
+      const durationSeconds = Number(statusBeforeStop.durationMillis || 0) / 1000;
       if (cancelled) {
         if (uri) {
           await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
