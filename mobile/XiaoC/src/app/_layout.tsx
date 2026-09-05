@@ -1,6 +1,7 @@
 import "react-native-gesture-handler";
 
 import { router, Stack, usePathname } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { Image } from "expo-image";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -15,6 +16,10 @@ import {
 } from "../lib/pushNotifications";
 import { getAccountSettings } from "../lib/accountSettings";
 import { syncClientPreferences } from "../lib/cloudPreferences";
+
+// Keep native startup deterministic in standalone builds. The root navigator
+// controls the handoff; network, storage, authentication, and audio setup do not.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const BACKGROUND_AUTO_LOCK_DELAY_MS = 60 * 60 * 1000;
 const IN_APP_BANNER_DURATION_MS = 4500;
@@ -34,6 +39,12 @@ export default function RootLayout() {
   const backgroundedAtRef = useRef<number | null>(null);
   const pathnameRef = useRef(pathname);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    SplashScreen.hideAsync().catch((error) => {
+      console.log("Splash screen hide failed:", error);
+    });
+  }, []);
 
   useEffect(() => {
     pathnameRef.current = pathname;
