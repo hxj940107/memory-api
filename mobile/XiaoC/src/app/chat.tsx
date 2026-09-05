@@ -282,10 +282,7 @@ const formatMessageTime = (createdAt: string) => {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
 };
 
-const shouldShowMessageTime = (
-  message: Message,
-  previousMessage?: Message,
-) => {
+const shouldShowMessageTime = (message: Message, previousMessage?: Message) => {
   if (!message.createdAt) return false;
   if (!previousMessage?.createdAt) return true;
 
@@ -329,7 +326,10 @@ const shouldHideImagePlaceholderText = (content: string, imageUrl?: string) =>
 const normalizeShortAiText = (text: string) =>
   text
     .replace(/[ \t]*\n+[ \t]*/g, "\n")
-    .replace(/([\u4e00-\u9fff，。！？、；：])[\t \u3000]+([\u4e00-\u9fff])/g, "$1$2")
+    .replace(
+      /([\u4e00-\u9fff，。！？、；：])[\t \u3000]+([\u4e00-\u9fff])/g,
+      "$1$2",
+    )
     .replace(/([\u4e00-\u9fff])[\t \u3000]+([，。！？、；：])/g, "$1$2")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
@@ -480,11 +480,7 @@ const isSupportedTextFile = (name: string, mimeType?: string | null) => {
   return TEXT_FILE_EXTENSIONS.has(getFileExtension(name));
 };
 
-function TypingDots({
-  compact = false,
-}: {
-  compact?: boolean;
-}) {
+function TypingDots({ compact = false }: { compact?: boolean }) {
   const dots = [
     new RNAnimated.Value(0),
     new RNAnimated.Value(0),
@@ -628,12 +624,12 @@ function TreeholeDraftCard({
     <View style={styles.treeholeDraftCard}>
       <View style={styles.treeholeDraftHeader}>
         <Text style={styles.treeholeDraftLabel}>深夜树洞 · 草稿</Text>
-        {!!draft.date && <Text style={styles.treeholeDraftDate}>{draft.date}</Text>}
+        {!!draft.date && (
+          <Text style={styles.treeholeDraftDate}>{draft.date}</Text>
+        )}
       </View>
 
-      {!!draft.tag && (
-        <Text style={styles.treeholeDraftTag}>{draft.tag}</Text>
-      )}
+      {!!draft.tag && <Text style={styles.treeholeDraftTag}>{draft.tag}</Text>}
 
       <View style={styles.treeholeDraftContent}>
         {draft.content.map((line, index) => {
@@ -726,7 +722,10 @@ function DiaryPreviewCard({
       <View style={styles.diaryPreviewDivider} />
 
       {previewSections.map((section, index) => (
-        <View key={`${section.tag}-${index}`} style={styles.diaryPreviewSection}>
+        <View
+          key={`${section.tag}-${index}`}
+          style={styles.diaryPreviewSection}
+        >
           <Text style={styles.diaryPreviewTag}>{section.tag}</Text>
           {section.paragraphs.slice(0, 3).map((paragraph, paragraphIndex) => (
             <Text
@@ -789,7 +788,8 @@ export default function ChatScreen() {
   const shouldStartNewChat = params.newChat === "1";
 
   const [message, setMessage] = useState("");
-  const [replyModeOverride, setReplyModeOverride] = useState<ReplyModeOverride>("follow");
+  const [replyModeOverride, setReplyModeOverride] =
+    useState<ReplyModeOverride>("follow");
   const [voiceInputMode, setVoiceInputMode] = useState(false);
 
   const [selectedImages, setSelectedImages] = useState<
@@ -817,17 +817,23 @@ export default function ChatScreen() {
     duration: 0,
   });
   const userVoiceRecordingRef = useRef<ExpoAVAudio.Recording | null>(null);
-  const userVoiceRecordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userVoiceRecordingTimeoutRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingStartPageYRef = useRef<number | null>(null);
   const voiceCancelIntentRef = useRef(false);
-  const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
-  const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
+  const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<
+    string | null
+  >(null);
+  const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<
+    string | null
+  >(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
-  const [revealedVoiceTranscriptIds, setRevealedVoiceTranscriptIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [revealedVoiceTranscriptIds, setRevealedVoiceTranscriptIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isCancellingVoice, setIsCancellingVoice] = useState(false);
 
@@ -858,7 +864,11 @@ export default function ChatScreen() {
     updateAudioStatus({ isLoaded: false, error: "unloaded" });
   };
 
-  const loadAudio = async (uri: string, messageId: string, shouldPlay = true) => {
+  const loadAudio = async (
+    uri: string,
+    messageId: string,
+    shouldPlay = true,
+  ) => {
     await stopAudioPlayback();
     const { sound } = await ExpoAVAudio.Sound.createAsync(
       { uri },
@@ -878,7 +888,9 @@ export default function ChatScreen() {
   const [loadingOlderHistory, setLoadingOlderHistory] = useState(false);
   const [hasOlderHistory, setHasOlderHistory] = useState(false);
   const [locatedMessageId, setLocatedMessageId] = useState<string | null>(null);
-  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<
+    string | null
+  >(null);
   const [viewingLocatedHistory, setViewingLocatedHistory] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
@@ -892,8 +904,12 @@ export default function ChatScreen() {
   const historyLocationModeRef = useRef(false);
   const returnToLatestInFlightRef = useRef(false);
   const pendingReturnToLatestScrollRef = useRef(false);
-  const locationHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const locationReadyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const locationHighlightTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const locationReadyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const locationHighlightGenerationRef = useRef(0);
   const canDismissLocationHighlightRef = useRef(false);
   const locationHighlightOpacity = useRef(new RNAnimated.Value(0)).current;
@@ -911,7 +927,8 @@ export default function ChatScreen() {
   const lastRestoreRouteKeyRef = useRef<string | null>(null);
 
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const [sharedContextOpenRequestKey, setSharedContextOpenRequestKey] = useState(0);
+  const [sharedContextOpenRequestKey, setSharedContextOpenRequestKey] =
+    useState(0);
 
   const canSendMessage =
     message.trim().length > 0 || selectedImages.length > 0 || !!selectedFile;
@@ -953,15 +970,18 @@ export default function ChatScreen() {
     };
   }, [messages.length, messages[messages.length - 1]?.text?.length, isTyping]);
 
-  useEffect(() => () => {
-    if (locationHighlightTimerRef.current) {
-      clearTimeout(locationHighlightTimerRef.current);
-    }
-    if (locationReadyTimerRef.current) {
-      clearTimeout(locationReadyTimerRef.current);
-    }
-    locationHighlightOpacity.stopAnimation();
-  }, []);
+  useEffect(
+    () => () => {
+      if (locationHighlightTimerRef.current) {
+        clearTimeout(locationHighlightTimerRef.current);
+      }
+      if (locationReadyTimerRef.current) {
+        clearTimeout(locationReadyTimerRef.current);
+      }
+      locationHighlightOpacity.stopAnimation();
+    },
+    [],
+  );
 
   const endLocationHighlight = () => {
     locationHighlightGenerationRef.current += 1;
@@ -1039,19 +1059,21 @@ export default function ChatScreen() {
           cloudId: String(item.id),
           clientId: item.metadata?.clientMessageId,
           role: item.role,
-          imageUris: item.metadata?.imageUrls || (
-            item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined
-          ),
+          imageUris:
+            item.metadata?.imageUrls ||
+            (item.metadata?.imageUrl ? [item.metadata.imageUrl] : undefined),
           fileName: item.metadata?.fileName,
           fileMimeType: item.metadata?.fileMimeType,
           fileSize: item.metadata?.fileSize,
           attachments: normalizeGeneratedAttachments(item.metadata),
-          text: treeholeDraft || shouldHideImagePlaceholderText(
-            item.content,
-            item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
-          )
-            ? ""
-            : item.content,
+          text:
+            treeholeDraft ||
+            shouldHideImagePlaceholderText(
+              item.content,
+              item.metadata?.imageUrl || item.metadata?.imageUrls?.[0],
+            )
+              ? ""
+              : item.content,
           treeholeDraft: treeholeDraft || undefined,
           treeholeSaveStatus: treeholeAlreadySaved ? "saved" : undefined,
           diarySaveStatus: diaryAlreadySaved ? "saved" : undefined,
@@ -1291,8 +1313,7 @@ export default function ChatScreen() {
   // 正在输入动画
 
   const pickImage = async () => {
-    const permission =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
       setMessages((prev) => [
@@ -1447,12 +1468,13 @@ export default function ChatScreen() {
 
   const toggleVoiceReplyTranscript = (item: Message) => {
     const isRevealed = revealedVoiceTranscriptIds.has(item.id);
-    const apply = () => setRevealedVoiceTranscriptIds((current) => {
-      const next = new Set(current);
-      if (isRevealed) next.delete(item.id);
-      else next.add(item.id);
-      return next;
-    });
+    const apply = () =>
+      setRevealedVoiceTranscriptIds((current) => {
+        const next = new Set(current);
+        if (isRevealed) next.delete(item.id);
+        else next.add(item.id);
+        return next;
+      });
 
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
@@ -1471,7 +1493,11 @@ export default function ChatScreen() {
   };
 
   const playMessageVoice = async (item?: Message) => {
-    if (!canOfferMessageVoice(item) || !item?.cloudId || !conversationIdRef.current) {
+    if (
+      !canOfferMessageVoice(item) ||
+      !item?.cloudId ||
+      !conversationIdRef.current
+    ) {
       return;
     }
 
@@ -1481,7 +1507,10 @@ export default function ChatScreen() {
       if (audioStatus.playing) {
         await sound.pauseAsync();
       } else {
-        if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
+        if (
+          audioStatus.didJustFinish ||
+          audioStatus.currentTime >= audioStatus.duration
+        ) {
           await sound.setPositionAsync(0);
         }
         await sound.playAsync();
@@ -1492,30 +1521,40 @@ export default function ChatScreen() {
     setVoicePreparingId(item.id);
     try {
       const existingVoice = normalizeMessageVoiceAsset(item.metadata);
-      const result = await postJson<MessageVoiceResponse>("/api/memory", {
-        type: "message_voice",
-        action: "prepare_playback",
-        ...(existingVoice?.presentation === "voice_reply"
-          ? { presentation: "voice_reply" }
-          : {}),
-        user_id: APP_USER_ID,
-        conversation_id: conversationIdRef.current,
-        message_id: item.cloudId,
-      }, { timeoutMs: 45_000 });
+      const result = await postJson<MessageVoiceResponse>(
+        "/api/memory",
+        {
+          type: "message_voice",
+          action: "prepare_playback",
+          ...(existingVoice?.presentation === "voice_reply"
+            ? { presentation: "voice_reply" }
+            : {}),
+          user_id: APP_USER_ID,
+          conversation_id: conversationIdRef.current,
+          message_id: item.cloudId,
+        },
+        { timeoutMs: 45_000 },
+      );
 
-      setMessages((previous) => previous.map((messageItem) =>
-        messageItem.id === item.id
-          ? {
-              ...messageItem,
-              metadata: { ...(messageItem.metadata || {}), voice: result.voice },
-            }
-          : messageItem,
-      ));
+      setMessages((previous) =>
+        previous.map((messageItem) =>
+          messageItem.id === item.id
+            ? {
+                ...messageItem,
+                metadata: {
+                  ...(messageItem.metadata || {}),
+                  voice: result.voice,
+                },
+              }
+            : messageItem,
+        ),
+      );
       await loadAudio(result.url, item.id);
     } catch (error) {
-      const status = typeof error === "object" && error && "status" in error
-        ? Number(error.status)
-        : null;
+      const status =
+        typeof error === "object" && error && "status" in error
+          ? Number(error.status)
+          : null;
       Alert.alert(
         status === 409 ? "声音还没选好" : "暂时没能播放",
         status === 409
@@ -1650,9 +1689,7 @@ export default function ChatScreen() {
 
       const historyData = locatingMessageId
         ? Array.from(
-            new Map(
-              data.map((item) => [String(item.id || ""), item]),
-            ).values(),
+            new Map(data.map((item) => [String(item.id || ""), item])).values(),
           )
         : data;
       const restoredMessages = await restoreHistoryItems(historyData);
@@ -1694,7 +1731,9 @@ export default function ChatScreen() {
       );
       if (!silent) {
         const targetIndex = locatingMessageId
-          ? historyData.findIndex((item) => String(item.id || "") === locatingMessageId)
+          ? historyData.findIndex(
+              (item) => String(item.id || "") === locatingMessageId,
+            )
           : -1;
         setHasOlderHistory(
           locatingMessageId
@@ -1766,7 +1805,12 @@ export default function ChatScreen() {
   const refreshIfCloudHistoryChanged = async () => {
     const id = conversationIdRef.current;
 
-    if (!id || historyLocationModeRef.current || historyRefreshInFlightRef.current) return;
+    if (
+      !id ||
+      historyLocationModeRef.current ||
+      historyRefreshInFlightRef.current
+    )
+      return;
 
     historyRefreshInFlightRef.current = true;
 
@@ -1797,16 +1841,20 @@ export default function ChatScreen() {
     useCallback(() => {
       const routeKey = `${incomingConversationId || "last"}:${shouldStartNewChat ? "new" : "restore"}:${targetMessageId || "latest"}`;
       const routeChanged = lastRestoreRouteKeyRef.current !== routeKey;
-      const isInitialRestore = !hasRestoredConversationRef.current || routeChanged;
+      const isInitialRestore =
+        !hasRestoredConversationRef.current || routeChanged;
       hasRestoredConversationRef.current = true;
       lastRestoreRouteKeyRef.current = routeKey;
       restoreConversation({ silent: !isInitialRestore });
 
-      const appStateSubscription = AppState.addEventListener("change", (state) => {
-        if (state === "active") {
-          refreshIfCloudHistoryChanged();
-        }
-      });
+      const appStateSubscription = AppState.addEventListener(
+        "change",
+        (state) => {
+          if (state === "active") {
+            refreshIfCloudHistoryChanged();
+          }
+        },
+      );
       const refreshTimer = setInterval(refreshIfCloudHistoryChanged, 30_000);
 
       return () => {
@@ -1881,23 +1929,27 @@ export default function ChatScreen() {
     try {
       const selectedModel = await getSelectedChatModel();
 
-      const data = await postJson<ChatResponse>("/api/chat", {
-        user_id: APP_USER_ID,
-        message: userText,
-        client_message_id: clientMessageId,
-        conversation_id: conversationId,
-        model: selectedModel.id,
-        imageUrl: imageUrls[0],
-        imageUrls,
-        imageKinds,
-        fileName: messageToSend.fileName,
-        fileText: messageToSend.fileText,
-        fileMimeType: messageToSend.fileMimeType,
-        fileSize: messageToSend.fileSize,
-        userVoice: messageToSend.metadata?.userVoice,
-      }, {
-        timeoutMs: 45000,
-      });
+      const data = await postJson<ChatResponse>(
+        "/api/chat",
+        {
+          user_id: APP_USER_ID,
+          message: userText,
+          client_message_id: clientMessageId,
+          conversation_id: conversationId,
+          model: selectedModel.id,
+          imageUrl: imageUrls[0],
+          imageUrls,
+          imageKinds,
+          fileName: messageToSend.fileName,
+          fileText: messageToSend.fileText,
+          fileMimeType: messageToSend.fileMimeType,
+          fileSize: messageToSend.fileSize,
+          userVoice: messageToSend.metadata?.userVoice,
+        },
+        {
+          timeoutMs: 45000,
+        },
+      );
 
       if (data.conversation_id) {
         setConversationId(data.conversation_id);
@@ -1950,7 +2002,9 @@ export default function ChatScreen() {
 
       const treeholeDraft = parseTreeholeDraft(data.reply || "");
 
-      const assistantCloudId = getValidCloudMessageId(data.assistant_message_id);
+      const assistantCloudId = getValidCloudMessageId(
+        data.assistant_message_id,
+      );
       if (data.assistant_message_id != null && !assistantCloudId) {
         console.log("CHAT RESPONSE INVALID ASSISTANT MESSAGE ID", {
           type: typeof data.assistant_message_id,
@@ -1980,18 +2034,26 @@ export default function ChatScreen() {
 
       if (shouldPrepareVoiceReply) {
         try {
-          const voiceResult = await postJson<MessageVoiceResponse>("/api/memory", {
-            type: "message_voice",
-            action: "prepare_playback",
-            presentation: "voice_reply",
-            user_id: APP_USER_ID,
-            conversation_id: data.conversation_id || conversationIdRef.current,
-            message_id: assistantCloudId,
-          }, { timeoutMs: 45_000 });
+          const voiceResult = await postJson<MessageVoiceResponse>(
+            "/api/memory",
+            {
+              type: "message_voice",
+              action: "prepare_playback",
+              presentation: "voice_reply",
+              user_id: APP_USER_ID,
+              conversation_id:
+                data.conversation_id || conversationIdRef.current,
+              message_id: assistantCloudId,
+            },
+            { timeoutMs: 45_000 },
+          );
 
           const voiceMessage: Message = {
             ...assistantMessage,
-            metadata: { ...(assistantMessage.metadata || {}), voice: voiceResult.voice },
+            metadata: {
+              ...(assistantMessage.metadata || {}),
+              voice: voiceResult.voice,
+            },
           };
           setMessages((prev) => upsertCloudMessage(prev, voiceMessage));
           await loadAudio(voiceResult.url, assistantMessage.id, false);
@@ -2042,9 +2104,7 @@ export default function ChatScreen() {
         );
         setMessages((prev) =>
           prev.map((item) =>
-            item.id === messageToSend.id
-              ? { ...item, status: "failed" }
-              : item,
+            item.id === messageToSend.id ? { ...item, status: "failed" } : item,
           ),
         );
       }
@@ -2060,19 +2120,18 @@ export default function ChatScreen() {
     const messageId = message.cloudId || message.id;
 
     try {
-      const signed = await postJson<SignedAttachmentResponse>(
-        "/api/memory",
-        {
-          type: "generated_file",
-          action: "sign_download",
-          user_id: APP_USER_ID,
-          conversation_id: conversationIdRef.current,
-          message_id: messageId,
-          attachment_id: attachment.id,
-        },
-      );
+      const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
+        type: "generated_file",
+        action: "sign_download",
+        user_id: APP_USER_ID,
+        conversation_id: conversationIdRef.current,
+        message_id: messageId,
+        attachment_id: attachment.id,
+      });
       const cacheDirectory = `${FileSystem.cacheDirectory || ""}generated-files/`;
-      await FileSystem.makeDirectoryAsync(cacheDirectory, { intermediates: true });
+      await FileSystem.makeDirectoryAsync(cacheDirectory, {
+        intermediates: true,
+      });
       const localUri = `${cacheDirectory}${getSafeDownloadFilename(attachment.name)}`;
       await FileSystem.deleteAsync(localUri, { idempotent: true });
       const downloaded = await FileSystem.downloadAsync(signed.url, localUri);
@@ -2132,15 +2191,19 @@ export default function ChatScreen() {
 
   const toggleUserVoiceTranscript = (item: Message) => {
     const isRevealed = revealedVoiceTranscriptIds.has(item.id);
-    const apply = () => setRevealedVoiceTranscriptIds((current) => {
-      const next = new Set(current);
-      if (isRevealed) next.delete(item.id);
-      else next.add(item.id);
-      return next;
-    });
+    const apply = () =>
+      setRevealedVoiceTranscriptIds((current) => {
+        const next = new Set(current);
+        if (isRevealed) next.delete(item.id);
+        else next.add(item.id);
+        return next;
+      });
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
-        { options: ["取消", isRevealed ? "收起文字" : "转文字"], cancelButtonIndex: 0 },
+        {
+          options: ["取消", isRevealed ? "收起文字" : "转文字"],
+          cancelButtonIndex: 0,
+        },
         (buttonIndex) => buttonIndex === 1 && apply(),
       );
       return;
@@ -2156,7 +2219,10 @@ export default function ChatScreen() {
       if (!sound) return;
       if (audioStatus.playing) await sound.pauseAsync();
       else {
-        if (audioStatus.didJustFinish || audioStatus.currentTime >= audioStatus.duration) {
+        if (
+          audioStatus.didJustFinish ||
+          audioStatus.currentTime >= audioStatus.duration
+        ) {
           await sound.setPositionAsync(0);
         }
         await sound.playAsync();
@@ -2211,27 +2277,35 @@ export default function ChatScreen() {
       const audioBase64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      const result = await postJson<UserVoiceTranscriptionResponse>("/api/memory", {
-        type: "user_voice",
-        action: "transcribe",
-        user_id: APP_USER_ID,
-        conversation_id: id,
-        audio_base64: audioBase64,
-        mime_type: "audio/mp4",
-        duration_seconds: durationSeconds,
-      }, { timeoutMs: 45_000 });
+      const result = await postJson<UserVoiceTranscriptionResponse>(
+        "/api/memory",
+        {
+          type: "user_voice",
+          action: "transcribe",
+          user_id: APP_USER_ID,
+          conversation_id: id,
+          audio_base64: audioBase64,
+          mime_type: "audio/mp4",
+          duration_seconds: durationSeconds,
+        },
+        { timeoutMs: 45_000 },
+      );
       const readyMessage: Message = {
         ...pendingMessage,
         text: result.transcript,
         metadata: { userVoice: result.voice },
       };
-      setMessages((prev) => prev.map((item) => item.id === localMessageId ? readyMessage : item));
+      setMessages((prev) =>
+        prev.map((item) => (item.id === localMessageId ? readyMessage : item)),
+      );
       await submitMessage(readyMessage);
     } catch (error) {
       console.log("User voice send failed:", error);
-      setMessages((prev) => prev.map((item) =>
-        item.id === localMessageId ? { ...item, status: "failed" } : item,
-      ));
+      setMessages((prev) =>
+        prev.map((item) =>
+          item.id === localMessageId ? { ...item, status: "failed" } : item,
+        ),
+      );
       const detail = error instanceof Error ? error.message : "";
       const explanation = detail.includes("No speech was recognized")
         ? "没有听清这段语音，再录一遍试试。"
@@ -2274,7 +2348,9 @@ export default function ChatScreen() {
         await recording.stopAndUnloadAsync().catch(() => {});
         const abandonedUri = recording.getURI();
         if (abandonedUri) {
-          await FileSystem.deleteAsync(abandonedUri, { idempotent: true }).catch(() => {});
+          await FileSystem.deleteAsync(abandonedUri, {
+            idempotent: true,
+          }).catch(() => {});
         }
         await ExpoAVAudio.setAudioModeAsync({
           allowsRecordingIOS: false,
@@ -2302,7 +2378,10 @@ export default function ChatScreen() {
         staysActiveInBackground: false,
       }).catch(() => {});
       console.log("Voice recording start failed:", error);
-      Alert.alert("录音没有启动", "请再按一次；如果仍然失败，请确认 Expo Go 的麦克风权限已开启。");
+      Alert.alert(
+        "录音没有启动",
+        "请再按一次；如果仍然失败，请确认 Expo Go 的麦克风权限已开启。",
+      );
     }
   };
 
@@ -2329,10 +2408,13 @@ export default function ChatScreen() {
         playsInSilentModeIOS: true,
         staysActiveInBackground: false,
       });
-      const durationSeconds = Number(statusBeforeStop.durationMillis || 0) / 1000;
+      const durationSeconds =
+        Number(statusBeforeStop.durationMillis || 0) / 1000;
       if (cancelled) {
         if (uri) {
-          await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+          await FileSystem.deleteAsync(uri, { idempotent: true }).catch(
+            () => {},
+          );
         }
         return;
       }
@@ -2354,14 +2436,17 @@ export default function ChatScreen() {
     recordingStartPageYRef.current = event.nativeEvent.pageY;
     voiceCancelIntentRef.current = false;
     setIsCancellingVoice(false);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+      () => {},
+    );
     void startUserVoiceRecording();
   };
 
   const handleVoiceResponderMove = (event: GestureResponderEvent) => {
     const startPageY = recordingStartPageYRef.current;
     if (startPageY === null || !recordingIntentRef.current) return;
-    const shouldCancel = startPageY - event.nativeEvent.pageY >= USER_VOICE_CANCEL_DISTANCE;
+    const shouldCancel =
+      startPageY - event.nativeEvent.pageY >= USER_VOICE_CANCEL_DISTANCE;
     if (voiceCancelIntentRef.current === shouldCancel) return;
     voiceCancelIntentRef.current = shouldCancel;
     setIsCancellingVoice(shouldCancel);
@@ -2490,15 +2575,11 @@ export default function ChatScreen() {
   };
 
   const dismissTreeholeDraft = (messageId: string) => {
-    setMessages((prev) =>
-      prev.filter((item) => item.id !== messageId),
-    );
+    setMessages((prev) => prev.filter((item) => item.id !== messageId));
   };
 
   const dismissMessage = (messageId: string) => {
-    setMessages((prev) =>
-      prev.filter((item) => item.id !== messageId),
-    );
+    setMessages((prev) => prev.filter((item) => item.id !== messageId));
   };
 
   const deleteMessage = async (messageToDelete: Message) => {
@@ -2538,23 +2619,19 @@ export default function ChatScreen() {
 
     closeMessageMenu();
 
-    Alert.alert(
-      "删除这条消息？",
-      "删除后会从当前对话历史里移除。",
-      [
-        {
-          text: "取消",
-          style: "cancel",
+    Alert.alert("删除这条消息？", "删除后会从当前对话历史里移除。", [
+      {
+        text: "取消",
+        style: "cancel",
+      },
+      {
+        text: "删除",
+        style: "destructive",
+        onPress: () => {
+          deleteMessage(messageToDelete);
         },
-        {
-          text: "删除",
-          style: "destructive",
-          onPress: () => {
-            deleteMessage(messageToDelete);
-          },
-        },
-      ],
-    );
+      },
+    ]);
   };
 
   const saveFavoriteFromMessage = async (messageToSave?: Message) => {
@@ -2598,10 +2675,7 @@ export default function ChatScreen() {
           >
             <View style={styles.drawerOverlay} />
 
-            <Pressable
-              style={styles.drawerCloseArea}
-              onPress={closeDrawer}
-            />
+            <Pressable style={styles.drawerCloseArea} onPress={closeDrawer} />
 
             <Animated.View style={[styles.drawerFrame, drawerStyle]}>
               <View style={styles.drawer}>
@@ -2715,9 +2789,13 @@ export default function ChatScreen() {
             const stableMessageId = getStableMessageId(item);
             const voiceAsset = normalizeMessageVoiceAsset(item.metadata);
             const userVoiceAsset = normalizeUserVoiceAsset(item.metadata);
-            const isUserVoice = item.role === "user" && (!!userVoiceAsset || !!item.localAudioUri);
+            const isUserVoice =
+              item.role === "user" &&
+              (!!userVoiceAsset || !!item.localAudioUri);
             const isVoiceReply = voiceAsset?.presentation === "voice_reply";
-            const isVoiceTranscriptRevealed = revealedVoiceTranscriptIds.has(item.id);
+            const isVoiceTranscriptRevealed = revealedVoiceTranscriptIds.has(
+              item.id,
+            );
             const displayedVoiceDuration =
               activeVoiceMessageId === item.id && audioStatus.duration > 0
                 ? audioStatus.duration
@@ -2736,393 +2814,479 @@ export default function ChatScreen() {
 
             return (
               <Fragment key={stableMessageId}>
-              <View
-                onLayout={isLocatedMessage ? (event) => {
-                  const targetY = Math.max(0, event.nativeEvent.layout.y - 120);
-                  requestAnimationFrame(() => {
-                    scrollRef.current?.scrollTo({ y: targetY, animated: false });
-                  });
-                  if (locationReadyTimerRef.current) {
-                    clearTimeout(locationReadyTimerRef.current);
-                  }
-                  locationReadyTimerRef.current = setTimeout(() => {
-                    setLocatedMessageId((current) =>
-                      current === stableMessageId ? null : current,
-                    );
-                    canDismissLocationHighlightRef.current = true;
-                  }, 250);
-                } : undefined}
-              >
-                {shouldShowMessageTime(item, messages[index - 1]) && (
-                  <Text style={styles.messageTime}>
-                    {formatMessageTime(item.createdAt || "")}
-                  </Text>
-                )}
-
-              {item.role === "user" ? (
-              <AnimatedMessage>
                 <View
-                  style={[
-                    styles.userRow,
-                    shouldShowMessageTime(item, messages[index - 1])
-                      ? styles.messageAfterTime
-                      : index > 0 && messages[index - 1].role === item.role
-                      ? styles.messageFromSameSender
-                      : styles.messageFromNewSender,
-                  ]}
+                  onLayout={
+                    isLocatedMessage
+                      ? (event) => {
+                          const targetY = Math.max(
+                            0,
+                            event.nativeEvent.layout.y - 120,
+                          );
+                          requestAnimationFrame(() => {
+                            scrollRef.current?.scrollTo({
+                              y: targetY,
+                              animated: false,
+                            });
+                          });
+                          if (locationReadyTimerRef.current) {
+                            clearTimeout(locationReadyTimerRef.current);
+                          }
+                          locationReadyTimerRef.current = setTimeout(() => {
+                            setLocatedMessageId((current) =>
+                              current === stableMessageId ? null : current,
+                            );
+                            canDismissLocationHighlightRef.current = true;
+                          }, 250);
+                        }
+                      : undefined
+                  }
                 >
-                  {isUserVoice && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        activeVoiceMessageId === item.id && audioStatus.playing
-                          ? "暂停我的语音"
-                          : "播放我的语音"
-                      }
-                      style={({ pressed }) => [
-                        styles.userVoicePlayer,
-                        pressed && styles.userVoicePlayerPressed,
-                      ]}
-                      onPress={() => playUserVoice(item)}
-                      onLongPress={() => toggleUserVoiceTranscript(item)}
-                    >
-                      <Text style={styles.userVoicePlayIcon}>
-                        {voicePreparingId === item.id
-                          ? "…"
-                          : activeVoiceMessageId === item.id && audioStatus.playing
-                            ? "Ⅱ"
-                            : "▶"}
-                      </Text>
-                      <View style={styles.messageVoiceWave}>
-                        {VOICE_WAVE_HEIGHTS.map((height, waveIndex) => (
-                          <View
-                            key={`${stableMessageId}_user_wave_${waveIndex}`}
-                            style={[
-                              styles.userVoiceWaveBar,
-                              { height },
-                            ]}
-                          />
-                        ))}
-                      </View>
-                      <Text style={styles.userVoiceDuration}>
-                        {formatVoiceDuration(
-                          activeVoiceMessageId === item.id && audioStatus.duration > 0
-                            ? audioStatus.duration
-                            : userVoiceAsset?.duration_seconds || item.localAudioDuration || 0,
-                        )}
-                      </Text>
-                    </Pressable>
+                  {shouldShowMessageTime(item, messages[index - 1]) && (
+                    <Text style={styles.messageTime}>
+                      {formatMessageTime(item.createdAt || "")}
+                    </Text>
                   )}
-                  {(item.imageUris?.length || item.imageUri) && (
-                    <View style={styles.messageImageWrap}>
+
+                  {item.role === "user" ? (
+                    <AnimatedMessage>
                       <View
                         style={[
-                          styles.messageImageGrid,
-                          (item.imageUris || [item.imageUri]).length > 1 &&
-                            styles.messageImageGridMultiple,
+                          styles.userRow,
+                          shouldShowMessageTime(item, messages[index - 1])
+                            ? styles.messageAfterTime
+                            : index > 0 &&
+                                messages[index - 1].role === item.role
+                              ? styles.messageFromSameSender
+                              : styles.messageFromNewSender,
                         ]}
                       >
-                        {(item.imageUris || [item.imageUri]).map(
-                          (imageUri, imageIndex) =>
-                            imageUri && (
+                        {isUserVoice && (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                              activeVoiceMessageId === item.id &&
+                              audioStatus.playing
+                                ? "暂停我的语音"
+                                : "播放我的语音"
+                            }
+                            style={({ pressed }) => [
+                              styles.userVoicePlayer,
+                              pressed && styles.userVoicePlayerPressed,
+                            ]}
+                            onPress={() => playUserVoice(item)}
+                            onLongPress={() => toggleUserVoiceTranscript(item)}
+                          >
+                            <Text style={styles.userVoicePlayIcon}>
+                              {voicePreparingId === item.id
+                                ? "…"
+                                : activeVoiceMessageId === item.id &&
+                                    audioStatus.playing
+                                  ? "Ⅱ"
+                                  : "▶"}
+                            </Text>
+                            <View style={styles.messageVoiceWave}>
+                              {VOICE_WAVE_HEIGHTS.map((height, waveIndex) => (
+                                <View
+                                  key={`${stableMessageId}_user_wave_${waveIndex}`}
+                                  style={[styles.userVoiceWaveBar, { height }]}
+                                />
+                              ))}
+                            </View>
+                            <Text style={styles.userVoiceDuration}>
+                              {formatVoiceDuration(
+                                activeVoiceMessageId === item.id &&
+                                  audioStatus.duration > 0
+                                  ? audioStatus.duration
+                                  : userVoiceAsset?.duration_seconds ||
+                                      item.localAudioDuration ||
+                                      0,
+                              )}
+                            </Text>
+                          </Pressable>
+                        )}
+                        {(item.imageUris?.length || item.imageUri) && (
+                          <View style={styles.messageImageWrap}>
+                            <View
+                              style={[
+                                styles.messageImageGrid,
+                                (item.imageUris || [item.imageUri]).length >
+                                  1 && styles.messageImageGridMultiple,
+                              ]}
+                            >
+                              {(item.imageUris || [item.imageUri]).map(
+                                (imageUri, imageIndex) =>
+                                  imageUri && (
+                                    <Pressable
+                                      key={`${stableMessageId}_${imageIndex}`}
+                                      onPress={() =>
+                                        item.status !== "sending" &&
+                                        setPreviewImageUri(imageUri)
+                                      }
+                                      onLongPress={() =>
+                                        openImageMenu(
+                                          item,
+                                          imageUri,
+                                          imageIndex,
+                                        )
+                                      }
+                                    >
+                                      <ChatMessageImage
+                                        uri={imageUri}
+                                        multiple={
+                                          (item.imageUris || [item.imageUri])
+                                            .length > 1
+                                        }
+                                        subdued={
+                                          item.status === "sending" ||
+                                          item.status === "failed"
+                                        }
+                                      />
+                                    </Pressable>
+                                  ),
+                              )}
+                            </View>
+
+                            {item.status === "sending" && (
+                              <View style={styles.imageSendingOverlay}>
+                                <TypingDots compact />
+                              </View>
+                            )}
+
+                            {item.status === "failed" && (
                               <Pressable
-                                key={`${stableMessageId}_${imageIndex}`}
-                                onPress={() =>
-                                  item.status !== "sending" &&
-                                  setPreviewImageUri(imageUri)
-                                }
-                                onLongPress={() =>
-                                  openImageMenu(item, imageUri, imageIndex)
+                                style={styles.imageRetryOverlay}
+                                onPress={() => retryMessage(item)}
+                              >
+                                <View style={styles.retryButton}>
+                                  <Text style={styles.retryText}>↻</Text>
+                                </View>
+                              </Pressable>
+                            )}
+                          </View>
+                        )}
+
+                        {!!item.fileName && (
+                          <View style={styles.messageFileCard}>
+                            <Text style={styles.messageFileIcon}>📄</Text>
+                            <View style={styles.messageFileTextBox}>
+                              <Text
+                                style={styles.messageFileName}
+                                numberOfLines={1}
+                              >
+                                {item.fileName}
+                              </Text>
+                              <Text style={styles.messageFileMeta}>
+                                {item.status === "sending"
+                                  ? "正在发送"
+                                  : item.status === "failed"
+                                    ? "发送失败"
+                                    : "已发送"}
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
+                        {!!item.text &&
+                          !isUserVoice &&
+                          getUserBubbleSegments(item.text).map(
+                            (segment, segmentIndex) => (
+                              <Pressable
+                                key={`${stableMessageId}_user_segment_${segmentIndex}`}
+                                style={[
+                                  styles.userBubble,
+                                  segmentIndex > 0 && styles.userBubbleSegment,
+                                ]}
+                                onLongPress={(event) =>
+                                  openMessageMenu(
+                                    segment,
+                                    item,
+                                    event.nativeEvent.pageX,
+                                    event.nativeEvent.pageY,
+                                  )
                                 }
                               >
-                                <ChatMessageImage
-                                  uri={imageUri}
-                                  multiple={
-                                    (item.imageUris || [item.imageUri]).length >
-                                    1
-                                  }
-                                  subdued={
-                                    item.status === "sending" ||
-                                    item.status === "failed"
-                                  }
-                                />
+                                <Text style={styles.userText}>
+                                  {isSearchTarget && targetSearchQuery ? (
+                                    <SearchHighlightedText
+                                      text={segment}
+                                      query={targetSearchQuery}
+                                      userMessage
+                                      opacity={locationHighlightOpacity}
+                                    />
+                                  ) : (
+                                    segment
+                                  )}
+                                </Text>
                               </Pressable>
                             ),
+                          )}
+
+                        {isUserVoice &&
+                          isVoiceTranscriptRevealed &&
+                          !!item.text && (
+                            <Pressable
+                              style={styles.userVoiceTranscript}
+                              onLongPress={(event) =>
+                                openMessageMenu(
+                                  item.text,
+                                  item,
+                                  event.nativeEvent.pageX,
+                                  event.nativeEvent.pageY,
+                                )
+                              }
+                            >
+                              <Text style={styles.userVoiceTranscriptText}>
+                                {normalizeVoiceTranscriptText(item.text)}
+                              </Text>
+                            </Pressable>
+                          )}
+
+                        {!item.imageUri &&
+                          !item.imageUris?.length &&
+                          !isUserVoice &&
+                          item.status === "failed" && (
+                            <Pressable
+                              style={styles.textRetryButton}
+                              onPress={() => retryMessage(item)}
+                            >
+                              <Text style={styles.retryText}>↻</Text>
+                            </Pressable>
+                          )}
+                      </View>
+                    </AnimatedMessage>
+                  ) : (
+                    <AnimatedMessage>
+                      <View
+                        style={[
+                          styles.aiWrap,
+                          (!isVoiceReply || isVoiceTranscriptRevealed) &&
+                            hasBlockMarkdown(item.text) &&
+                            styles.aiWrapStructured,
+                          shouldShowMessageTime(item, messages[index - 1])
+                            ? styles.messageAfterTime
+                            : index > 0 &&
+                                messages[index - 1].role === item.role
+                              ? styles.messageFromSameSender
+                              : styles.messageFromNewSender,
+                        ]}
+                      >
+                        {item.treeholeDraft ? (
+                          <TreeholeDraftCard
+                            draft={item.treeholeDraft}
+                            saveStatus={item.treeholeSaveStatus}
+                            onSave={() => saveTreeholeFromMessage(item)}
+                            onDismiss={() => dismissTreeholeDraft(item.id)}
+                          />
+                        ) : isDiaryText(item.text) ? (
+                          <DiaryPreviewCard
+                            entry={parseDiaryText(item.text)}
+                            saveStatus={item.diarySaveStatus}
+                            onSave={() => saveDiaryFromMessage(item)}
+                            onDismiss={() => dismissMessage(item.id)}
+                          />
+                        ) : (
+                          <>
+                            {!!item.attachments?.length && (
+                              <View style={styles.generatedAttachmentList}>
+                                {item.attachments.map((attachment) => (
+                                  <Pressable
+                                    key={attachment.id}
+                                    style={({ pressed }) => [
+                                      styles.generatedAttachmentCard,
+                                      pressed &&
+                                        styles.generatedAttachmentCardPressed,
+                                    ]}
+                                    onPress={() =>
+                                      openGeneratedAttachment(item, attachment)
+                                    }
+                                  >
+                                    <View
+                                      style={styles.generatedAttachmentIcon}
+                                    >
+                                      <Text
+                                        style={
+                                          styles.generatedAttachmentIconText
+                                        }
+                                      >
+                                        ↧
+                                      </Text>
+                                    </View>
+                                    <View
+                                      style={styles.generatedAttachmentText}
+                                    >
+                                      <Text
+                                        style={styles.generatedAttachmentName}
+                                        numberOfLines={1}
+                                      >
+                                        {attachment.name}
+                                      </Text>
+                                      <Text
+                                        style={styles.generatedAttachmentMeta}
+                                      >
+                                        {getAttachmentTypeLabel(
+                                          attachment.mime_type,
+                                        )}{" "}
+                                        ·{" "}
+                                        {formatAttachmentSize(attachment.size)}
+                                      </Text>
+                                    </View>
+                                  </Pressable>
+                                ))}
+                              </View>
+                            )}
+                            {!isVoiceReply &&
+                              (hasBlockMarkdown(item.text) ? (
+                                <MessageMarkdown
+                                  text={item.text}
+                                  onPress={() =>
+                                    toggleMessageVoiceControl(item)
+                                  }
+                                  highlight={
+                                    isSearchTarget
+                                      ? targetSearchQuery
+                                      : undefined
+                                  }
+                                  highlightOpacity={locationHighlightOpacity}
+                                  onLongPress={(event) =>
+                                    openMessageMenu(
+                                      item.text,
+                                      item,
+                                      event.nativeEvent.pageX,
+                                      event.nativeEvent.pageY,
+                                    )
+                                  }
+                                />
+                              ) : (
+                                getChatBubbleSegments(item.text).map(
+                                  (segment, segmentIndex) => (
+                                    <Pressable
+                                      key={`${stableMessageId}_segment_${segmentIndex}`}
+                                      style={[
+                                        styles.aiBox,
+                                        segmentIndex > 0 && styles.aiBoxSegment,
+                                      ]}
+                                      onLongPress={(event) =>
+                                        openMessageMenu(
+                                          segment,
+                                          item,
+                                          event.nativeEvent.pageX,
+                                          event.nativeEvent.pageY,
+                                        )
+                                      }
+                                      onPress={() =>
+                                        toggleMessageVoiceControl(item)
+                                      }
+                                    >
+                                      <Text style={styles.aiText}>
+                                        <InlineMarkdown
+                                          text={segment}
+                                          highlight={
+                                            isSearchTarget
+                                              ? targetSearchQuery
+                                              : undefined
+                                          }
+                                          highlightOpacity={
+                                            locationHighlightOpacity
+                                          }
+                                        />
+                                      </Text>
+                                    </Pressable>
+                                  ),
+                                )
+                              ))}
+                            {isVoiceReply ||
+                            expandedVoiceMessageId === item.id ? (
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                  activeVoiceMessageId === item.id &&
+                                  audioStatus.playing
+                                    ? "暂停小C语音"
+                                    : "播放小C语音"
+                                }
+                                disabled={voicePreparingId === item.id}
+                                style={({ pressed }) => [
+                                  styles.messageVoicePlayer,
+                                  { width: voiceBubbleWidth },
+                                  pressed && styles.messageVoicePlayerPressed,
+                                ]}
+                                onPress={() => playMessageVoice(item)}
+                                onLongPress={() =>
+                                  isVoiceReply &&
+                                  toggleVoiceReplyTranscript(item)
+                                }
+                              >
+                                <Text style={styles.messageVoicePlayIcon}>
+                                  {voicePreparingId === item.id
+                                    ? "…"
+                                    : activeVoiceMessageId === item.id &&
+                                        audioStatus.playing
+                                      ? "Ⅱ"
+                                      : "▶"}
+                                </Text>
+                                {voicePreparingId === item.id ? (
+                                  <Text style={styles.messageVoicePrompt}>
+                                    正在准备
+                                  </Text>
+                                ) : voiceAsset ? (
+                                  <>
+                                    <View style={styles.messageVoiceWave}>
+                                      {VOICE_WAVE_HEIGHTS.map(
+                                        (height, waveIndex) => (
+                                          <View
+                                            key={`${stableMessageId}_voice_wave_${waveIndex}`}
+                                            style={[
+                                              styles.messageVoiceWaveBar,
+                                              { height },
+                                              displayedVoiceProgress >
+                                                waveIndex /
+                                                  VOICE_WAVE_HEIGHTS.length &&
+                                                styles.messageVoiceWaveBarPlayed,
+                                            ]}
+                                          />
+                                        ),
+                                      )}
+                                    </View>
+                                    <Text style={styles.messageVoiceDuration}>
+                                      {formatVoiceDuration(
+                                        displayedVoiceDuration,
+                                      )}
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={styles.messageVoicePrompt}>
+                                    听语音
+                                  </Text>
+                                )}
+                              </Pressable>
+                            ) : null}
+                            {isVoiceReply &&
+                              isVoiceTranscriptRevealed &&
+                              !!item.text && (
+                                <Pressable
+                                  style={styles.assistantVoiceTranscript}
+                                  onLongPress={(event) =>
+                                    openMessageMenu(
+                                      item.text,
+                                      item,
+                                      event.nativeEvent.pageX,
+                                      event.nativeEvent.pageY,
+                                    )
+                                  }
+                                >
+                                  <Text
+                                    style={styles.assistantVoiceTranscriptText}
+                                  >
+                                    {normalizeVoiceTranscriptText(item.text)}
+                                  </Text>
+                                </Pressable>
+                              )}
+                          </>
                         )}
                       </View>
-
-                      {item.status === "sending" && (
-                        <View style={styles.imageSendingOverlay}>
-                          <TypingDots compact />
-                        </View>
-                      )}
-
-                      {item.status === "failed" && (
-                        <Pressable
-                          style={styles.imageRetryOverlay}
-                          onPress={() => retryMessage(item)}
-                        >
-                          <View style={styles.retryButton}>
-                            <Text style={styles.retryText}>↻</Text>
-                          </View>
-                        </Pressable>
-                      )}
-                    </View>
-                  )}
-
-                  {!!item.fileName && (
-                    <View style={styles.messageFileCard}>
-                      <Text style={styles.messageFileIcon}>📄</Text>
-                      <View style={styles.messageFileTextBox}>
-                        <Text style={styles.messageFileName} numberOfLines={1}>
-                          {item.fileName}
-                        </Text>
-                        <Text style={styles.messageFileMeta}>
-                          {item.status === "sending"
-                            ? "正在发送"
-                            : item.status === "failed"
-                              ? "发送失败"
-                              : "已发送"}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {!!item.text && !isUserVoice && getUserBubbleSegments(item.text).map((segment, segmentIndex) => (
-                    <Pressable
-                      key={`${stableMessageId}_user_segment_${segmentIndex}`}
-                      style={[
-                        styles.userBubble,
-                        segmentIndex > 0 && styles.userBubbleSegment,
-                      ]}
-                      onLongPress={(event) =>
-                        openMessageMenu(
-                          segment,
-                          item,
-                          event.nativeEvent.pageX,
-                          event.nativeEvent.pageY,
-                        )
-                      }
-                    >
-                      <Text style={styles.userText}>
-                        {isSearchTarget && targetSearchQuery ? (
-                          <SearchHighlightedText
-                            text={segment}
-                            query={targetSearchQuery}
-                            userMessage
-                            opacity={locationHighlightOpacity}
-                          />
-                        ) : segment}
-                      </Text>
-                    </Pressable>
-                  ))}
-
-                  {isUserVoice && isVoiceTranscriptRevealed && !!item.text && (
-                    <Pressable
-                      style={styles.userVoiceTranscript}
-                      onLongPress={(event) =>
-                        openMessageMenu(
-                          item.text,
-                          item,
-                          event.nativeEvent.pageX,
-                          event.nativeEvent.pageY,
-                        )
-                      }
-                    >
-                      <Text style={styles.userVoiceTranscriptText}>
-                        {normalizeVoiceTranscriptText(item.text)}
-                      </Text>
-                    </Pressable>
-                  )}
-
-                  {!item.imageUri &&
-                    !item.imageUris?.length &&
-                    !isUserVoice &&
-                    item.status === "failed" && (
-                    <Pressable
-                      style={styles.textRetryButton}
-                      onPress={() => retryMessage(item)}
-                    >
-                      <Text style={styles.retryText}>↻</Text>
-                    </Pressable>
+                    </AnimatedMessage>
                   )}
                 </View>
-              </AnimatedMessage>
-	            ) : (
-	              <AnimatedMessage>
-	                <View
-	                  style={[
-	                    styles.aiWrap,
-	                    (!isVoiceReply || isVoiceTranscriptRevealed) &&
-	                      hasBlockMarkdown(item.text) && styles.aiWrapStructured,
-	                    shouldShowMessageTime(item, messages[index - 1])
-	                      ? styles.messageAfterTime
-	                      : index > 0 && messages[index - 1].role === item.role
-	                      ? styles.messageFromSameSender
-	                      : styles.messageFromNewSender,
-	                  ]}
-	                >
-	                  {item.treeholeDraft ? (
-	                    <TreeholeDraftCard
-	                      draft={item.treeholeDraft}
-	                      saveStatus={item.treeholeSaveStatus}
-	                      onSave={() => saveTreeholeFromMessage(item)}
-	                      onDismiss={() => dismissTreeholeDraft(item.id)}
-	                    />
-	                  ) : isDiaryText(item.text) ? (
-	                    <DiaryPreviewCard
-	                      entry={parseDiaryText(item.text)}
-	                      saveStatus={item.diarySaveStatus}
-	                      onSave={() => saveDiaryFromMessage(item)}
-	                      onDismiss={() => dismissMessage(item.id)}
-	                    />
-	                  ) : (
-	                    <>
-	                      {!!item.attachments?.length && (
-	                        <View style={styles.generatedAttachmentList}>
-	                          {item.attachments.map((attachment) => (
-	                            <Pressable
-	                              key={attachment.id}
-	                              style={({ pressed }) => [
-	                                styles.generatedAttachmentCard,
-	                                pressed && styles.generatedAttachmentCardPressed,
-	                              ]}
-	                              onPress={() => openGeneratedAttachment(item, attachment)}
-	                            >
-	                              <View style={styles.generatedAttachmentIcon}>
-	                                <Text style={styles.generatedAttachmentIconText}>↧</Text>
-	                              </View>
-	                              <View style={styles.generatedAttachmentText}>
-	                                <Text style={styles.generatedAttachmentName} numberOfLines={1}>
-	                                  {attachment.name}
-	                                </Text>
-	                                <Text style={styles.generatedAttachmentMeta}>
-	                                  {getAttachmentTypeLabel(attachment.mime_type)} · {formatAttachmentSize(attachment.size)}
-	                                </Text>
-	                              </View>
-	                            </Pressable>
-	                          ))}
-	                        </View>
-	                      )}
-	                      {!isVoiceReply && (
-	                      hasBlockMarkdown(item.text) ? (
-	                    <MessageMarkdown
-	                      text={item.text}
-	                      onPress={() => toggleMessageVoiceControl(item)}
-	                      highlight={isSearchTarget ? targetSearchQuery : undefined}
-	                      highlightOpacity={locationHighlightOpacity}
-	                      onLongPress={(event) =>
-	                        openMessageMenu(
-	                          item.text,
-	                          item,
-	                          event.nativeEvent.pageX,
-	                          event.nativeEvent.pageY,
-	                        )
-	                      }
-	                    />
-	                      ) : (
-	                    getChatBubbleSegments(item.text).map((segment, segmentIndex) => (
-	                      <Pressable
-	                        key={`${stableMessageId}_segment_${segmentIndex}`}
-	                        style={[
-	                          styles.aiBox,
-	                          segmentIndex > 0 && styles.aiBoxSegment,
-	                        ]}
-	                        onLongPress={(event) =>
-	                          openMessageMenu(
-	                            segment,
-	                            item,
-	                            event.nativeEvent.pageX,
-	                            event.nativeEvent.pageY,
-	                          )
-	                        }
-	                        onPress={() => toggleMessageVoiceControl(item)}
-	                      >
-	                        <Text style={styles.aiText}>
-	                          <InlineMarkdown
-	                            text={segment}
-	                            highlight={isSearchTarget ? targetSearchQuery : undefined}
-	                            highlightOpacity={locationHighlightOpacity}
-	                          />
-	                        </Text>
-	                      </Pressable>
-	                    ))
-	                      ))}
-	                      {isVoiceReply || expandedVoiceMessageId === item.id ? (
-	                        <Pressable
-	                          accessibilityRole="button"
-	                          accessibilityLabel={
-	                            activeVoiceMessageId === item.id && audioStatus.playing
-	                              ? "暂停小C语音"
-	                              : "播放小C语音"
-	                          }
-	                          disabled={voicePreparingId === item.id}
-	                          style={({ pressed }) => [
-	                            styles.messageVoicePlayer,
-	                            { width: voiceBubbleWidth },
-	                            pressed && styles.messageVoicePlayerPressed,
-	                          ]}
-	                          onPress={() => playMessageVoice(item)}
-	                          onLongPress={() => isVoiceReply && toggleVoiceReplyTranscript(item)}
-	                        >
-	                          <Text style={styles.messageVoicePlayIcon}>
-	                            {voicePreparingId === item.id
-	                              ? "…"
-	                              : activeVoiceMessageId === item.id && audioStatus.playing
-	                                ? "Ⅱ"
-	                                : "▶"}
-	                          </Text>
-	                          {voicePreparingId === item.id ? (
-	                            <Text style={styles.messageVoicePrompt}>正在准备</Text>
-	                          ) : voiceAsset ? (
-	                            <>
-	                              <View style={styles.messageVoiceWave}>
-	                                {VOICE_WAVE_HEIGHTS.map((height, waveIndex) => (
-	                                  <View
-	                                    key={`${stableMessageId}_voice_wave_${waveIndex}`}
-	                                    style={[
-	                                      styles.messageVoiceWaveBar,
-	                                      { height },
-	                                      displayedVoiceProgress > waveIndex / VOICE_WAVE_HEIGHTS.length &&
-	                                        styles.messageVoiceWaveBarPlayed,
-	                                    ]}
-	                                  />
-	                                ))}
-	                              </View>
-	                              <Text style={styles.messageVoiceDuration}>
-	                                {formatVoiceDuration(
-	                                  displayedVoiceDuration,
-	                                )}
-	                              </Text>
-	                            </>
-	                          ) : (
-	                            <Text style={styles.messageVoicePrompt}>听语音</Text>
-	                          )}
-	                        </Pressable>
-	                      ) : null}
-	                      {isVoiceReply && isVoiceTranscriptRevealed && !!item.text && (
-	                        <Pressable
-	                          style={styles.assistantVoiceTranscript}
-	                          onLongPress={(event) =>
-	                            openMessageMenu(
-	                              item.text,
-	                              item,
-	                              event.nativeEvent.pageX,
-	                              event.nativeEvent.pageY,
-	                            )
-	                          }
-	                        >
-	                          <Text style={styles.assistantVoiceTranscriptText}>
-	                            {normalizeVoiceTranscriptText(item.text)}
-	                          </Text>
-	                        </Pressable>
-	                      )}
-	                    </>
-	                  )}
-                </View>
-              </AnimatedMessage>
-            )}
-              </View>
               </Fragment>
             );
           })}
@@ -3209,7 +3373,9 @@ export default function ChatScreen() {
           {replyModeOverride !== "follow" && (
             <View style={styles.voiceReplyNotice}>
               <Text style={styles.voiceReplyNoticeText}>
-                {replyModeOverride === "voice" ? "下一条回复语音" : "下一条回复文字"}
+                {replyModeOverride === "voice"
+                  ? "下一条回复语音"
+                  : "下一条回复文字"}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -3225,7 +3391,9 @@ export default function ChatScreen() {
           <View style={styles.inputControls}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={voiceInputMode ? "切换到文字输入" : "切换到语音输入"}
+              accessibilityLabel={
+                voiceInputMode ? "切换到文字输入" : "切换到语音输入"
+              }
               style={({ pressed }) => [
                 styles.voiceInputButton,
                 pressed && styles.voiceInputButtonPressed,
@@ -3258,7 +3426,11 @@ export default function ChatScreen() {
               <View
                 accessibilityRole="button"
                 accessibilityLabel={
-                  isCancellingVoice ? "松开取消" : isRecordingVoice ? "松开发送" : "按住说话"
+                  isCancellingVoice
+                    ? "松开取消"
+                    : isRecordingVoice
+                      ? "松开发送"
+                      : "按住说话"
                 }
                 style={[
                   styles.voiceHoldButton,
@@ -3271,10 +3443,12 @@ export default function ChatScreen() {
                 onResponderRelease={handleVoiceResponderRelease}
                 onResponderTerminate={handleVoiceResponderTerminate}
               >
-                <Text style={[
-                  styles.voiceHoldButtonText,
-                  isRecordingVoice && styles.voiceHoldButtonTextRecording,
-                ]}>
+                <Text
+                  style={[
+                    styles.voiceHoldButtonText,
+                    isRecordingVoice && styles.voiceHoldButtonTextRecording,
+                  ]}
+                >
                   {isCancellingVoice
                     ? "松开 取消"
                     : isRecordingVoice
@@ -3283,55 +3457,52 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ) : (
-            <View style={styles.inputBox}>
-              <TextInput
-                ref={inputRef}
-                style={styles.input}
-                placeholder="和小C说点什么..."
-                placeholderTextColor={XiaoCColors.placeholder}
-                value={message}
-                onChangeText={setMessage}
-                onFocus={() => {
-                  if (drawerVisible) {
-                    closeDrawer();
-                  }
+              <View style={styles.inputBox}>
+                <TextInput
+                  ref={inputRef}
+                  style={styles.input}
+                  placeholder="和小C说点什么..."
+                  placeholderTextColor={XiaoCColors.placeholder}
+                  value={message}
+                  onChangeText={setMessage}
+                  onFocus={() => {
+                    if (drawerVisible) {
+                      closeDrawer();
+                    }
 
-                  setTimeout(() => {
-                    scrollToLatestMessage(true);
-                  }, 120);
-                }}
-                multiline
-              />
+                    setTimeout(() => {
+                      scrollToLatestMessage(true);
+                    }, 120);
+                  }}
+                  multiline
+                />
 
-              <RNAnimated.View
-                pointerEvents={canSendMessage ? "auto" : "none"}
-                style={[
-                  styles.sendButtonSlot,
-                  {
-                    opacity: sendButtonProgress,
-                    transform: [
-                      {
-                        scale: sendButtonProgress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.78, 1],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <Pressable
+                <RNAnimated.View
+                  pointerEvents={canSendMessage ? "auto" : "none"}
                   style={[
-                    styles.sendButton,
-                    isTyping && styles.sendDisabled,
+                    styles.sendButtonSlot,
+                    {
+                      opacity: sendButtonProgress,
+                      transform: [
+                        {
+                          scale: sendButtonProgress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.78, 1],
+                          }),
+                        },
+                      ],
+                    },
                   ]}
-                  onPress={sendMessage}
-                  disabled={isSendDisabled}
                 >
-                  <Text style={styles.sendText}>↑</Text>
-                </Pressable>
-              </RNAnimated.View>
-            </View>
+                  <Pressable
+                    style={[styles.sendButton, isTyping && styles.sendDisabled]}
+                    onPress={sendMessage}
+                    disabled={isSendDisabled}
+                  >
+                    <Text style={styles.sendText}>↑</Text>
+                  </Pressable>
+                </RNAnimated.View>
+              </View>
             )}
 
             <Pressable style={styles.attachButton} onPress={openAttachmentMenu}>
@@ -3401,7 +3572,9 @@ export default function ChatScreen() {
                       styles.messageMenuItem,
                       pressed && styles.messageMenuItemPressed,
                     ]}
-                    onPress={() => saveFavoriteFromMessage(messageMenu?.message)}
+                    onPress={() =>
+                      saveFavoriteFromMessage(messageMenu?.message)
+                    }
                   >
                     <Text style={styles.messageMenuText}>收藏</Text>
                   </Pressable>
@@ -3413,7 +3586,9 @@ export default function ChatScreen() {
                     ]}
                     onPress={() => confirmDeleteMessage(messageMenu?.message)}
                   >
-                    <Text style={[styles.messageMenuText, styles.deleteMenuText]}>
+                    <Text
+                      style={[styles.messageMenuText, styles.deleteMenuText]}
+                    >
                       删除消息
                     </Text>
                   </Pressable>
@@ -4425,8 +4600,9 @@ const styles = StyleSheet.create({
 
   keyboardModeIcon: {
     color: XiaoCColors.icon,
-    fontSize: 23,
-    lineHeight: 25,
+    fontSize: 36,
+    lineHeight: 39,
+    transform: [{ translateX: 0 }, { translateY: 2 }],
   },
 
   voiceHoldButton: {
