@@ -161,20 +161,57 @@ test("a valid short Chinese transcript is not rejected by Whisper confidence met
   }
 })
 
+test("a missing provider duration falls back to the recorder duration", async () => {
+  const previousKey = process.env.GROQ_API_KEY
+  process.env.GROQ_API_KEY = "server-only-secret"
+  const supabase = {
+    storage: {
+      from() {
+        return { async upload() { return { error: null } } }
+      },
+    },
+  }
+  try {
+    const result = await transcribeAndStoreUserVoice({
+      supabase,
+      user_id: "user",
+      conversation_id: "chat-one",
+      audio_base64: Buffer.from("valid audio").toString("base64"),
+      mime_type: "audio/mp4",
+      duration_seconds: 3.2,
+      fetchImpl: async () => new Response(JSON.stringify({
+        text: "这次能听见了。",
+        duration: null,
+        language: "zh",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    })
+    assert.equal(result.voice.duration_seconds, 3.2)
+  } finally {
+    if (previousKey === undefined) delete process.env.GROQ_API_KEY
+    else process.env.GROQ_API_KEY = previousKey
+  }
+})
+
 test("mobile voice input switches modes before the large hold area records and sends", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /useAudioRecorder\(RecordingPresets\.LOW_QUALITY\)/)
   assert.match(chat, /const \[voiceInputMode, setVoiceInputMode\]/)
   assert.match(chat, /voiceInputMode \? "切换到文字输入" : "切换到语音输入"/)
   assert.match(chat, /styles\.voiceHoldButton/)
-  assert.match(chat, /\{isRecordingVoice \? "松开 发送" : "按住 说话"\}/)
+  assert.match(chat, /isCancellingVoice[\s\S]*"松开 取消"[\s\S]*"松开 发送"[\s\S]*"按住 说话"/)
   const holdButton = chat.slice(chat.indexOf("styles.voiceHoldButton"), chat.indexOf("styles.inputBox", chat.indexOf("styles.voiceHoldButton")))
   assert.match(holdButton, /onStartShouldSetResponder=\{\(\) => true\}/)
   assert.match(holdButton, /onResponderTerminationRequest=\{\(\) => false\}/)
-  assert.match(holdButton, /onResponderGrant=\{startUserVoiceRecording\}/)
-  assert.match(holdButton, /onResponderRelease=\{stopUserVoiceRecording\}/)
+  assert.match(holdButton, /onResponderGrant=\{handleVoiceResponderGrant\}/)
+  assert.match(holdButton, /onResponderMove=\{handleVoiceResponderMove\}/)
+  assert.match(holdButton, /onResponderRelease=\{handleVoiceResponderRelease\}/)
+  assert.match(holdButton, /onResponderTerminate=\{handleVoiceResponderTerminate\}/)
   assert.match(chat, /audioRecorder\.getStatus\(\)/)
   assert.match(chat, /durationSeconds < 0\.6/)
+  assert.match(chat, /USER_VOICE_CANCEL_DISTANCE = 56/)
+  assert.match(chat, /finishUserVoiceRecording\(voiceCancelIntentRef\.current\)/)
+  assert.match(chat, /FileSystem\.deleteAsync\(uri, \{ idempotent: true \}\)/)
+  assert.match(chat, /"松开 取消"/)
   assert.match(chat, /XiaoCColors\.voiceHoldRecording/)
   assert.match(chat, /XiaoCColors\.voiceHoldRecordingText/)
   assert.match(chat, /type: "user_voice"[\s\S]*action: "transcribe"/)

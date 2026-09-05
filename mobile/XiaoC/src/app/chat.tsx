@@ -16,6 +16,7 @@ import {
   ActionSheetIOS,
   Alert,
   RefreshControl,
+  type GestureResponderEvent,
 } from "react-native";
 
 import Animated, {
@@ -206,6 +207,7 @@ const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_FILE_CHARS = 12000;
 const HISTORY_PAGE_SIZE = 60;
 const MAX_USER_VOICE_SECONDS = 120;
+const USER_VOICE_CANCEL_DISTANCE = 56;
 const VOICE_WAVE_HEIGHTS = [7, 12, 17, 10, 15, 20, 13, 18, 9, 14, 7];
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
@@ -817,6 +819,8 @@ export default function ChatScreen() {
   const audioRecorderState = useAudioRecorderState(audioRecorder, 100);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
+  const recordingStartPageYRef = useRef<number | null>(null);
+  const voiceCancelIntentRef = useRef(false);
   const [expandedVoiceMessageId, setExpandedVoiceMessageId] = useState<string | null>(null);
   const [activeVoiceMessageId, setActiveVoiceMessageId] = useState<string | null>(null);
   const [voicePreparingId, setVoicePreparingId] = useState<string | null>(null);
@@ -824,6 +828,7 @@ export default function ChatScreen() {
     () => new Set(),
   );
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isCancellingVoice, setIsCancellingVoice] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -2209,11 +2214,14 @@ export default function ChatScreen() {
       recordingIntentRef.current = false;
       recordingStartedAtRef.current = null;
       setIsRecordingVoice(false);
+      setIsCancellingVoice(false);
+      recordingStartPageYRef.current = null;
+      voiceCancelIntentRef.current = false;
       console.log("Voice recording start failed:", error);
     }
   };
 
-  const stopUserVoiceRecording = async () => {
+  const finishUserVoiceRecording = async (cancelled: boolean) => {
     recordingIntentRef.current = false;
     if (!recordingStartedAtRef.current) return;
     recordingStartedAtRef.current = null;
@@ -2223,12 +2231,21 @@ export default function ChatScreen() {
       await new Promise((resolve) => setTimeout(resolve, 80));
       const statusAfterStop = audioRecorder.getStatus();
       setIsRecordingVoice(false);
+      setIsCancellingVoice(false);
+      recordingStartPageYRef.current = null;
+      voiceCancelIntentRef.current = false;
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       const durationSeconds = Math.max(
         Number(statusBeforeStop.durationMillis) || 0,
         Number(statusAfterStop.durationMillis) || 0,
       ) / 1000;
       const uri = statusAfterStop.url || statusBeforeStop.url || audioRecorder.uri;
+      if (cancelled) {
+        if (uri) {
+          await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        }
+        return;
+      }
       if (!uri || durationSeconds < 0.6) {
         Alert.alert("按得太短了", "再多说一点点吧。");
         return;
@@ -2236,8 +2253,36 @@ export default function ChatScreen() {
       await sendRecordedVoice(uri, durationSeconds);
     } catch (error) {
       setIsRecordingVoice(false);
+      setIsCancellingVoice(false);
+      recordingStartPageYRef.current = null;
+      voiceCancelIntentRef.current = false;
       console.log("Voice recording stop failed:", error);
     }
+  };
+
+  const handleVoiceResponderGrant = (event: GestureResponderEvent) => {
+    recordingStartPageYRef.current = event.nativeEvent.pageY;
+    voiceCancelIntentRef.current = false;
+    setIsCancellingVoice(false);
+    void startUserVoiceRecording();
+  };
+
+  const handleVoiceResponderMove = (event: GestureResponderEvent) => {
+    const startPageY = recordingStartPageYRef.current;
+    if (startPageY === null || !recordingIntentRef.current) return;
+    const shouldCancel = startPageY - event.nativeEvent.pageY >= USER_VOICE_CANCEL_DISTANCE;
+    if (voiceCancelIntentRef.current === shouldCancel) return;
+    voiceCancelIntentRef.current = shouldCancel;
+    setIsCancellingVoice(shouldCancel);
+  };
+
+  const handleVoiceResponderRelease = () => {
+    void finishUserVoiceRecording(voiceCancelIntentRef.current);
+  };
+
+  const handleVoiceResponderTerminate = () => {
+    voiceCancelIntentRef.current = true;
+    void finishUserVoiceRecording(true);
   };
 
   const retryMessage = async (messageToRetry: Message) => {
@@ -3081,21 +3126,29 @@ export default function ChatScreen() {
             {voiceInputMode ? (
               <View
                 accessibilityRole="button"
-                accessibilityLabel={isRecordingVoice ? "松开发送" : "按住说话"}
+                accessibilityLabel={
+                  isCancellingVoice ? "松开取消" : isRecordingVoice ? "松开发送" : "按住说话"
+                }
                 style={[
                   styles.voiceHoldButton,
                   isRecordingVoice && styles.voiceHoldButtonRecording,
                 ]}
                 onStartShouldSetResponder={() => true}
                 onResponderTerminationRequest={() => false}
-                onResponderGrant={startUserVoiceRecording}
-                onResponderRelease={stopUserVoiceRecording}
+                onResponderGrant={handleVoiceResponderGrant}
+                onResponderMove={handleVoiceResponderMove}
+                onResponderRelease={handleVoiceResponderRelease}
+                onResponderTerminate={handleVoiceResponderTerminate}
               >
                 <Text style={[
                   styles.voiceHoldButtonText,
                   isRecordingVoice && styles.voiceHoldButtonTextRecording,
                 ]}>
-                  {isRecordingVoice ? "松开 发送" : "按住 说话"}
+                  {isCancellingVoice
+                    ? "松开 取消"
+                    : isRecordingVoice
+                      ? "松开 发送"
+                      : "按住 说话"}
                 </Text>
               </View>
             ) : (

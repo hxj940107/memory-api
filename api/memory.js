@@ -4947,6 +4947,10 @@ export default async function handler(req, res) {
           return res.status(404).json({ error: "User voice not found", code: error.code })
         }
         if (["USER_VOICE_DURATION_INVALID", "USER_VOICE_FILE_INVALID", "USER_VOICE_EMPTY_TRANSCRIPT"].includes(error?.code)) {
+          console.warn("USER VOICE REJECTED:", {
+            code: error.code,
+            diagnostics: error?.diagnostics || null,
+          })
           return res.status(400).json({ error: error.message, code: error.code })
         }
         if (error?.code === "GROQ_NOT_CONFIGURED") {
