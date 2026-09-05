@@ -820,6 +820,7 @@ export default function ChatScreen() {
   const userVoiceRecordingTimeoutRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
+  const audioLifecycleMountedRef = useRef(true);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingStartPageYRef = useRef<number | null>(null);
@@ -838,6 +839,7 @@ export default function ChatScreen() {
   const [isCancellingVoice, setIsCancellingVoice] = useState(false);
 
   const updateAudioStatus = (status: AVPlaybackStatus) => {
+    if (!audioLifecycleMountedRef.current) return;
     if (!status.isLoaded) {
       setAudioStatus({
         isLoaded: false,
@@ -875,6 +877,11 @@ export default function ChatScreen() {
       { shouldPlay, progressUpdateIntervalMillis: 250 },
       updateAudioStatus,
     );
+    if (!audioLifecycleMountedRef.current) {
+      sound.setOnPlaybackStatusUpdate(null);
+      await sound.unloadAsync().catch(() => {});
+      return;
+    }
     audioSoundRef.current = sound;
     setActiveVoiceMessageId(messageId);
   };
@@ -2322,7 +2329,9 @@ export default function ChatScreen() {
     const permission = await ExpoAVAudio.requestPermissionsAsync();
     if (!permission.granted) {
       recordingIntentRef.current = false;
-      Alert.alert("需要麦克风权限", "请先允许小C使用麦克风，才能发送语音。");
+      if (audioLifecycleMountedRef.current) {
+        Alert.alert("需要麦克风权限", "请先允许小C使用麦克风，才能发送语音。");
+      }
       return;
     }
     if (!recordingIntentRef.current) return;
@@ -2344,7 +2353,7 @@ export default function ChatScreen() {
       const { recording } = await ExpoAVAudio.Recording.createAsync(
         ExpoAVAudio.RecordingOptionsPresets.HIGH_QUALITY,
       );
-      if (!recordingIntentRef.current) {
+      if (!recordingIntentRef.current || !audioLifecycleMountedRef.current) {
         await recording.stopAndUnloadAsync().catch(() => {});
         const abandonedUri = recording.getURI();
         if (abandonedUri) {
@@ -2368,8 +2377,6 @@ export default function ChatScreen() {
     } catch (error) {
       recordingIntentRef.current = false;
       recordingStartedAtRef.current = null;
-      setIsRecordingVoice(false);
-      setIsCancellingVoice(false);
       recordingStartPageYRef.current = null;
       voiceCancelIntentRef.current = false;
       await ExpoAVAudio.setAudioModeAsync({
@@ -2378,10 +2385,14 @@ export default function ChatScreen() {
         staysActiveInBackground: false,
       }).catch(() => {});
       console.log("Voice recording start failed:", error);
-      Alert.alert(
-        "录音没有启动",
-        "请再按一次；如果仍然失败，请确认 Expo Go 的麦克风权限已开启。",
-      );
+      if (audioLifecycleMountedRef.current) {
+        setIsRecordingVoice(false);
+        setIsCancellingVoice(false);
+        Alert.alert(
+          "录音没有启动",
+          "请再按一次；如果仍然失败，请确认 Expo Go 的麦克风权限已开启。",
+        );
+      }
     }
   };
 
@@ -2399,6 +2410,19 @@ export default function ChatScreen() {
       const statusBeforeStop = await recording.getStatusAsync();
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
+      if (!audioLifecycleMountedRef.current) {
+        if (uri) {
+          await FileSystem.deleteAsync(uri, { idempotent: true }).catch(
+            () => {},
+          );
+        }
+        await ExpoAVAudio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+        }).catch(() => {});
+        return;
+      }
       setIsRecordingVoice(false);
       setIsCancellingVoice(false);
       recordingStartPageYRef.current = null;
@@ -2424,8 +2448,10 @@ export default function ChatScreen() {
       }
       await sendRecordedVoice(uri, durationSeconds);
     } catch (error) {
-      setIsRecordingVoice(false);
-      setIsCancellingVoice(false);
+      if (audioLifecycleMountedRef.current) {
+        setIsRecordingVoice(false);
+        setIsCancellingVoice(false);
+      }
       recordingStartPageYRef.current = null;
       voiceCancelIntentRef.current = false;
       console.log("Voice recording stop failed:", error);
@@ -2463,6 +2489,44 @@ export default function ChatScreen() {
     voiceCancelIntentRef.current = true;
     void finishUserVoiceRecording(true);
   };
+
+  useEffect(() => {
+    audioLifecycleMountedRef.current = true;
+
+    return () => {
+      audioLifecycleMountedRef.current = false;
+      recordingIntentRef.current = false;
+      recordingStartedAtRef.current = null;
+      recordingStartPageYRef.current = null;
+      voiceCancelIntentRef.current = false;
+
+      if (userVoiceRecordingTimeoutRef.current) {
+        clearTimeout(userVoiceRecordingTimeoutRef.current);
+        userVoiceRecordingTimeoutRef.current = null;
+      }
+
+      const sound = audioSoundRef.current;
+      audioSoundRef.current = null;
+      if (sound) sound.setOnPlaybackStatusUpdate(null);
+
+      const recording = userVoiceRecordingRef.current;
+      userVoiceRecordingRef.current = null;
+
+      const releaseAudioResources = async () => {
+        if (sound) await sound.unloadAsync().catch(() => {});
+        if (recording) await recording.stopAndUnloadAsync().catch(() => {});
+        await ExpoAVAudio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+        }).catch(() => {});
+      };
+
+      void releaseAudioResources().catch((error) => {
+        console.log("Chat audio cleanup failed:", error);
+      });
+    };
+  }, []);
 
   const retryMessage = async (messageToRetry: Message) => {
     setMessages((prev) =>

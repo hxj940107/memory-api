@@ -257,3 +257,28 @@ test("mobile voice input switches modes before the large hold area records and s
   assert.match(chat, /normalizeVoiceTranscriptText\(item\.text\)/)
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
 })
+
+test("chat unmount releases audio resources without entering the voice send pipeline", () => {
+  const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+  const cleanupStart = chat.indexOf("useEffect(() => {\n    audioLifecycleMountedRef.current = true;")
+  const cleanupEnd = chat.indexOf("const retryMessage = async", cleanupStart)
+  const cleanup = chat.slice(cleanupStart, cleanupEnd)
+
+  assert.ok(cleanupStart >= 0)
+  assert.ok(cleanupEnd > cleanupStart)
+  assert.match(cleanup, /audioSoundRef\.current = null/)
+  assert.match(cleanup, /sound\.setOnPlaybackStatusUpdate\(null\)/)
+  assert.match(cleanup, /sound\.unloadAsync\(\)\.catch/)
+  assert.match(cleanup, /userVoiceRecordingRef\.current = null/)
+  assert.match(cleanup, /recording\.stopAndUnloadAsync\(\)\.catch/)
+  assert.match(cleanup, /clearTimeout\(userVoiceRecordingTimeoutRef\.current\)/)
+  assert.match(cleanup, /userVoiceRecordingTimeoutRef\.current = null/)
+  assert.match(cleanup, /allowsRecordingIOS: false/)
+  assert.match(cleanup, /void releaseAudioResources\(\)\.catch/)
+  assert.doesNotMatch(cleanup, /sendRecordedVoice|FileSystem\.readAsStringAsync|action: "transcribe"|submitMessage/)
+  assert.doesNotMatch(cleanup, /setIsRecordingVoice|setAudioStatus|setActiveVoiceMessageId/)
+  assert.match(
+    chat,
+    /if \(!audioLifecycleMountedRef\.current\) \{[\s\S]*FileSystem\.deleteAsync\(uri,[\s\S]*allowsRecordingIOS: false[\s\S]*return;/,
+  )
+})
