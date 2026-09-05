@@ -4,9 +4,36 @@ import test from "node:test"
 
 import {
   estimateGroqTranscriptionCost,
+  formatUserVoiceForPrompt,
   normalizeUserVoiceAsset,
   transcribeAndStoreUserVoice,
 } from "../lib/userVoice.js"
+
+test("voice modality reaches current and recent chat context without inventing acoustics", () => {
+  const voice = {
+    id: "voice-1",
+    status: "ready",
+    storage_path: "user/chat/user-voice/audio.m4a",
+    mime_type: "audio/mp4",
+    size: 1234,
+    duration_seconds: 7.4,
+    provider: "groq",
+  }
+  assert.equal(
+    formatUserVoiceForPrompt("我想你了", voice, { current: true }),
+    "【本轮语音消息｜约7秒】\n她刚刚通过语音亲口说了下面内容。以下是语音转写：\n我想你了",
+  )
+  assert.equal(
+    formatUserVoiceForPrompt("我想你了", voice),
+    "[她通过语音说，约7秒；以下为转写]\n我想你了",
+  )
+  assert.equal(formatUserVoiceForPrompt("普通文字", null), "普通文字")
+
+  const chat = fs.readFileSync("api/chat.js", "utf8")
+  assert.match(chat, /formatUserVoiceForPrompt\(content, item\.metadata\?\.userVoice\)/)
+  assert.match(chat, /formatUserVoiceForPrompt\([\s\S]*userMessage,[\s\S]*userVoice,[\s\S]*current: true/)
+  assert.match(chat, /不得声称听出了她的音色、语速、停顿、笑声、哭腔、疲惫、撒娇/)
+})
 
 test("user voice metadata requires a complete private asset", () => {
   assert.equal(normalizeUserVoiceAsset({ status: "pending" }), null)

@@ -41,7 +41,7 @@ import {
 } from "../lib/imageUnderstanding.js"
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
-import { normalizeUserVoiceAsset } from "../lib/userVoice.js"
+import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import {
   buildProactivePushMessage,
   sendExpoPushMessage,
@@ -1036,9 +1036,13 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
   return data.reverse().map(item => {
     const content = normalizeAssistantOutput(item)
 
-    const historicalContent = item.metadata?.imageDescription
-      ? `${content}\n\n[图片背景信息]: ${item.metadata.imageDescription}`
+    const modalityAwareContent = item.role === "user"
+      ? formatUserVoiceForPrompt(content, item.metadata?.userVoice)
       : content
+
+    const historicalContent = item.metadata?.imageDescription
+      ? `${modalityAwareContent}\n\n[图片背景信息]: ${item.metadata.imageDescription}`
+      : modalityAwareContent
 
     return {
       id: item.id,
@@ -3423,7 +3427,11 @@ Recent Message Ledger 只提供真实消息时间与来源；Recent Messages 的
 【Project Context｜项目上下文】
 当前 XiaoC 的主聊天模型由 App 设置独立选择，Haiku 4.5 继续用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
 Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
-深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。`
+深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。
+
+【Voice Modality｜语音消息边界】
+当消息被标注为语音时，你知道她选择了亲口说出这段话，而不是键盘输入。语音形式只是对话背景，不要求每次在回复中提及，也不要固定说“收到语音”或“听到了”。
+当前系统只提供语音转写和时长，没有可靠的声学分析。除非转写内容明确说明，否则不得声称听出了她的音色、语速、停顿、笑声、哭腔、疲惫、撒娇、音量或其他情绪声音特征。可以自然回应“她把这句话说出口了”这件事，但不能虚构没有提供的听觉细节。`
 
 const dynamicPromptContext = `${environmentContext}
 
@@ -3491,6 +3499,12 @@ ${injectedPinMemory}`,
   dynamicContext: dynamicPromptContext,
 })
 
+const currentUserPromptContent = formatUserVoiceForPrompt(
+  userMessage,
+  userVoice,
+  { current: true }
+)
+
 const messages = [
   ...cachedPromptMessages,
 
@@ -3518,7 +3532,7 @@ ${webSearch}`
       ? [
           {
             type: "text",
-            text: userMessage + fileContext
+            text: currentUserPromptContent + fileContext
           },
           ...normalizedImageUrls.map(url => ({
             type: "image_url",
@@ -3527,7 +3541,7 @@ ${webSearch}`
             }
           }))
         ]
-    : userMessage + fileContext
+    : currentUserPromptContent + fileContext
   }
 
 ]
