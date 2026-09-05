@@ -62,7 +62,7 @@ test("an object assistant id is rejected instead of becoming object Object", () 
 
   const source = readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.doesNotMatch(source, /String\(data\.assistant_message_id\)/)
-  assert.match(source, /getValidCloudMessageId\(data\.assistant_message_id\)/)
+  assert.match(source, /getValidCloudMessageId\(\s*data\.assistant_message_id,?\s*\)/)
   assert.match(source, /data\.assistant_message_id != null && !assistantCloudId[\s\S]*return;/)
 })
 

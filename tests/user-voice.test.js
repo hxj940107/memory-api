@@ -252,7 +252,7 @@ test("mobile voice input switches modes before the large hold area records and s
   assert.match(chat, /if \(shouldCancel\) \{[\s\S]*Haptics\.selectionAsync\(\)/)
   assert.match(chat, /type: "user_voice"[\s\S]*action: "transcribe"/)
   assert.match(chat, /userVoice: messageToSend\.metadata\?\.userVoice/)
-  assert.match(chat, /isUserVoice && isVoiceTranscriptRevealed && !!item\.text/)
+  assert.match(chat, /isUserVoice &&\s*isVoiceTranscriptRevealed &&\s*!!item\.text/)
   assert.match(chat, /styles\.userVoiceTranscript/)
   assert.match(chat, /normalizeVoiceTranscriptText\(item\.text\)/)
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)

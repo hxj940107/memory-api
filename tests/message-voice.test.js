@@ -79,8 +79,8 @@ test("provider-neutral prepare boundary refuses generation when no provider is s
 test("mobile voice UI uses a two-step reveal before generating audio", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
   assert.match(chat, /const \[expandedVoiceMessageId, setExpandedVoiceMessageId\]/)
-  assert.match(chat, /onPress=\{\(\) => toggleMessageVoiceControl\(item\)\}/)
-  assert.match(chat, /isVoiceReply \|\| expandedVoiceMessageId === item\.id/)
+  assert.match(chat, /onPress=\{\(\) =>\s*toggleMessageVoiceControl\(item\)\s*\}/)
+  assert.match(chat, /isVoiceReply \|\|\s*expandedVoiceMessageId === item\.id/)
   assert.match(chat, /onPress=\{\(\) => playMessageVoice\(item\)\}/)
   const revealControl = chat.slice(
     chat.indexOf("const toggleMessageVoiceControl"),
@@ -118,9 +118,9 @@ test("a one-shot voice reply stays behind typing dots, then renders as voice wit
   assert.match(requestedReplyBlock, /setMessages\(\(prev\) => upsertCloudMessage\(prev, voiceMessage\)\)/)
   assert.match(requestedReplyBlock, /finally \{\s*setIsTyping\(false\)/)
   assert.match(chat, /voiceAsset\?\.presentation === "voice_reply"/)
-  assert.match(chat, /isVoiceReply \|\| expandedVoiceMessageId === item\.id/)
+  assert.match(chat, /isVoiceReply \|\|\s*expandedVoiceMessageId === item\.id/)
   assert.match(chat, /options: \["取消", isRevealed \? "收起文字" : "转文字"\]/)
-  assert.match(chat, /isVoiceReply && isVoiceTranscriptRevealed && !!item\.text/)
+  assert.match(chat, /isVoiceReply &&\s*isVoiceTranscriptRevealed &&\s*!!item\.text/)
   assert.match(chat, /styles\.assistantVoiceTranscript/)
   assert.match(chat, /normalizeVoiceTranscriptText\(item\.text\)/)
   assert.match(chat, /\{isTyping && <TypingDots \/>\}/)

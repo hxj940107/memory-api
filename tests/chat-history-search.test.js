@@ -32,7 +32,7 @@ test("a result opens real messages on both sides of the target", () => {
   assert.match(searchSource, /searchQuery: normalizedQuery/)
   assert.match(chatSource, /action: "context", target_id: locatingMessageId/)
   assert.match(chatSource, /stableMessageId === locatedMessageId/)
-  assert.match(chatSource, /scrollRef\.current\?\.scrollTo\(\{ y: targetY/)
+  assert.match(chatSource, /scrollRef\.current\?\.scrollTo\(\{\s*y: targetY/)
   assert.match(chatSource, /historyLocationModeRef/)
   assert.match(chatSource, /new Map\(/)
   assert.match(chatSource, /isSearchTarget && targetSearchQuery/)
@@ -44,7 +44,7 @@ test("a result opens real messages on both sides of the target", () => {
   assert.match(chatSource, /canDismissLocationHighlightRef\.current/)
   assert.doesNotMatch(chatSource, /backgroundColor: "rgba\(20, 90, 180, 0\.38\)"/)
   assert.match(chatSource, /回到最新消息/)
-  assert.match(chatSource, /if \(!id \|\| historyLocationModeRef\.current/)
+  assert.match(chatSource, /if \(\s*!id \|\|\s*historyLocationModeRef\.current/)
 })
 
 test("returning from located history smoothly scrolls the current chat to the latest message", () => {
