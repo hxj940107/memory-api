@@ -101,17 +101,33 @@ export default function Index() {
   useEffect(() => {
     let isActive = true;
 
-    syncClientPreferences().catch((error) => {
-      console.log("Welcome preferences sync failed:", error);
-    }).then(() => Promise.all([
-      getAccountSettings(),
-      getAccountPassword(),
-    ])).then(([account, accountPassword]) => {
+    const initializeLocalAuth = async () => {
+      const [accountResult, passwordResult] = await Promise.allSettled([
+        getAccountSettings(),
+        getAccountPassword(),
+      ]);
+
       if (!isActive) {
         return;
       }
 
-      setDisplayName(account.displayName);
+      if (passwordResult.status === 'rejected') {
+        console.log("Welcome password initialization failed:", passwordResult.reason);
+        setError('本地密码读取失败，请重新打开 App 再试');
+        setUnlockReady(true);
+        return;
+      }
+
+      const accountPassword = passwordResult.value;
+      const account = accountResult.status === 'fulfilled'
+        ? accountResult.value
+        : null;
+
+      if (accountResult.status === 'rejected') {
+        console.log("Welcome account initialization failed:", accountResult.reason);
+      }
+
+      setDisplayName(account?.displayName ?? DEFAULT_ACCOUNT_NAME);
       setSavedPassword(accountPassword);
 
       if (!accountPassword) {
@@ -119,7 +135,7 @@ export default function Index() {
         return;
       }
 
-      if (account.faceIdEnabled) {
+      if (account?.faceIdEnabled) {
         setFaceIdAttempting(true);
         LocalAuthentication.authenticateAsync({
           promptMessage: "解锁小C",
@@ -134,6 +150,10 @@ export default function Index() {
               setUnlockReady(true);
             }
           })
+          .catch((error) => {
+            console.log("Welcome Face ID initialization failed:", error);
+            if (isActive) setUnlockReady(true);
+          })
           .finally(() => {
             if (isActive) setFaceIdAttempting(false);
           });
@@ -141,6 +161,17 @@ export default function Index() {
       }
 
       setUnlockReady(true);
+    };
+
+    void initializeLocalAuth().catch((error) => {
+      console.log("Welcome local authentication initialization failed:", error);
+      if (!isActive) return;
+      setError('本地账户读取失败，请重新打开 App 再试');
+      setUnlockReady(true);
+    });
+
+    void syncClientPreferences().catch((error) => {
+      console.log("Welcome preferences sync failed:", error);
     });
 
     return () => {

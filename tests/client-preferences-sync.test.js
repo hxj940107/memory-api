@@ -50,3 +50,26 @@ test("Face ID and password unlock share the same personalized welcome", () => {
   assert.match(account, /DEFAULT_ACCOUNT_NAME = "大天使长"/)
   assert.match(account, /LEGACY_DEFAULT_ACCOUNT_NAME = "小天使"/)
 })
+
+test("welcome initialization never waits for cloud preferences and always exits its pending state", () => {
+  const welcome = readFileSync("mobile/XiaoC/src/app/index.tsx", "utf8")
+
+  assert.match(
+    welcome,
+    /const initializeLocalAuth = async \(\) => \{[\s\S]*Promise\.allSettled\(\[[\s\S]*getAccountSettings\(\)[\s\S]*getAccountPassword\(\)/,
+  )
+  assert.match(welcome, /void initializeLocalAuth\(\)\.catch\([\s\S]*setUnlockReady\(true\)/)
+  assert.match(welcome, /void syncClientPreferences\(\)\.catch/)
+  assert.doesNotMatch(
+    welcome,
+    /syncClientPreferences\(\)[\s\S]{0,300}\.then\([\s\S]{0,300}getAccountSettings\(\)/,
+  )
+  assert.match(
+    welcome,
+    /passwordResult\.status === 'rejected'[\s\S]*setUnlockReady\(true\)/,
+  )
+  assert.match(
+    welcome,
+    /LocalAuthentication\.authenticateAsync\([\s\S]*\.catch\([\s\S]*setUnlockReady\(true\)/,
+  )
+})
