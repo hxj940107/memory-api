@@ -815,7 +815,7 @@ export default function ChatScreen() {
     downloadFirst: true,
   });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
-  const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const audioRecorderState = useAudioRecorderState(audioRecorder, 100);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -2205,7 +2205,9 @@ export default function ChatScreen() {
     try {
       audioPlayer.pause();
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await audioRecorder.prepareToRecordAsync();
+      // Supplying the preset creates a fresh native AVAudioRecorder and file URL.
+      // Re-preparing without options can reuse the previous iOS recording file.
+      await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
       if (!recordingIntentRef.current) return;
       recordingStartedAtRef.current = Date.now();
       audioRecorder.record({ forDuration: MAX_USER_VOICE_SECONDS });

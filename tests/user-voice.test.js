@@ -194,7 +194,8 @@ test("a missing provider duration falls back to the recorder duration", async ()
 
 test("mobile voice input switches modes before the large hold area records and sends", () => {
   const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
-  assert.match(chat, /useAudioRecorder\(RecordingPresets\.LOW_QUALITY\)/)
+  assert.match(chat, /useAudioRecorder\(RecordingPresets\.HIGH_QUALITY\)/)
+  assert.match(chat, /prepareToRecordAsync\(RecordingPresets\.HIGH_QUALITY\)/)
   assert.match(chat, /const \[voiceInputMode, setVoiceInputMode\]/)
   assert.match(chat, /voiceInputMode \? "切换到文字输入" : "切换到语音输入"/)
   assert.match(chat, /styles\.voiceHoldButton/)
