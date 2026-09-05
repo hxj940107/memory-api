@@ -61,6 +61,12 @@
         {
           "microphonePermission": "允许小C使用麦克风，接收你发来的语音。"
         }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "允许小C使用麦克风，接收你发来的语音。"
+        }
       ]
     ],
     "experiments": {
