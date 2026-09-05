@@ -2,12 +2,12 @@
 
 ## Security rollout order
 
-Private API authentication is deliberately fail-open until the production flag is enabled. Keep this order so the currently installed development client is not locked out.
+Private API authentication is deliberately fail-open until the production flag is enabled. Build 10 was not confirmed to contain the new production token, so keep this order to avoid locking out the installed App.
 
 1. Generate one random token of at least 32 bytes. Never commit it.
-2. Set the same value as `XIAOC_APP_TOKEN` in Vercel Production and as `EXPO_PUBLIC_XIAOC_APP_TOKEN` in the EAS `preview` environment.
+2. Set the same value as `XIAOC_APP_TOKEN` in Vercel Production and as `EXPO_PUBLIC_XIAOC_APP_TOKEN` in the EAS `production` environment.
 3. Deploy the backend with `XIAOC_APP_AUTH_ENABLED` missing or `false`.
-4. Build and install the `preview` iOS app. Confirm chat, history, settings, images, Push registration, and proactive worker execution.
+4. Build and install a new Production/TestFlight binary using the EAS `production` environment. Confirm startup, chat, history, settings, images, voice, Push registration, and API access before enabling strict auth.
 5. Set Vercel Production `XIAOC_APP_AUTH_ENABLED=true` and redeploy.
 6. Confirm an authenticated App request succeeds, an unauthenticated request returns `401`, and Vercel Cron continues to execute with `CRON_SECRET`.
 

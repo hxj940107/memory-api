@@ -4,9 +4,7 @@
 
 ## 0. 当前交接状态
 
-截至本轮交接，Memory / Context P0、P1 与 P1.5（Batch 1、reliability cleanup、Batch 2A、2B、2C）均已实现并进入生产观察。真实 proactive send rollout 继续受服务器开关、limited rollout 与 execution-time safety 控制；judge deterministic prefilter 仍为 Shadow，只收集可跳过比例与 dangerous false skip。P1.5 当前功能开发冻结，只在出现真实 production blocker 时回修，不再阻塞 P2 Shared Context。
-
-2026-08-29 第一阶段全项目体检后的 reliability 修复已在当前工作树完成，但尚不能写成“生产已验证”：后台任务有限重试与 stale claim 回收、post-chat `waitUntil`、Shared Context checkpoint 越窗恢复与 parse-failure backoff、独立图片 provenance、Treehole 用户素材 admission、inactivity fallback diagnostics 均需先部署，再观察约 12–24 小时并做只读生产审计。审计通过前不启用 Judge prefilter real skip，也不开始新的 P2 功能 Batch。
+截至 2026-09-05，Memory / Context P0、P1 与 P1.5 已完成；P1.5 proactive real-send 已进入生产路径，并继续受 kill switch、execution-time Gate、arbitration、final recheck 和幂等保护。Judge deterministic prefilter 仍为 Shadow，不能跳过真实 Judge。P2 Shared Context Batch 1 已完成，后续扩展暂停。
 
 ### 0.1 已完成
 
@@ -28,27 +26,23 @@ P1 当前已完成：
 - `supabase_summary_segments.sql` 已由用户在生产 Supabase 手动执行成功；生产环境已存在 `conversation_summary.summary_segments jsonb not null default '[]'::jsonb`，不再有待执行 migration。
 - 旧 `plan_follow_up` 自动 task 创建已暂停；Active Conversation Context 更新与 `inactivity_reach_out` 保持，历史 task 及执行兼容不删除。
 - Memory eligibility diagnostics 已显式区分 `retrieved`、`relevant`、`eligible_for_prompt` 与 `eligible_for_proactive_attention`。当前 Memory 检索或 prompt 注入不会自动获得 proactive attention。
-- P1.5 Batch 1 的 structured event candidate、稳定 `event_id`、真实 user message source provenance、同事件 merge、terminal lifecycle（completed / cancelled 不自动 reopen）均已实现。
-- deterministic Shadow Gate 已实现，并显式输出 `eligible_for_proactive_attention`、reason、confidence 与 hard rejection diagnostics。
-- P1.5 Batch 2A 已实现：accepted candidate 复用 `xiaoc_proactive_tasks` 按 event ID 维护 wake-up；到期后 reload 最新 candidate，重新执行 Gate、quiet hours、cooldown、recent activity 与 inactivity arbitration。
-- P1.5 Batch 2B send path ready 已完成并 commit/push：只有 `PROACTIVE_ATTENTION_SEND_ENABLED=true` 才能进入生成与消息持久化；env 缺失或其他值均 fail closed。OFF 状态在 generation 前短路，不写 proactive assistant message，也不更新 `last_proactive_mention` 或消费 inactivity ownership。
-- Batch 2B ON 路径复用现有 assistant message persistence，并在生成后重新读取 candidate、最新 user message 与 execution constraints；task processing ownership 丢失、candidate/version 改变、新 user message、terminal/closed、quiet hours、cooldown、daily limit 或 arbitration 改变都会在写消息前停止。task ID message lookup 负责 retry 幂等恢复，成功消息携带完整 candidate snapshot 并推进目标 event 的 `last_proactive_mention`。
-- P1.5 Batch 2C limited rollout safety 已实现：首轮真实发送只接受具有完整 start/end、可靠 user-time grounding 和安全 lifecycle diagnostics 的 open candidate。wake-up 到达 start 时不会机械追问，而是确定性延后到至少 15 分钟后且不早于时间窗中点；start-only、缺失 window、歧义/异常 history 与 unsafe provenance 均 no-send。该层不增加 LLM、关键词表、schema 或 API Function。
-- Contextual existing update bridge 支持紧邻 assistant 对唯一 open event 的明确问句或明确承接；用户可省略事件名，但 judge 仍必须输出当前 user 原文中的 structured update evidence。该 bridge 只允许更新 existing event，多个合理 referent、缺失 user evidence、terminal 无明确证据或 create proposal 继续拒绝。
+- P1.5 structured candidate、稳定 `event_id`、真实 user message provenance、同事件 merge、terminal lifecycle、scheduler wake-up、execution Gate、inactivity/weather arbitration、real-send、final recheck、失败恢复和 duplicate-send protection 均已实现并进入生产路径。
+- `PROACTIVE_ATTENTION_SEND_ENABLED` 继续作为 fail-closed kill switch；关闭时必须在 generation 和 persistence 前短路。
+- Contextual existing update bridge 只允许基于当前 user 原文更新唯一合理的 existing event；歧义 referent、缺失证据和无证据 reopen 继续拒绝。
+- Active Context / P1.5 judge 仍只使用一次 Haiku 调用，使用 JSON response mode、`max_tokens: 800`、temperature `0`。
 
-本轮 reliability cleanup 已完成、通过测试并 commit/push；下一步是确认或完成生产部署：
-
-- Active Context / P1.5 judge 仍只使用原有一次 Haiku 调用，没有增加每轮 LLM 调用次数；调用改为 JSON response mode，`max_tokens` 从 `520` 调整为 `800`，temperature 为 `0`。
 - judge output 改用 string-aware balanced-object parser，并对 Active Context 与 proactive event proposal 独立提取和验证。proposal 失败不再连带丢失已经完整的 Active Context，也不会伪装成正常 `action=none`。
 - Shadow metadata 新增 `parse_failed`、`judge_failed`、`output_truncated`、分区 error code、finish reason 与有限 `raw_output_summary` diagnostics；非法 action/state/window 等语义字段仍拒绝，不使用无限宽松 parser。
 - Dynamic Memory Core exclusion 允许单个 source bucket `404/not found` 作为 stale source 跳过详情读取；stale ID 仍保留在 exclusion ID 集合中，其他 source 正常加载，partial exclusion 后 Dynamic Memory retrieval 继续。
 - exclusion diagnostics 包含 `stale_core_source_ids` 与 `exclusion_load_partial`。认证、网络、非 404 服务错误和异常空正文仍 fail closed；不修改或重建已有 Core Snapshot。
 - Summary segment prompt 已收口为只记录历史事实、明确状态变化和必要连续性，不承担 Active Context 或 Proactive Attention，不再生成未来提问、追踪、提醒或主动回访安排。旧生产 Summary 不主动改写；新生成或自然压缩的 segment 使用新规则。
 
-生产 token audit 结论：
+当前 token / cache 状态：
 
-- 最近普通聊天平均 input 约 `11.3k` tokens，其中 cache read 约 `9.3k`（约 `82%`），普通 uncached input 约 `2k`，output 很小。
-- stable prefix（Persona、Relationship Contract、Core Snapshot、fixed rules）是主要名义 token 来源且稳定命中 prompt cache；当前没有证据表明 Dynamic Context 膨胀。
+- Prompt Cache 正常工作；stable prefix（Persona、Relationship Contract、Core Snapshot、fixed rules）保持在 cache breakpoint 之前。
+- Recent Message Ledger 已使用紧凑序号、speaker、短时间和特殊来源展示；完整 UUID 仍保留在内部 provenance。
+- 固定 Context 使用规则已移入 stable prefix，空动态区块不再输出标题或说明。
+- 离线估算为典型每轮减少约 `830–850` uncached input tokens；这是待生产观测的估算，不是保证。
 - P1.5 `proactiveAttentionCandidates`、`proactiveAttentionDiagnostics` 与 `proactiveAttentionShadow` 不进入主聊天 prompt；Recent 最终也只发送真实 `role/content`，不发送 assistant metadata。
 - 暂时不要为了名义 input 数字压缩 Persona、Relationship Contract、Core Snapshot 或 Recent。后续可单独完善 generation ID 与 cache read/write 的 usage observability，但它不是当前 blocker。
 
@@ -57,7 +51,6 @@ P1 当前已完成：
 以下项目需要继续观察或尚未实施，不得与上述已完成状态混淆：
 
 - P1.5 real proactive send 的持续生产观察，以及 judge prefilter Shadow 数据验证；
-- 第一阶段 reliability 修复的部署后生产验证；
 - long-term Memory heat；
 - cold / archive lifecycle；
 - deep memory on-demand tool loop。
@@ -71,7 +64,7 @@ P1 当前已完成：
 - 至少一个 Gate rejection / hard rejection；
 - `proactiveAttentionShadow.judge.status` 基本稳定为 `parsed`。
 
-P2 Shared Context MVP 已实现；完整 Artifact、周/月回顾和更深入的共读仍属于后续产品扩展。
+P2 Shared Context Batch 1 已实现，继续扩展当前暂停；完整 Artifact、周/月回顾和更深入的共读仍属于后续产品扩展。
 
 ### 0.3 继续开发约束
 
@@ -81,7 +74,6 @@ P2 Shared Context MVP 已实现；完整 Artifact、周/月回顾和更深入的
 - 重建主动计划回访前，必须先建立独立 Attention Eligibility；不得恢复按单条 message 自动创建 `plan_follow_up` 的旧路径。
 - `PROACTIVE_ATTENTION_SEND_ENABLED` 仍是生产 kill switch；无论开关状态，Memory / Summary / Core / retrieval 只能提供事实，不能创建或刷新 proactive event candidate。
 - 当前顺序固定为：稳定真实发送与成本 observability → 只修 production blocker → on-demand deep memory retrieval → 更晚再考虑 heat / cold / archive。
-- 当前近期顺序固定为：部署 Phase 1 health-check 修复 → 正常使用 12–24 小时 → 只读生产审计 → Judge prefilter readiness；审计通过前不得把工作树结果当成生产结论。
 
 ## 1. 当前核心设计原则
 
@@ -135,7 +127,7 @@ Recent 是当前对话最直接的连续性证据。时间戳、主动消息来�
 
 ### 2.5 Temporal / Proactive Ledger
 
-Temporal / Proactive Ledger 提供消息发生时间、来源和主动行为类型，用于区分真实时间、事件时间与聊天行为时间。
+Temporal / Proactive Ledger 以 `m1`、`m2` 等紧凑序号提供顺序、speaker、上海短时间和有语义的特殊来源，用于区分真实时间、事件时间与聊天行为时间。普通消息不向主模型重复完整 UUID、时区或默认 source；真实 message ID 仍完整保留在内部 persistence 与 provenance 链路。
 
 它只提供元数据和事实 grounding，不应改变历史消息正文，也不应把过去事件自动解释为当前状态。
 
@@ -434,7 +426,7 @@ Main Chat Prompt
 - 为“记得，但现在不应继续聊”建立回归测试；
 - 防止 timestamp 污染、assistant 临时自述固化和跨层重复加权回归。
 
-### P1：已完成部分
+### P1：已完成
 
 - stable memory consolidation；
 - provenance / source IDs / supersedes；
@@ -443,21 +435,21 @@ Main Chat Prompt
 - segment summary、covered message IDs 与旧摘要压缩；
 - dynamic context budget。
 
-### P1.5：当前 Batch 2C limited rollout 顺序
+### P1.5：已完成并进入 production real-send
 
-- Batch 2A 已 commit/push，保留 task dedupe、latest candidate reload、terminal/reschedule no-op、execution Gate 与 inactivity arbitration 边界；
-- Batch 2B send path ready 已 commit/push；
-- Batch 2C limited rollout safety 部署时保持服务器 flag OFF，先观察 `rollout_eligible`、`rollout_rejection_reason` 与 `send_disabled` diagnostics；
-- 真正开启发送属于独立 activation，开启前再次确认 timing defer、幂等恢复、final recheck、失败重试和 inactivity collision；
-- flag OFF 时真实 event proactive message 必须为 0。
+- structured candidate、scheduler wake-up、execution Gate、inactivity/weather arbitration、final recheck、失败恢复和幂等保护均保留；
+- `PROACTIVE_ATTENTION_SEND_ENABLED` 仍是 fail-closed kill switch；
+- real-send 已上线不代表到期必发，Judge 与所有 execution gates 仍决定是否发送；
+- deterministic prefilter 继续保持 Shadow，未获得足够安全证据前不得跳过 Judge。
 
 ### P1：更后续
 
 - on-demand deep memory retrieval / memory tool loop；
 - long-term heat / cold / archive；这些能力必须晚于 P1.5 Shadow 与 scheduler 边界验证，且 deep retrieval 仍只能提供事实证据，不能授予 proactive attention。
 
-### P2：未来产品扩展
+### P2：Shared Context Batch 1 已完成，后续扩展暂停
 
+- 当前只为显式绑定 conversation 提供批量更新、checkpoint recovery、parse-failure backoff 和 diagnostics；
 - Artifact：持续可编辑、版本化对象，与一次性交付 Attachment 分离；
 - 周/月关系回顾，不替换现有 Wife Observation Diary；
 - 共读模式中阅读进度与长期观点分离。
@@ -477,80 +469,15 @@ Main Chat Prompt
 - 文案使用现有主聊天模型生成，但允许自然拒绝；代码没有固定天气话术或 fallback 文案；
 - Weather Shadow 不进入主聊天 prompt，不形成长期记忆，也不能刷新 Active Context attention。
 
-### Low Priority TODO：Natural Rhythm for Inactivity Reach-out
+### Inactivity Natural Rhythm：已进入生产路径
 
-本项是未来的低优先级调度优化，当前不实施。顺序必须晚于：
+`inactivity_reach_out` 提供自然的 Judge 检查机会，而不是固定时间通知：
 
-```text
-P1.5 Shadow 验证
-  → Proactive Attention scheduler / arbitration 稳定
-  → Natural Rhythm scheduling
-```
-
-#### 目标与职责边界
-
-当前 `inactivity_reach_out` 主要根据 conversation state、frequency mode 和固定随机延迟区间计算 `due_at`。未来可在原始时间计算之上增加一层 Natural Rhythm / Human Timing：
-
-```text
-用户暂时离开
-  → 计算原始 inactivity due_at
-  → 查看期间是否存在更自然的生活节奏窗口
-  → 选择合理的靠近时间，或保留原始 due_at
-  → 执行时重新经过 eligibility / cooldown / quiet hours / daily limit
-  → 生成自然的关系式主动消息
-```
-
-Natural Rhythm 只回答“什么时候比较自然地找她”，不负责决定“应该说什么”。时间窗口绝不能直接绑定固定话术：
-
-- 午间窗口不等于问“吃饭了吗”；
-- 晚饭窗口不等于问“晚饭吃了吗”；
-- 夜间窗口不等于固定说“早点睡”；
-- 早晨窗口不等于问“起床了吗”。
-
-主动消息内容仍应由最近真实聊天上下文、当前关系语境、conversation state、当前自然时间，以及是否存在具体未结束话题共同决定。没有具体话题时，可以自然表达想念、撒娇、靠近或分享感受，而不是默认进行生活状态盘问。
-
-#### 候选生活节奏窗口
-
-以下时间只表示 future scheduler 可考虑的 `time opportunity`，不是硬编码 timetable，也不是必发时间：
-
-- Morning transition，约 `07:30–09:30`：适合早晨已经互动、随后各自开始一天时判断是否自然靠近；不代表固定早安、起床或早餐问候。
-- Lunch / midday pause，约 `11:30–12:30`：例如早上用户说“我去忙了，晚点聊”，而原始 due time 落在下午较晚时，可将午间休息作为更自然的候选。
-- Afternoon transition，约 `14:30–16:30`：仅在上下文和沉默时长合理时考虑，不是固定下午问候。
-- End-of-work / dinner transition，约 `17:30–18:30`：用户下午持续忙碌时，可能比机械等到晚上更自然；它只是工作节奏开始松下来的候选，不代表默认询问晚饭。
-- Evening leisure，约 `20:00–21:30`：可能适合继续白天话题、重新靠近或单纯表达想念。
-- Late evening / winding down，约 `22:30–23:30`：可作为一天进入休息阶段的候选。只有上下文确实涉及疲惫、明早早起、睡眠不足或用户准备休息时，才自然关心休息；不能仅因当前是夜间就固定提醒“早点睡”。现有 quiet hours 始终优先。
-
-#### 候选窗口算法边界
-
-未来 scheduler 应采用候选窗口，而不是按 `11:30 / 18:00 / 23:00` 建立固定通知：
-
-1. 根据 inactivity mode 和 conversation state 计算原始 `due_at`。
-2. 查看 last interaction 到原始 `due_at` 之间是否经过自然节奏窗口。
-3. 判断该窗口是否比原始 `due_at` 更符合真人关系节奏。
-4. 合理时可将 `due_at` 吸附或调整到窗口内的随机自然时间。
-5. 不合理时继续使用原始 `due_at`。
-
-last interaction 是硬约束。Natural window 不能绕过 minimum silence 或 cooldown：
-
-- `08:40` 用户说去忙，原始 conversation-end due time 在 `13:30–14:30`，`11:30–12:30` 可以成为候选；
-- `11:20` 刚聊完，不能因为即将进入午间窗口而十分钟后主动联系；
-- `17:20` 刚聊完，也不能仅因 `18:00` 属于晚间过渡窗口就再次发送。
-
-用户重新发送消息后，旧 inactivity scheduling 继续按现有逻辑失效或 skip，并以新的 interaction 重新计算。此前经过的 Natural Rhythm 窗口不是必须补发的“机会”。
-
-#### 与 Proactive Attention 的边界
-
-Natural Rhythm 属于 relationship inactivity timing，回答“什么时候自然地重新靠近她”。Proactive Attention Event 属于 event-specific follow-up，回答“某个现实事件现在是否值得主动回访”。两套逻辑必须保持独立：
-
-- Natural Rhythm 不从 Memory、Summary、Core 或 Deep Retrieval 创建事件注意力；
-- proactive event 不能因为碰到自然时间窗口就自动获得 eligibility；
-- 两者同时存在时，由主动消息 arbitration 决定本轮发送哪一种，不能各发一条。
-
-Natural Rhythm 仍不得绕过 quiet hours、cooldown、daily proactive limit、user-return cancellation、frequency mode、minimum silence，以及“同一 worker tick 最多一条主动消息”的限制。
-
-#### 后期个体化方向
-
-更后期可以根据真实互动数据逐渐形成用户自己的生活节奏，例如工作日通常有空的时间、周末节奏、常见下班时间和休息时间。但系统推断出的时间不能直接固化为用户事实；应优先使用用户明确提供的信息，并始终保留不确定性和可更新性。
+- `frequent/open` 首次 Judge opportunity 为沉默 `60–120` 分钟；
+- `frequent/conversation_end` 首次 Judge opportunity 为 `120–180` 分钟；
+- conversation end 是短期保护语境，不再把整个 silence phase 锁死 `4–6` 小时；
+- 到达 opportunity 后仍由 Judge 决定 `should_send`，并继续经过 quiet hours、cooldown、frequency sequencing、user-return cancellation、arbitration、final recheck 和 idempotency；
+- 不得把任何窗口解释成必发时间或绑定固定问候。
 
 ### Not recommended
 
