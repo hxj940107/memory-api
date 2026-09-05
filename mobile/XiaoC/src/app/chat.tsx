@@ -36,6 +36,8 @@ import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import {
+  AudioQuality,
+  IOSOutputFormat,
   RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
@@ -43,6 +45,7 @@ import {
   useAudioPlayerStatus,
   useAudioRecorder,
   useAudioRecorderState,
+  type RecordingOptions,
 } from "expo-audio";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
@@ -206,8 +209,28 @@ type UserVoiceTranscriptionResponse = {
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_FILE_CHARS = 12000;
 const HISTORY_PAGE_SIZE = 60;
-const MAX_USER_VOICE_SECONDS = 120;
+const MAX_USER_VOICE_SECONDS = 60;
 const USER_VOICE_CANCEL_DISTANCE = 56;
+const USER_VOICE_RECORDING_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  extension: ".wav",
+  sampleRate: 16000,
+  numberOfChannels: 1,
+  bitRate: 256000,
+  android: {
+    extension: ".m4a",
+    outputFormat: "mpeg4",
+    audioEncoder: "aac",
+  },
+  ios: {
+    outputFormat: IOSOutputFormat.LINEARPCM,
+    audioQuality: AudioQuality.HIGH,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+  web: RecordingPresets.HIGH_QUALITY.web,
+};
 const VOICE_WAVE_HEIGHTS = [7, 12, 17, 10, 15, 20, 13, 18, 9, 14, 7];
 const TEXT_FILE_EXTENSIONS = new Set([
   "txt",
@@ -815,7 +838,7 @@ export default function ChatScreen() {
     downloadFirst: true,
   });
   const audioStatus = useAudioPlayerStatus(audioPlayer);
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const audioRecorder = useAudioRecorder(USER_VOICE_RECORDING_OPTIONS);
   const audioRecorderState = useAudioRecorderState(audioRecorder, 100);
   const recordingIntentRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -2167,7 +2190,7 @@ export default function ChatScreen() {
         user_id: APP_USER_ID,
         conversation_id: id,
         audio_base64: audioBase64,
-        mime_type: "audio/mp4",
+        mime_type: Platform.OS === "ios" ? "audio/wav" : "audio/mp4",
         duration_seconds: durationSeconds,
       }, { timeoutMs: 45_000 });
       const readyMessage: Message = {
@@ -2205,9 +2228,9 @@ export default function ChatScreen() {
     try {
       audioPlayer.pause();
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      // Supplying the preset creates a fresh native AVAudioRecorder and file URL.
+      // Supplying the options creates a fresh native AVAudioRecorder and file URL.
       // Re-preparing without options can reuse the previous iOS recording file.
-      await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      await audioRecorder.prepareToRecordAsync(USER_VOICE_RECORDING_OPTIONS);
       if (!recordingIntentRef.current) return;
       recordingStartedAtRef.current = Date.now();
       audioRecorder.record({ forDuration: MAX_USER_VOICE_SECONDS });
