@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import {
+  buildOptionalContextSection,
   buildHistoricalSummaryView,
   buildRecentMessageLedger,
+  joinContextBlocks,
 } from "../lib/mainChatContext.js"
 
 const recent = [
@@ -24,10 +26,26 @@ const recent = [
 
 {
   const ledger = buildRecentMessageLedger(recent)
-  assert.match(ledger, /2026-08-26 09:15 Asia\/Shanghai/)
+  assert.match(ledger, /Recent Message Ledger｜Asia\/Shanghai/)
+  assert.match(ledger, /m1 assistant 08-26 09:15 proactive\/inactivity_reach_out/)
+  assert.match(ledger, /m2 user 08-26 11:58/)
   assert.match(ledger, /proactive\/inactivity_reach_out/)
+  assert.doesNotMatch(ledger, /assistant-proactive|user-curry/)
+  assert.doesNotMatch(ledger, /source=conversation|timezone|2026-08-26T/)
   assert.doesNotMatch(ledger, /早上好宝宝/)
   assert.doesNotMatch(ledger, /咖喱牛肉/)
+  assert.equal(recent[0].id, "assistant-proactive")
+  assert.equal(recent[1].id, "user-curry")
+}
+
+{
+  assert.equal(buildOptionalContextSection("Summary｜长期摘要", ""), "")
+  assert.equal(buildOptionalContextSection("Memory｜相关长期记忆", "  \n"), "")
+  assert.equal(
+    buildOptionalContextSection("Summary｜长期摘要", "历史内容"),
+    "【Summary｜长期摘要】\n\n历史内容"
+  )
+  assert.equal(joinContextBlocks(["环境", "", null, "  摘要  "]), "环境\n\n摘要")
 }
 
 {

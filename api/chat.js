@@ -58,8 +58,10 @@ import {
   resolveActiveConversationContext,
 } from "../lib/activeConversationContext.js"
 import {
+  buildOptionalContextSection,
   buildHistoricalSummaryView,
   buildRecentMessageLedger,
+  joinContextBlocks,
 } from "../lib/mainChatContext.js"
 import {
   buildCoreMemoryExclusionIds,
@@ -3431,61 +3433,51 @@ Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私
 
 【Voice Modality｜语音消息边界】
 当消息被标注为语音时，你知道她选择了亲口说出这段话，而不是键盘输入。语音形式只是对话背景，不要求每次在回复中提及，也不要固定说“收到语音”或“听到了”。
-当前系统只提供语音转写和时长，没有可靠的声学分析。除非转写内容明确说明，否则不得声称听出了她的音色、语速、停顿、笑声、哭腔、疲惫、撒娇、音量或其他情绪声音特征。可以自然回应“她把这句话说出口了”这件事，但不能虚构没有提供的听觉细节。`
-
-const dynamicPromptContext = `${environmentContext}
-
-${imageUnderstandingContext}
-
-${recentMessageLedger}
+当前系统只提供语音转写和时长，没有可靠的声学分析。除非转写内容明确说明，否则不得声称听出了她的音色、语速、停顿、笑声、哭腔、疲惫、撒娇、音量或其他情绪声音特征。可以自然回应“她把这句话说出口了”这件事，但不能虚构没有提供的听觉细节。
 
 【Web Search Policy｜联网边界】
-${webSearch
-  ? "本轮已提供联网结果。只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答；不要输出搜索报告、来源清单或检索过程。"
-  : `普通聊天和可凭稳定知识回答的问题不要联网。
+普通聊天和可凭稳定知识回答的问题不要联网。
 只有当当前问题依赖会变化的外部事实，而且你确实无法可靠确认时，才只输出一行：[[WEB_SEARCH_NEEDED: 精简搜索词]]
-不要附加其他文字，不要把聊天历史、私人记忆、称呼或人格信息写进搜索词。`}
+不要附加其他文字，不要把聊天历史、私人记忆、称呼或人格信息写进搜索词。
 
+【Context Layers｜上下文使用边界】
+Summary 是 recent raw window 之前的历史连续性背景，不是当前注意力列表；与 Recent Messages 仍有重叠的内容不能因此获得额外重要性。
+Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。`
 
-【User Profile｜用户长期事实】
-
-${stableMemory.join("\n")}
-
-
-【Summary｜长期摘要】
-
-${summaryMemory}
-
-这是 recent raw window 之前的历史连续性背景，不是当前注意力列表；与 Recent Messages 仍有重叠的内容不能因此获得额外重要性。
-
-
-【Memory｜相关长期记忆】
-
-${trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")}
-
-Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。
-
-${activeConversationContextPrompt}
-
-${sharedContextPrompt}
-
-${diaryContext
-  ? `【Diary Source｜本次写观察日记可参考的近期素材】
+const dynamicPromptContext = joinContextBlocks([
+  environmentContext,
+  imageUnderstandingContext,
+  recentMessageLedger,
+  webSearch
+    ? buildOptionalContextSection(
+        "Web Search｜本轮联网结果使用方式",
+        "本轮已提供联网结果。只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答；不要输出搜索报告、来源清单或检索过程。"
+      )
+    : "",
+  buildOptionalContextSection(
+    "User Profile｜用户长期事实",
+    stableMemory.join("\n")
+  ),
+  buildOptionalContextSection("Summary｜长期摘要", summaryMemory),
+  buildOptionalContextSection(
+    "Memory｜相关长期记忆",
+    trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")
+  ),
+  activeConversationContextPrompt,
+  sharedContextPrompt,
+  diaryContext
+    ? `【Diary Source｜本次写观察日记可参考的近期素材】
 以下内容只在用户明确邀请你写 diary / 观察日记时使用。
 它是近期对话素材，不是逐字必须覆盖的清单。
 请优先捕捉关系、情绪、细节和她今天的状态。
 说话人已标注：“她”是用户，“小C”是你。
 
 ${diaryContext}`
-  : ""}
-
-${attributionCorrectionContext}
-
-${diaryStyleContext}
-
-${buildGeneratedFileInstruction(generatedFileRequest)}
-
-`
+    : "",
+  attributionCorrectionContext,
+  diaryStyleContext,
+  buildGeneratedFileInstruction(generatedFileRequest),
+])
 
 const cachedPromptMessages = buildCachedPromptMessages({
   persona: `

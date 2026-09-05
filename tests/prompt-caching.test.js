@@ -83,13 +83,21 @@ import {
   assert.match(dynamicSource, /stableMemory/)
   assert.match(dynamicSource, /diaryContext/)
   assert.match(dynamicSource, /webSearch/)
+  assert.match(fixedSource, /【Context Layers｜上下文使用边界】/)
+  assert.match(fixedSource, /Summary 是 recent raw window 之前的历史连续性背景/)
+  assert.match(fixedSource, /Stable Memory、Memory 与 Core Memory 都只是背景事实/)
+  assert.match(fixedSource, /【Web Search Policy｜联网边界】/)
+  assert.doesNotMatch(dynamicSource, /Summary 是 recent raw window 之前的历史连续性背景/)
+  assert.doesNotMatch(dynamicSource, /Stable Memory、Memory 与 Core Memory 都只是背景事实/)
+  assert.doesNotMatch(fixedSource, /new Date|randomUUID|message\.id|created_at|recentMessageLedger/)
+  assert.match(dynamicSource, /buildOptionalContextSection\("Summary｜长期摘要", summaryMemory\)/)
+  assert.match(dynamicSource, /joinContextBlocks\(\[/)
   assert.match(
     chat,
     /const mainChatOptions = buildGeneratedFileChatOptions\(generatedFileRequest, cid\)/
   )
   assert.match(chat, /callLLM\(messages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)
-  assert.match(chat, /dynamicPromptContext = `\$\{environmentContext\}/)
   assert.match(chat, /buildCachedPromptMessages\(\{/)
   assert.match(chat, /relationshipContract: relationshipPrompt/)
   assert.doesNotMatch(chat, /callLLM\([\s\S]{0,300}AI_MODELS\.imageDescription,[\s\S]{0,100}session_id/)

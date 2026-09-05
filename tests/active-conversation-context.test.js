@@ -251,7 +251,7 @@ const exam = {
 
   assert.match(chat, /metadata\?\.activeConversationContext/)
   assert.match(chat, /activeConversationContext: normalized/)
-  assert.match(chat, /\$\{activeConversationContextPrompt\}/)
+  assert.match(chat, /\n  activeConversationContextPrompt,/)
   assert.match(chat, /previous_active_context: activeConversationContext/)
   assert.match(chat, /persist_active_context: canPersistActiveConversationContext/)
   assert.match(chat, /if \(persist_active_context\)/)
