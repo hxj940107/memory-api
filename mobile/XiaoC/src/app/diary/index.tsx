@@ -246,12 +246,13 @@ export default function ObservationDiaryScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backText}>‹</Text>
-        </Pressable>
-
-        <View style={styles.headerLine}>
-          <Text style={styles.gentleLine}>关于她，我都想记得</Text>
+        <View style={styles.headerSide}>
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.headerTitle}>观察日记</Text>
+        <View style={[styles.headerSide, styles.headerSideRight]}>
           <Pressable
             style={({ pressed }) => [
               styles.writeButton,
@@ -379,7 +380,18 @@ const styles = StyleSheet.create({
   header: {
     paddingTop: 58,
     paddingHorizontal: 24,
-    paddingBottom: 10,
+    paddingBottom: 18,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  headerSide: {
+    width: 72,
+    alignItems: "flex-start",
+  },
+
+  headerSideRight: {
+    alignItems: "flex-end",
   },
 
   backButton: {
@@ -389,7 +401,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(120,120,128,0.08)",
-    marginBottom: 26,
   },
 
   backText: {
@@ -398,17 +409,13 @@ const styles = StyleSheet.create({
     color: "#555",
   },
 
-  gentleLine: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: "#8A8A8F",
-  },
-
-  headerLine: {
-    paddingHorizontal: 2,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "500",
+    color: "#4A4541",
   },
 
   writeButton: {
