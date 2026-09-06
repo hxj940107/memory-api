@@ -8,6 +8,8 @@ import {
 
 const api = readFileSync("api/user-state.js", "utf8")
 const state = readFileSync("mobile/XiaoC/src/lib/favoritesState.ts", "utf8")
+const screen = readFileSync("mobile/XiaoC/src/app/favorites.tsx", "utf8")
+const apiConfig = readFileSync("mobile/XiaoC/src/config/api.ts", "utf8")
 
 const favorite = (id, text = id) => ({
   id,
@@ -18,7 +20,7 @@ const favorite = (id, text = id) => ({
 const identityOf = item => `${item.role}:${item.text.replace(/\s+/g, " ").trim()}`
 
 function harness({ local = [], migrated = false, fetchResponse, mergeResponse }) {
-  const calls = { fetched: 0, merged: [], saved: [], marked: 0 }
+  const calls = { fetched: 0, merged: [], saved: [], marked: 0, debug: [] }
   return {
     calls,
     run: () => syncFavoritesForPage({
@@ -41,9 +43,27 @@ function harness({ local = [], migrated = false, fetchResponse, mergeResponse })
       markMigrationComplete: async () => {
         calls.marked += 1
       },
+      debug: (field, value) => calls.debug.push([field, value]),
     }),
   }
 }
+
+test("Favorites screen focus enters the complete cloud sync path", () => {
+  assert.match(screen, /useFocusEffect/)
+  assert.match(screen, /logFavoritesPageMounted\(\)/)
+  assert.match(screen, /void loadFavorites\(\)/)
+  assert.match(screen, /setFavorites\(await getFavorites\(\)\)/)
+  assert.match(state, /favorites-debug-20260906/)
+  assert.match(state, /const FAVORITES_KEY = "xiaoc_favorites"/)
+})
+
+test("Favorites cloud sync uses the canonical production API resolver", () => {
+  assert.match(apiConfig, /API_BASE_URL = "https:\/\/memory-api-beta\.vercel\.app"/)
+  assert.match(state, /apiJson<FavoritesResponse>\("\/api\/user-state"/)
+  assert.match(state, /postJson<FavoritesResponse>\("\/api\/user-state"/)
+  assert.match(state, /action: "merge-favorites"/)
+  assert.match(state, /user_id: APP_USER_ID/)
+})
 
 test("favorites reuse user-state without adding a serverless function", () => {
   assert.match(api, /action === "favorites"/)
@@ -76,6 +96,8 @@ test("an invalid v2 flag self-heals when cloud favorites are missing", async () 
   assert.deepEqual(calls.merged, [local])
   assert.deepEqual(calls.saved, [local])
   assert.equal(calls.marked, 1)
+  assert.ok(calls.debug.some(([field, value]) => field === "submitted_count" && value === 2))
+  assert.ok(calls.debug.some(([field, value]) => field === "migration_verified" && value === true))
 })
 
 test("an invalid v2 flag self-heals when cloud favorites are empty", async () => {

@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import {
   Alert,
   FlatList,
@@ -9,12 +9,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import {
   deleteFavorite,
   FavoriteItem,
   getFavorites,
+  logFavoritesPageMounted,
 } from "../lib/favoritesState";
 import { MessageMarkdown } from "../components/MessageMarkdown";
 
@@ -41,13 +42,14 @@ export default function FavoritesScreen() {
     useState<FavoriteItem | null>(null);
   const longPressHandledRef = useRef(false);
 
-  useEffect(() => {
-    loadFavorites();
+  const loadFavorites = useCallback(async () => {
+    setFavorites(await getFavorites());
   }, []);
 
-  const loadFavorites = async () => {
-    setFavorites(await getFavorites());
-  };
+  useFocusEffect(useCallback(() => {
+    logFavoritesPageMounted();
+    void loadFavorites();
+  }, [loadFavorites]));
 
   const confirmDeleteFavorite = (favorite: FavoriteItem) => {
     Alert.alert("取消收藏？", "这条收藏会从这里移除。", [

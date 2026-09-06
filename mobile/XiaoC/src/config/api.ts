@@ -41,9 +41,16 @@ export async function apiJson<T>(
   options?: RequestInit & {
     query?: Record<string, QueryValue>;
     timeoutMs?: number;
+    onResponseStatus?: (status: number) => void;
   },
 ): Promise<T> {
-  const { query, timeoutMs = 20000, signal, ...fetchOptions } = options || {};
+  const {
+    query,
+    timeoutMs = 20000,
+    onResponseStatus,
+    signal,
+    ...fetchOptions
+  } = options || {};
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
@@ -67,6 +74,7 @@ export async function apiJson<T>(
       headers,
       signal: controller.signal,
     });
+    onResponseStatus?.(response.status);
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error("Request timeout");
@@ -96,6 +104,7 @@ export function postJson<T>(
   body: unknown,
   options?: {
     timeoutMs?: number;
+    onResponseStatus?: (status: number) => void;
   },
 ) {
   return apiJson<T>(path, {
@@ -105,5 +114,6 @@ export function postJson<T>(
     },
     body: JSON.stringify(body),
     timeoutMs: options?.timeoutMs,
+    onResponseStatus: options?.onResponseStatus,
   });
 }

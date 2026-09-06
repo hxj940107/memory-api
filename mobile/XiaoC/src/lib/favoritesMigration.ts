@@ -10,6 +10,7 @@ type FavoritesMigrationOptions<T> = {
   mergeCloud: (favorites: T[]) => Promise<FavoritesResponse<T>>;
   saveLocal: (favorites: T[]) => Promise<void>;
   markMigrationComplete: () => Promise<void>;
+  debug?: (field: string, value: string | number | boolean) => void;
 };
 
 function containsEveryLocalFavorite<T>(
@@ -42,7 +43,15 @@ export async function syncFavoritesForPage<T>({
   mergeCloud,
   saveLocal,
   markMigrationComplete,
+  debug,
 }: FavoritesMigrationOptions<T>) {
+  debug?.("migration_entered", true);
+  debug?.("merge_request_sent", false);
+  debug?.("submitted_count", 0);
+  debug?.("response_favorites_count", 0);
+  debug?.("migration_verified", false);
+  debug?.("local_saved", false);
+  debug?.("migration_flag_written", false);
   const cloudResponse = await fetchCloud();
   const cloudFavorites = Array.isArray(cloudResponse.favorites)
     ? mergeFavoriteCollections([cloudResponse.favorites], identityOf)
@@ -52,6 +61,8 @@ export async function syncFavoritesForPage<T>({
 
   if (migrationComplete && cloudFavorites && cloudContainsLocal) {
     await saveLocal(cloudFavorites);
+    debug?.("local_saved", true);
+    debug?.("migration_verified", true);
     return cloudFavorites;
   }
 
@@ -59,16 +70,27 @@ export async function syncFavoritesForPage<T>({
     [localFavorites, cloudFavorites || []],
     identityOf,
   );
+  debug?.("merge_request_sent", true);
+  debug?.("submitted_count", completeLocalCandidate.length);
   const response = await mergeCloud(completeLocalCandidate);
+  debug?.(
+    "response_favorites_count",
+    Array.isArray(response.favorites) ? response.favorites.length : 0,
+  );
   if (!Array.isArray(response.favorites)) {
+    debug?.("migration_verified", false);
     return localFavorites;
   }
   const mergedFavorites = mergeFavoriteCollections([response.favorites], identityOf);
   if (!containsEveryLocalFavorite(completeLocalCandidate, mergedFavorites, identityOf)) {
+    debug?.("migration_verified", false);
     return localFavorites;
   }
 
+  debug?.("migration_verified", true);
   await saveLocal(mergedFavorites);
+  debug?.("local_saved", true);
   await markMigrationComplete();
+  debug?.("migration_flag_written", true);
   return mergedFavorites;
 }
