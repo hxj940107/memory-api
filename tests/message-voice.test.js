@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import test from "node:test"
 
+import { getNextExpandedVoiceMessageId } from "../mobile/XiaoC/src/lib/messageVoice.ts"
+
 import {
   buildMessageVoiceContentHash,
   buildMessageVoiceStoragePath,
@@ -94,6 +96,24 @@ test("mobile voice UI uses a two-step reveal before generating audio", () => {
   assert.doesNotMatch(messageMenu, />听语音</)
   assert.match(chat, /type: "message_voice"[\s\S]*action: "prepare_playback"/)
   assert.match(chat, /status === 409 \? "声音还没选好"/)
+})
+
+test("assistant bubble voice action toggles and switches by message id", () => {
+  assert.equal(getNextExpandedVoiceMessageId(null, "assistant-1"), "assistant-1")
+  assert.equal(getNextExpandedVoiceMessageId("assistant-1", "assistant-1"), null)
+  assert.equal(
+    getNextExpandedVoiceMessageId("assistant-1", "assistant-2"),
+    "assistant-2",
+  )
+
+  const chat = fs.readFileSync("mobile/XiaoC/src/app/chat.tsx", "utf8")
+  const toggle = chat.slice(
+    chat.indexOf("const toggleMessageVoiceControl"),
+    chat.indexOf("const toggleVoiceReplyTranscript"),
+  )
+  assert.match(toggle, /getNextExpandedVoiceMessageId\([\s\S]*expandedVoiceMessageId,[\s\S]*item\.id/)
+  assert.match(toggle, /setExpandedVoiceMessageId\(nextExpandedMessageId\)/)
+  assert.doesNotMatch(toggle, /expandedVoiceMessageId === item\.id\) \{\s*return/)
 })
 
 test("a one-shot voice reply stays behind typing dots, then renders as voice with optional transcript", () => {

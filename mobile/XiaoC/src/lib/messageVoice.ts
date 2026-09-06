@@ -50,3 +50,10 @@ export function formatVoiceDuration(seconds: number | null | undefined) {
   const minutes = Math.floor(safeSeconds / 60);
   return `${minutes}:${String(safeSeconds % 60).padStart(2, "0")}`;
 }
+
+export function getNextExpandedVoiceMessageId(
+  currentMessageId: string | null,
+  pressedMessageId: string,
+) {
+  return currentMessageId === pressedMessageId ? null : pressedMessageId;
+}

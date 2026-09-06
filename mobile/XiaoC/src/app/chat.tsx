@@ -89,6 +89,7 @@ import {
 import { stageSharedAlbumImport } from "../lib/sharedAlbumImportDraft";
 import {
   formatVoiceDuration,
+  getNextExpandedVoiceMessageId,
   normalizeMessageVoiceAsset,
   type MessageVoiceAsset,
 } from "../lib/messageVoice";
@@ -1465,12 +1466,12 @@ export default function ChatScreen() {
     if (!canOfferMessageVoice(item) || !item) return;
     if (voicePreparingId === item.id) return;
 
-    if (expandedVoiceMessageId === item.id) {
-      return;
-    }
-
+    const nextExpandedMessageId = getNextExpandedVoiceMessageId(
+      expandedVoiceMessageId,
+      item.id,
+    );
     if (audioStatus.playing) void audioSoundRef.current?.pauseAsync();
-    setExpandedVoiceMessageId(item.id);
+    setExpandedVoiceMessageId(nextExpandedMessageId);
   };
 
   const toggleVoiceReplyTranscript = (item: Message) => {
