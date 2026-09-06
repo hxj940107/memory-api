@@ -79,6 +79,9 @@ test("client preference patches are merged atomically without cross-field lost u
   const migration = readFileSync("supabase_client_preferences.sql", "utf8")
 
   assert.match(api, /supabase\.rpc\("patch_client_preferences"/)
+  assert.match(api, /CLIENT_PREFERENCES_RPC_FALLBACK/)
+  assert.match(api, /filter\("client_preferences", "eq", JSON\.stringify\(current\)\)/)
+  assert.match(api, /client preferences concurrent update retry exhausted/)
   assert.match(migration, /create or replace function public\.patch_client_preferences/)
   assert.match(migration, /on conflict \(user_id\) do update/)
   assert.match(

@@ -14,8 +14,8 @@ import { useCallback, useRef, useState } from "react";
 import {
   deleteFavorite,
   FavoriteItem,
-  getFavorites,
   logFavoritesPageMounted,
+  reconcileFavoritesWithCloud,
 } from "../lib/favoritesState";
 import { MessageMarkdown } from "../components/MessageMarkdown";
 
@@ -43,7 +43,7 @@ export default function FavoritesScreen() {
   const longPressHandledRef = useRef(false);
 
   const loadFavorites = useCallback(async () => {
-    setFavorites(await getFavorites());
+    setFavorites(await reconcileFavoritesWithCloud({ forceMerge: __DEV__ }));
   }, []);
 
   useFocusEffect(useCallback(() => {

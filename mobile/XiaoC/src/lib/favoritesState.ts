@@ -1,10 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { API_BASE_URL, APP_USER_ID, apiJson, postJson } from "../config/api";
-import {
-  mergeFavoriteCollections,
-  syncFavoritesForPage,
-} from "./favoritesMigration";
+import { syncFavoritesForPage } from "./favoritesMigration";
 
 const FAVORITES_KEY = "xiaoc_favorites";
 const FAVORITES_CLOUD_MIGRATION_KEY = "xiaoc_favorites_cloud_migration_v2";
@@ -69,7 +66,9 @@ function favoriteIdentity(item: FavoriteItem) {
   return `${item.role}:${item.text.replace(/\s+/g, " ").trim()}`;
 }
 
-export async function getFavorites() {
+export async function reconcileFavoritesWithCloud(options?: {
+  forceMerge?: boolean;
+}) {
   const local = await getLocalFavorites();
   favoritesDebug("local_count", local.length);
   favoritesDebug("api_base", safeApiBase());
@@ -80,10 +79,16 @@ export async function getFavorites() {
     return await syncFavoritesForPage({
       localFavorites: local,
       migrationComplete: migrated === "1",
+      forceMerge: options?.forceMerge === true && local.length > 0,
       identityOf: favoriteIdentity,
       fetchCloud: () => apiJson<FavoritesResponse>("/api/user-state", {
-        query: { user_id: APP_USER_ID, action: "favorites" },
+        query: {
+          user_id: APP_USER_ID,
+          action: "favorites",
+          sync_nonce: Date.now(),
+        },
         timeoutMs: 12000,
+        cache: "no-store",
         onResponseStatus: (status) => favoritesDebug("http_status", status),
       }),
       mergeCloud: (favorites) => postJson<FavoritesResponse>("/api/user-state", {
@@ -99,9 +104,14 @@ export async function getFavorites() {
       debug: favoritesDebug,
     });
   } catch (error) {
+    favoritesDebug("reconciliation_error", error instanceof Error ? error.message : "unknown");
     console.log("Favorite cloud sync failed; using local cache:", error);
     return local;
   }
+}
+
+export async function getFavorites() {
+  return reconcileFavoritesWithCloud();
 }
 
 export async function saveFavorite(
@@ -127,28 +137,7 @@ export async function saveFavorite(
 
   const localNext = [nextFavorite, ...current];
   await cacheFavorites(localNext);
-
-  try {
-    const migrationComplete =
-      await AsyncStorage.getItem(FAVORITES_CLOUD_MIGRATION_KEY) === "1";
-    const response = await postJson<FavoritesResponse>("/api/user-state", {
-      action: "merge-favorites",
-      user_id: APP_USER_ID,
-      favorites: [nextFavorite],
-    });
-    const favorites = Array.isArray(response.favorites)
-      ? migrationComplete
-        ? response.favorites
-        : mergeFavoriteCollections(
-            [response.favorites, localNext],
-            favoriteIdentity,
-          )
-      : localNext;
-    await cacheFavorites(favorites);
-  } catch (error) {
-    await AsyncStorage.removeItem(FAVORITES_CLOUD_MIGRATION_KEY);
-    console.log("Favorite saved locally and queued for cloud merge:", error);
-  }
+  await reconcileFavoritesWithCloud();
 
   return nextFavorite;
 }

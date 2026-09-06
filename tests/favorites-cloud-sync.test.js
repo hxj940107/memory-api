@@ -52,7 +52,8 @@ test("Favorites screen focus enters the complete cloud sync path", () => {
   assert.match(screen, /useFocusEffect/)
   assert.match(screen, /logFavoritesPageMounted\(\)/)
   assert.match(screen, /void loadFavorites\(\)/)
-  assert.match(screen, /setFavorites\(await getFavorites\(\)\)/)
+  assert.match(screen, /setFavorites\(await reconcileFavoritesWithCloud\(\{ forceMerge: __DEV__ \}\)\)/)
+  assert.match(state, /export async function reconcileFavoritesWithCloud/)
   assert.match(state, /favorites-debug-20260906/)
   assert.match(state, /const FAVORITES_KEY = "xiaoc_favorites"/)
 })
@@ -63,6 +64,9 @@ test("Favorites cloud sync uses the canonical production API resolver", () => {
   assert.match(state, /postJson<FavoritesResponse>\("\/api\/user-state"/)
   assert.match(state, /action: "merge-favorites"/)
   assert.match(state, /user_id: APP_USER_ID/)
+  assert.match(state, /sync_nonce: Date\.now\(\)/)
+  assert.match(state, /cache: "no-store"/)
+  assert.match(api, /Cache-Control", "no-store, max-age=0"/)
 })
 
 test("favorites reuse user-state without adding a serverless function", () => {
@@ -122,25 +126,40 @@ test("pre-cloud local favorites remain readable from the canonical storage key",
   assert.deepEqual(calls.merged, [historicalLocal])
 })
 
-test("saving one favorite never marks the full-history v2 migration complete", () => {
+test("saving one favorite reuses full reconciliation and never writes the v2 flag directly", () => {
   const saveStart = state.indexOf("export async function saveFavorite")
   const deleteStart = state.indexOf("export async function deleteFavorite")
   const saveSource = state.slice(saveStart, deleteStart)
 
-  assert.match(saveSource, /favorites: \[nextFavorite\]/)
+  assert.match(saveSource, /await cacheFavorites\(localNext\)/)
+  assert.match(saveSource, /await reconcileFavoritesWithCloud\(\)/)
   assert.doesNotMatch(saveSource, /setItem\(FAVORITES_CLOUD_MIGRATION_KEY/)
-  assert.match(saveSource, /removeItem\(FAVORITES_CLOUD_MIGRATION_KEY\)/)
-  assert.match(saveSource, /migrationComplete[\s\S]*mergeFavoriteCollections/)
+  assert.doesNotMatch(saveSource, /favorites: \[nextFavorite\]/)
+})
 
-  const oldLocal = favorite("old-local")
-  const newFavorite = favorite("new-favorite")
-  assert.deepEqual(
-    mergeFavoriteCollections(
-      [[newFavorite], [newFavorite, oldLocal]],
-      identityOf,
-    ),
-    [newFavorite, oldLocal],
-  )
+test("development focus forces a nonempty full-list merge regardless of v2 flag", async () => {
+  const local = [favorite("old-1"), favorite("old-2")]
+  const { calls } = harness({
+    local,
+    migrated: true,
+    fetchResponse: { favorites: local },
+  })
+  await syncFavoritesForPage({
+    localFavorites: local,
+    migrationComplete: true,
+    forceMerge: true,
+    identityOf,
+    fetchCloud: async () => ({ favorites: local }),
+    mergeCloud: async items => {
+      calls.merged.push(items)
+      return { favorites: items }
+    },
+    saveLocal: async items => calls.saved.push(items),
+    markMigrationComplete: async () => { calls.marked += 1 },
+    debug: (field, value) => calls.debug.push([field, value]),
+  })
+  assert.deepEqual(calls.merged, [local])
+  assert.ok(calls.debug.some(([field, value]) => field === "submitted_count" && value === 2))
 })
 
 test("missing cloud favorites cannot clear nonempty local data before migration", async () => {

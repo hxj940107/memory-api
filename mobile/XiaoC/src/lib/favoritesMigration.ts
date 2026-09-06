@@ -5,6 +5,7 @@ type FavoritesResponse<T> = {
 type FavoritesMigrationOptions<T> = {
   localFavorites: T[];
   migrationComplete: boolean;
+  forceMerge?: boolean;
   identityOf: (favorite: T) => string;
   fetchCloud: () => Promise<FavoritesResponse<T>>;
   mergeCloud: (favorites: T[]) => Promise<FavoritesResponse<T>>;
@@ -38,6 +39,7 @@ export function mergeFavoriteCollections<T>(
 export async function syncFavoritesForPage<T>({
   localFavorites,
   migrationComplete,
+  forceMerge = false,
   identityOf,
   fetchCloud,
   mergeCloud,
@@ -59,7 +61,8 @@ export async function syncFavoritesForPage<T>({
   const cloudContainsLocal = cloudFavorites !== null
     && containsEveryLocalFavorite(localFavorites, cloudFavorites, identityOf);
 
-  if (migrationComplete && cloudFavorites && cloudContainsLocal) {
+  if (!forceMerge && migrationComplete && cloudFavorites && cloudContainsLocal) {
+    debug?.("merge_skipped_reason", "cloud_contains_all_local");
     await saveLocal(cloudFavorites);
     debug?.("local_saved", true);
     debug?.("migration_verified", true);
@@ -70,6 +73,10 @@ export async function syncFavoritesForPage<T>({
     [localFavorites, cloudFavorites || []],
     identityOf,
   );
+  if (localFavorites.length > 0 && completeLocalCandidate.length === 0) {
+    debug?.("merge_skipped_reason", "nonempty_local_became_empty");
+    throw new Error("Favorites reconciliation lost nonempty local input");
+  }
   debug?.("merge_request_sent", true);
   debug?.("submitted_count", completeLocalCandidate.length);
   const response = await mergeCloud(completeLocalCandidate);

@@ -77,8 +77,32 @@ async function patchClientPreferences(userId, patch) {
     p_user_id: userId,
     p_patch: patch,
   })
-  if (error) throw error
-  return data || {}
+  if (!error) return data || {}
+
+  console.error("CLIENT_PREFERENCES_RPC_FALLBACK", {
+    code: String(error.code || "unknown"),
+    message: String(error.message || "rpc failed").slice(0, 240),
+  })
+
+  // Preserve atomic field patches if Production RPC is temporarily unavailable.
+  // The JSON equality predicate makes this a compare-and-swap rather than a
+  // read/merge/whole-object write, so concurrent unrelated patches are retried.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const current = await readClientPreferences(userId)
+    const next = { ...current, ...patch }
+    const result = await supabase
+      .from("user_state")
+      .update({ client_preferences: next, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .filter("client_preferences", "eq", JSON.stringify(current))
+      .select("client_preferences")
+      .maybeSingle()
+
+    if (result.error) throw result.error
+    if (result.data) return result.data.client_preferences || {}
+  }
+
+  throw new Error("client preferences concurrent update retry exhausted")
 }
 
 async function writeFavorites(userId, favorites) {
@@ -292,6 +316,7 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && req.query.action === "favorites") {
       const preferences = await readClientPreferences(user_id)
+      res.setHeader("Cache-Control", "no-store, max-age=0")
       return res.status(200).json({ favorites: normalizeFavorites(preferences.favorites) })
     }
 
