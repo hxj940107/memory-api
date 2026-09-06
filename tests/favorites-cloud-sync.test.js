@@ -60,8 +60,44 @@ test("v1 completion is ignored and v2 gets a full local migration opportunity", 
   const { run, calls } = harness({ local })
   await run()
   assert.deepEqual(calls.merged, [local])
-  assert.equal(calls.fetched, 0)
+  assert.equal(calls.fetched, 1)
   assert.equal(calls.marked, 1)
+})
+
+test("an invalid v2 flag self-heals when cloud favorites are missing", async () => {
+  const local = [favorite("old-1"), favorite("old-2")]
+  const { run, calls } = harness({
+    local,
+    migrated: true,
+    fetchResponse: {},
+  })
+
+  assert.deepEqual(await run(), local)
+  assert.deepEqual(calls.merged, [local])
+  assert.deepEqual(calls.saved, [local])
+  assert.equal(calls.marked, 1)
+})
+
+test("an invalid v2 flag self-heals when cloud favorites are empty", async () => {
+  const local = [favorite("old-1")]
+  const { run, calls } = harness({
+    local,
+    migrated: true,
+    fetchResponse: { favorites: [] },
+  })
+
+  assert.deepEqual(await run(), local)
+  assert.deepEqual(calls.merged, [local])
+  assert.equal(calls.marked, 1)
+})
+
+test("pre-cloud local favorites remain readable from the canonical storage key", async () => {
+  assert.match(state, /FAVORITES_KEY = "xiaoc_favorites"/)
+  const historicalLocal = [favorite("pre-cloud-1"), favorite("pre-cloud-2")]
+  const { run, calls } = harness({ local: historicalLocal, fetchResponse: {} })
+
+  assert.deepEqual(await run(), historicalLocal)
+  assert.deepEqual(calls.merged, [historicalLocal])
 })
 
 test("saving one favorite never marks the full-history v2 migration complete", () => {
@@ -87,7 +123,7 @@ test("saving one favorite never marks the full-history v2 migration complete", (
 
 test("missing cloud favorites cannot clear nonempty local data before migration", async () => {
   const local = [favorite("old-1")]
-  const { run, calls } = harness({ local, mergeResponse: {} })
+  const { run, calls } = harness({ local, fetchResponse: {}, mergeResponse: {} })
   assert.deepEqual(await run(), local)
   assert.deepEqual(calls.saved, [])
   assert.equal(calls.marked, 0)
@@ -118,6 +154,19 @@ test("v2 is marked only after the complete merged result is cached", async () =>
   })
   assert.deepEqual(await incomplete.run(), local)
   assert.equal(incomplete.calls.marked, 0)
+})
+
+test("a merge response missing any local favorite cannot complete migration", async () => {
+  const local = [favorite("old-1"), favorite("old-2")]
+  const { run, calls } = harness({
+    local,
+    fetchResponse: { favorites: [] },
+    mergeResponse: { favorites: [local[0]] },
+  })
+
+  assert.deepEqual(await run(), local)
+  assert.deepEqual(calls.saved, [])
+  assert.equal(calls.marked, 0)
 })
 
 test("local and cloud duplicates are deduped by stable favorite identity", async () => {
@@ -155,6 +204,15 @@ test("network failure preserves local data and never marks v2 complete", async (
   assert.deepEqual(calls.saved, [])
   assert.equal(calls.marked, 0)
   assert.match(state, /Favorite cloud sync failed; using local cache/)
+})
+
+test("a cloud fetch failure preserves local data and never attempts migration", async () => {
+  const local = [favorite("old-1")]
+  const { run, calls } = harness({ local, fetchResponse: new Error("offline") })
+  await assert.rejects(run, /offline/)
+  assert.deepEqual(calls.merged, [])
+  assert.deepEqual(calls.saved, [])
+  assert.equal(calls.marked, 0)
 })
 
 test("delete remains cloud-confirmed before changing the local cache", () => {

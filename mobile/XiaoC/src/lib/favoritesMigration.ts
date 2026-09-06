@@ -43,22 +43,28 @@ export async function syncFavoritesForPage<T>({
   saveLocal,
   markMigrationComplete,
 }: FavoritesMigrationOptions<T>) {
-  if (migrationComplete) {
-    const response = await fetchCloud();
-    if (!Array.isArray(response.favorites)) {
-      throw new Error("Invalid cloud favorites response");
-    }
-    const cloudFavorites = mergeFavoriteCollections([response.favorites], identityOf);
+  const cloudResponse = await fetchCloud();
+  const cloudFavorites = Array.isArray(cloudResponse.favorites)
+    ? mergeFavoriteCollections([cloudResponse.favorites], identityOf)
+    : null;
+  const cloudContainsLocal = cloudFavorites !== null
+    && containsEveryLocalFavorite(localFavorites, cloudFavorites, identityOf);
+
+  if (migrationComplete && cloudFavorites && cloudContainsLocal) {
     await saveLocal(cloudFavorites);
     return cloudFavorites;
   }
 
-  const response = await mergeCloud(localFavorites);
+  const completeLocalCandidate = mergeFavoriteCollections(
+    [localFavorites, cloudFavorites || []],
+    identityOf,
+  );
+  const response = await mergeCloud(completeLocalCandidate);
   if (!Array.isArray(response.favorites)) {
     return localFavorites;
   }
   const mergedFavorites = mergeFavoriteCollections([response.favorites], identityOf);
-  if (!containsEveryLocalFavorite(localFavorites, mergedFavorites, identityOf)) {
+  if (!containsEveryLocalFavorite(completeLocalCandidate, mergedFavorites, identityOf)) {
     return localFavorites;
   }
 
