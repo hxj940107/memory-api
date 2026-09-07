@@ -37,6 +37,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Haptics from "expo-haptics";
 import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
+import { audioSessionCoordinator } from "../lib/audioSessionCoordinator";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -871,7 +872,7 @@ export default function ChatScreen() {
     uri: string,
     messageId: string,
     shouldPlay = true,
-  ) => {
+  ) => audioSessionCoordinator.chatOperation(async () => {
     await stopAudioPlayback();
     const { sound } = await ExpoAVAudio.Sound.createAsync(
       { uri },
@@ -885,7 +886,7 @@ export default function ChatScreen() {
     }
     audioSoundRef.current = sound;
     setActiveVoiceMessageId(messageId);
-  };
+  });
 
   const [messages, setMessages] = useState<Message[]>([]);
 
@@ -1521,7 +1522,9 @@ export default function ChatScreen() {
         ) {
           await sound.setPositionAsync(0);
         }
-        await sound.playAsync();
+        await audioSessionCoordinator.chatOperation(async () => {
+          if (audioSoundRef.current === sound) await sound.playAsync();
+        });
       }
       return;
     }
@@ -2233,7 +2236,9 @@ export default function ChatScreen() {
         ) {
           await sound.setPositionAsync(0);
         }
-        await sound.playAsync();
+        await audioSessionCoordinator.chatOperation(async () => {
+          if (audioSoundRef.current === sound) await sound.playAsync();
+        });
       }
       return;
     }
@@ -2324,7 +2329,7 @@ export default function ChatScreen() {
     }
   };
 
-  const startUserVoiceRecording = async () => {
+  const startUserVoiceRecording = async () => audioSessionCoordinator.chatOperation(async () => {
     if (isTyping || userVoiceRecordingRef.current) return;
     recordingIntentRef.current = true;
     const permission = await ExpoAVAudio.requestPermissionsAsync();
@@ -2395,9 +2400,9 @@ export default function ChatScreen() {
         );
       }
     }
-  };
+  });
 
-  const finishUserVoiceRecording = async (cancelled: boolean) => {
+  const finishUserVoiceRecording = async (cancelled: boolean) => audioSessionCoordinator.chatOperation(async () => {
     recordingIntentRef.current = false;
     const recording = userVoiceRecordingRef.current;
     if (!recordingStartedAtRef.current || !recording) return;
@@ -2457,7 +2462,7 @@ export default function ChatScreen() {
       voiceCancelIntentRef.current = false;
       console.log("Voice recording stop failed:", error);
     }
-  };
+  });
 
   const handleVoiceResponderGrant = (event: GestureResponderEvent) => {
     recordingStartPageYRef.current = event.nativeEvent.pageY;
@@ -2491,6 +2496,30 @@ export default function ChatScreen() {
     void finishUserVoiceRecording(true);
   };
 
+  useEffect(() => audioSessionCoordinator.registerChatCleanup(async () => {
+    recordingIntentRef.current = false;
+    if (userVoiceRecordingTimeoutRef.current) clearTimeout(userVoiceRecordingTimeoutRef.current);
+    userVoiceRecordingTimeoutRef.current = null;
+    const recording = userVoiceRecordingRef.current;
+    userVoiceRecordingRef.current = null;
+    recordingStartedAtRef.current = null;
+    if (recording) {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      if (uri) await FileSystem.deleteAsync(uri, { idempotent: true });
+    }
+    await stopAudioPlayback();
+    await ExpoAVAudio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+    });
+    if (audioLifecycleMountedRef.current) {
+      setIsRecordingVoice(false);
+      setIsCancellingVoice(false);
+    }
+  }), []);
+
   useEffect(() => {
     audioLifecycleMountedRef.current = true;
 
@@ -2516,7 +2545,7 @@ export default function ChatScreen() {
       const releaseAudioResources = async () => {
         if (sound) await sound.unloadAsync().catch(() => {});
         if (recording) await recording.stopAndUnloadAsync().catch(() => {});
-        await ExpoAVAudio.setAudioModeAsync({
+        if (!audioSessionCoordinator.isCallOwner) await ExpoAVAudio.setAudioModeAsync({
           allowsRecordingIOS: false,
           playsInSilentModeIOS: true,
           staysActiveInBackground: false,

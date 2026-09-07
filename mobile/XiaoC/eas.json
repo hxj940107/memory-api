@@ -4,6 +4,14 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "voice-poc": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "XIAOC_VOICE_POC_BUILD": "1"
+      }
+    },
     "development": {
       "developmentClient": true,
       "distribution": "internal",

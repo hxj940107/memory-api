@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 
 import { useEffect, useState, useRef } from 'react';
-import { router } from 'expo-router';
+import { router, Redirect } from 'expo-router';
 import { Image } from 'expo-image';
 import * as LocalAuthentication from 'expo-local-authentication';
 
@@ -20,9 +20,15 @@ import {
 } from "../lib/accountSettings";
 import { consumePendingNotificationConversation } from "../lib/pushNotifications";
 import { syncClientPreferences } from "../lib/cloudPreferences";
+import { isVoicePocBuild } from "../config/voicePoc";
 
 
 export default function Index() {
+  if (isVoicePocBuild) return <Redirect href="/voice-call-poc" />;
+  return <CompanionWelcome />;
+}
+
+function CompanionWelcome() {
 
 
   const [password, setPassword] = useState('');

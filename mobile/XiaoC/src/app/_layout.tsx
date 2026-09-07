@@ -1,6 +1,6 @@
 import "react-native-gesture-handler";
 
-import { router, Stack, usePathname } from "expo-router";
+import { Redirect, router, Stack, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { Image } from "expo-image";
@@ -16,6 +16,7 @@ import {
 } from "../lib/pushNotifications";
 import { getAccountSettings } from "../lib/accountSettings";
 import { syncClientPreferences } from "../lib/cloudPreferences";
+import { isVoicePocBuild } from "../config/voicePoc";
 
 // Keep native startup deterministic in standalone builds. The root navigator
 // controls the handoff; network, storage, authentication, and audio setup do not.
@@ -34,6 +35,18 @@ type InAppMessageBanner = {
 };
 
 export default function RootLayout() {
+  if (isVoicePocBuild) return <VoicePocLayout />;
+  return <CompanionLayout />;
+}
+
+function VoicePocLayout() {
+  const pathname = usePathname();
+  useEffect(() => { void SplashScreen.hideAsync(); }, []);
+  if (pathname !== "/voice-call-poc") return <Redirect href="/voice-call-poc" />;
+  return <GestureHandlerRootView style={{ flex: 1 }}><Stack screenOptions={{ headerShown: false }} /></GestureHandlerRootView>;
+}
+
+function CompanionLayout() {
   const pathname = usePathname();
   const [inAppBanner, setInAppBanner] = useState<InAppMessageBanner | null>(null);
   const backgroundedAtRef = useRef<number | null>(null);

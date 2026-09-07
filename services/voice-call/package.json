@@ -1,0 +1,16 @@
+{
+  "name": "xiaoc-voice-call-poc",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "start": "node src/server.js",
+    "start:local": "node --env-file=../../.env.local src/server.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/media.js"
+  },
+  "dependencies": {
+    "@livekit/rtc-node": "0.13.34",
+    "livekit-server-sdk": "2.18.0"
+  }
+}

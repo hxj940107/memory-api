@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import Constants from 'expo-constants';
 
 export const API_BASE_URL = "https://memory-api-beta.vercel.app";
 export const APP_USER_ID = "user";
@@ -25,6 +26,7 @@ export function apiUrl(
   path: string,
   query?: Record<string, QueryValue>,
 ) {
+  if (Constants.expoConfig?.extra?.voicePoc === true) throw new Error('PRODUCTION_API_DISABLED_IN_VOICE_POC');
   const url = new URL(path, API_BASE_URL);
 
   Object.entries(query || {}).forEach(([key, value]) => {
@@ -44,6 +46,7 @@ export async function apiJson<T>(
     onResponseStatus?: (status: number) => void;
   },
 ): Promise<T> {
+  if (Constants.expoConfig?.extra?.voicePoc === true) throw new Error('PRODUCTION_API_DISABLED_IN_VOICE_POC');
   const {
     query,
     timeoutMs = 20000,
