@@ -57,8 +57,90 @@ const exam = {
 }
 
 {
-  const completed = resolveActiveConversationContext({ items: [exam] }, { items: [] })
+  const completed = resolveActiveConversationContext({ items: [exam] }, {
+    items: [{ ...exam, status: "resolved" }],
+  })
   assert.deepEqual(completed, { items: [] })
+}
+
+{
+  const durable = {
+    ...exam,
+    id: "active-plan-1",
+    source_role: "user",
+    evidence_text: "周五公司内部考试",
+    provenance: { message_id: "message-exam", source_role: "user" },
+    created_at: "2026-09-01T08:00:00.000Z",
+  }
+  let context = { items: [durable] }
+  for (let turn = 0; turn < 8; turn += 1) {
+    context = resolveActiveConversationContext(context, { items: [] })
+  }
+  assert.equal(context.items.length, 1)
+  assert.equal(context.items[0].id, durable.id)
+  assert.equal(context.items[0].source_message_id, durable.source_message_id)
+  assert.equal(context.items[0].source_role, durable.source_role)
+  assert.equal(context.items[0].evidence_text, durable.evidence_text)
+  assert.deepEqual(context.items[0].provenance, durable.provenance)
+  assert.equal(context.items[0].created_at, durable.created_at)
+  assert.equal(context.items[0].last_referenced_message_id, durable.last_referenced_message_id)
+  assert.equal(context.items[0].missed_turns, 8)
+}
+
+{
+  const transient = {
+    ...exam,
+    topic: "刚聊完的小事",
+    kind: "transient",
+    missed_turns: 2,
+  }
+  const result = resolveActiveConversationContext({ items: [transient] }, { items: [] })
+  assert.deepEqual(result, { items: [] })
+}
+
+{
+  const waiting = { ...exam, kind: "waiting", status: "waiting" }
+  const completed = resolveActiveConversationContext({ items: [waiting] }, {
+    items: [{ ...waiting, status: "resolved" }],
+  })
+  assert.deepEqual(completed, { items: [] })
+
+  const unresolved = { ...exam, kind: "unresolved", status: "active" }
+  const resolved = resolveActiveConversationContext({ items: [unresolved] }, {
+    items: [{ ...unresolved, status: "resolved" }],
+  })
+  assert.deepEqual(resolved, { items: [] })
+}
+
+{
+  const cancelled = resolveActiveConversationContext({ items: [exam] }, {
+    items: [{ ...exam, status: "resolved", context: "她明确取消了原计划" }],
+  })
+  assert.deepEqual(cancelled, { items: [] })
+}
+
+{
+  const trip = {
+    topic: "国庆长滩岛旅行",
+    context: "她计划国庆去长滩岛，正在准备泳衣",
+    status: "active",
+    kind: "plan",
+    source_message_id: "message-boracay-plan",
+    last_referenced_message_id: "message-boracay-plan",
+    missed_turns: 0,
+  }
+  let context = { items: [trip] }
+  for (let turn = 0; turn < 8; turn += 1) {
+    context = resolveActiveConversationContext(context, { items: [] }, {
+      currentUserMessageId: `unrelated-${turn}`,
+    })
+  }
+  context = resolveActiveConversationContext(context, { items: [] }, {
+    currentUserMessageId: "message-swimsuit",
+    userSourceLedger: [{ id: "message-swimsuit", role: "user", content: "泳衣呀" }],
+  })
+  assert.match(formatActiveConversationContext(context), /国庆长滩岛旅行/)
+  assert.equal(context.items[0].source_message_id, "message-boracay-plan")
 }
 
 {
