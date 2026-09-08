@@ -31,7 +31,7 @@ Although XiaoC remains a private single-user product, `user_id` is a mandatory i
    - **Core** is a conversation-stable rendered snapshot of the PIN selection.
    - **Dynamic** is a retrieval path and result set, not a stored memory class.
 5. Factual Memory remains separate from Active Context and Proactive Attention. Retrieval, ranking or prompt inclusion never grants proactive eligibility.
-6. Legacy rows with no verifiable message evidence are preserved as `legacy_unverified` and quarantined from authoritative retrieval. No provenance is invented.
+6. Legacy rows with no verifiable message evidence retain `provenance_status = legacy_unverified`. Provenance status does not by itself decide lifecycle or retrieval eligibility: deterministic classification may admit safe historical memories at lower authority, while damaged, conflicting or unowned records are quarantined. No provenance is invented.
 7. Ombre remains authoritative until shadow-read gates pass and a separately approved cutover occurs. Existing Core snapshots are never rewritten during migration.
 8. A future implementation must reuse the existing API function boundary, normally through an action/type branch in `api/memory.js`; it must not add a thirteenth Vercel Function.
 
@@ -41,7 +41,7 @@ The following is a logical schema. Names and types may be adjusted when a later 
 
 ### 3.1 `memory_items`
 
-One row represents one immutable version of a claim. A correction produces a new row linked by `supersedes`; ordinary metadata and lifecycle timestamps may be updated with optimistic concurrency.
+One row represents one immutable version of a claim. A correction produces a new row linked by `supersedes`; only explicitly mutable policy and lifecycle fields may be updated with optimistic concurrency.
 
 | Field | Meaning |
 | --- | --- |
@@ -49,14 +49,19 @@ One row represents one immutable version of a claim. A correction produces a new
 | `user_id` | Required isolation owner; same canonical type as the existing user/message owner key. |
 | `memory_class` | `observation` or `stable`. |
 | `category` | Semantic category such as `personal_fact`, `relationship_memory`, `relationship_preference`, `meaningful_experience`, or `long_term_concern`. Extensible without changing layer semantics. |
+| `origin_system` | Immutable origin marker such as native XiaoC capture or legacy Ombre import. |
 | `content` | Canonical concise claim in XiaoC's relationship perspective. |
 | `content_hash` | Hash of normalized canonical content for idempotency and change detection. |
-| `status` | `quarantined`, `active`, `superseded`, `archived`, or `deleted`. |
-| `verification` | `verified_user_evidence`, `derived_verified`, `manual_user_confirmed`, or `legacy_unverified`. |
-| `confidence` | Evidence confidence, not semantic relevance or conversational attention. |
+| `provenance_status` | `verified_user`, `derived_verified`, `manual_confirmed`, or `legacy_unverified`. It describes source verifiability only. |
+| `lifecycle_status` | `active`, `superseded`, `archived`, or `deleted`. It describes retention and lifecycle only. |
+| `retrieval_tier` | `active_legacy`, `low_authority`, `shadow_only`, `quarantined`, or `disabled`. Native verified eligibility is governed by native policy rather than an `active_legacy` value. |
+| `authority_tier` | A deterministic policy result derived from provenance and retrieval policy; never copied from model confidence, importance or semantic score. |
+| `claim_key` | Optional stable identity for a mutable claim, used for deterministic conflict, supersedes and resurrection suppression. It is not a hardcoded global taxonomy. |
+| `confidence` | Evidence/extraction confidence only; not authority, importance, semantic relevance or conversational attention. |
 | `event_time` | Optional time the remembered event/fact applies to. |
+| `valid_from`, `valid_until`, `resolved_at` | Explicit temporal validity for facts, preferences, plans and completed/resolved items. |
 | `created_at`, `updated_at` | Persistence timestamps. |
-| `superseded_at`, `archived_at`, `deleted_at` | Nullable lifecycle timestamps consistent with `status`. |
+| `superseded_at`, `archived_at`, `deleted_at` | Nullable timestamps consistent with `lifecycle_status`. |
 | `capture_policy_version` | Version of deterministic validation and judge contract that admitted the row. |
 | `revision` | Monotonic value used for optimistic, rollback-safe updates. |
 
@@ -67,6 +72,17 @@ Deliberately absent from this table:
 - no conversational attention, proactive eligibility, or current-topic state;
 - no single `metadata` blob as the only source of lineage;
 - no heat score in M1. Heat, importance, semantic relevance, novelty and attention have different meanings and must not be collapsed into one score.
+
+The four status dimensions are independent:
+
+- `provenance_status` answers whether the source can be verified;
+- `lifecycle_status` answers whether the record is current, superseded, archived or deleted;
+- `retrieval_tier` answers whether and how the record can participate in retrieval;
+- `authority_tier` expresses deterministic factual authority.
+
+For example, an intact historical memory may be `legacy_unverified + active + low_authority`. A damaged record may be `legacy_unverified + active + quarantined`. Neither becomes verified merely because it is retrievable.
+
+`user_id`, `origin_system`, canonical `content`, `content_hash`, evidence source locators and legacy external identity are immutable. Correcting content always creates a new memory and an explicit relation; it never edits the historical claim in place.
 
 ### 3.2 `memory_evidence`
 
@@ -82,10 +98,10 @@ Evidence rows answer “why is XiaoC allowed to believe this?”
 | `evidence_quote` | Bounded exact excerpt when available; never a generated paraphrase presented as a quote. |
 | `evidence_hash` | Hash of the normalized excerpt/source payload for later verification. |
 | `source_system`, `source_external_id` | Legacy system and immutable external ID when applicable. |
-| `provenance_quality` | `verified`, `legacy_verified`, or `legacy_unverified`. |
+| `provenance_quality` | Evidence-level validation detail. The memory-level result is recorded separately in `memory_items.provenance_status`. |
 | `observed_at`, `created_at` | Source time and evidence persistence time. |
 
-Native automatic capture may enter `active` only when at least one `verified` user-message evidence row exists and the quoted text is validated against that message. A question alone is insufficient. Assistant text may help interpretation, but it can never be the sole evidence for a user fact.
+Native automatic capture may use `lifecycle_status = active` only when at least one verified user-message evidence row exists and the quoted text is validated against that message. A question alone is insufficient. Assistant text may help interpretation, but it can never be the sole evidence for a user fact.
 
 Evidence excerpts should be short enough to avoid duplicating whole conversations. Full source text remains in the message store and is loaded only when verification is required.
 
@@ -96,7 +112,7 @@ This table carries directed, same-user lineage between memories.
 | Field | Meaning |
 | --- | --- |
 | `user_id`, `from_memory_id`, `to_memory_id` | Composite same-user endpoints. |
-| `relation_type` | `supersedes`, `consolidates`, `contradicts`, or `duplicates`. |
+| `relation_type` | `supersedes`, `consolidates`, `contradicts`, `duplicates`, or `revalidates`. |
 | `operation_id` | The audited operation that created the edge. |
 | `created_at` | Relation time. |
 
@@ -104,7 +120,10 @@ Direction is explicit:
 
 - `new stable -> old stable` for `supersedes`;
 - `stable -> source observation` for `consolidates`;
+- `new verified memory -> old legacy memory` for `revalidates` when new real user evidence independently confirms the same claim;
 - the newly evaluated memory points to the conflicting or duplicate memory for the other relations.
+
+`revalidates` is a non-evidentiary lineage relation. It does not backfill provenance into the old legacy row, make legacy content evidence for the new row, or promote the old row to a verified status. If the new user evidence corrects the old claim rather than confirming it, the relation is `supersedes`.
 
 The storage layer must reject self-edges, cross-user edges and cycles in `supersedes`. A supersede apply is atomic: insert the new memory, evidence/lineage and operation record, then mark the old memory superseded in one transaction. Source observations are retained.
 
@@ -143,13 +162,13 @@ PIN membership is explicit curation rather than a boolean on `memory_items`.
 | `pinned_at`, `unpinned_at` | Audit timestamps. |
 | `operation_id` | Audited operation that changed membership. |
 
-Only an active, non-quarantined, non-deleted memory can become an active PIN. Consolidation never changes PIN membership automatically. If a pinned claim is superseded, the old PIN remains until a separate explicit pin decision; this avoids silently changing XiaoC's stable identity knowledge.
+Only a memory with eligible provenance, `lifecycle_status = active`, and a non-quarantined/non-disabled retrieval policy can become an active native PIN. Legacy PIN metadata is imported only as `legacy_pin_candidate`; it never creates native PIN/Core membership automatically. Consolidation never changes PIN membership automatically. If a pinned claim is superseded, the old PIN remains until a separate explicit pin decision; this avoids silently changing XiaoC's stable identity knowledge.
 
 ### 3.6 `memory_operations`
 
 An append-only operation ledger supports audit, idempotency and rollback.
 
-It records `id`, `user_id`, operation type, actor type, idempotency key, policy version, affected IDs, compact before/after state or hashes, result, reason and timestamp. Operation types include capture, manual confirmation, consolidation apply, supersede, archive/restore, delete/restore, pin/unpin and legacy import.
+It records `id`, `user_id`, operation type, actor type, idempotency key, policy version, affected IDs, compact before/after state or hashes, result, reason and timestamp. Operation types include capture, manual confirmation, consolidation apply, supersede, archive/restore, delete/restore, pin/unpin, legacy import, and retrieval-tier promotion/demotion.
 
 It must not log embeddings, credentials, full conversations, or unrelated private content. Mutations use an idempotency key unique within a user.
 
@@ -178,27 +197,64 @@ The first implementation can still configure exactly one allowed XiaoC user. The
 
 ## 5. Lifecycle and consolidation
 
-### 5.1 Status semantics
+### 5.1 Four independent status dimensions
 
-- `quarantined`: stored for audit/shadow evaluation but ineligible for production retrieval and PIN. This is the default for legacy content without verifiable provenance.
-- `active`: eligible for retrieval subject to class, evidence, policy, exclusions, relevance, novelty and budget.
-- `superseded`: retained for history but excluded from normal retrieval when its replacement is active.
-- `archived`: intentionally cold and excluded from ordinary semantic/lexical retrieval. Explicit history or restore tools may access it later.
-- `deleted`: soft-deleted and excluded from all user-facing retrieval. Physical purge is a separately authorized retention action after the rollback horizon.
+`provenance_status`:
 
-Allowed normal transitions are:
+- `verified_user`: supported by validated real user-message evidence;
+- `derived_verified`: derived only from verified native evidence through explicit lineage;
+- `manual_confirmed`: explicitly confirmed by the user through a trusted manual action;
+- `legacy_unverified`: imported historical content whose original message provenance cannot be verified.
+
+`lifecycle_status`:
+
+- `active`: the claim has not been superseded, archived or deleted;
+- `superseded`: retained for history but replaced by an explicit newer claim;
+- `archived`: intentionally cold; explicit history or restore tooling may access it later;
+- `deleted`: soft-deleted and excluded from user-facing retrieval. Physical purge is a separately authorized retention action after the rollback horizon.
+
+Allowed normal lifecycle transitions are:
 
 ```text
-quarantined -> active | archived | deleted
-active      -> superseded | archived | deleted
-archived    -> active | deleted
+active   -> superseded | archived | deleted
+archived -> active | deleted
 ```
+
+`retrieval_tier`:
+
+- `active_legacy`: deterministically classified legacy content that may provide historical continuity under a permanent legacy authority cap;
+- `low_authority`: eligible only under stronger semantic/current-context relevance and stricter conflict/temporal checks;
+- `shadow_only`: available for comparison or review but excluded from production prompt context;
+- `quarantined`: anomalous, damaged, conflicting, unowned or unsafe to treat as a retrieval candidate;
+- `disabled`: intentionally unavailable to ordinary retrieval, including resolved/expired plans and records suppressed by a newer verified claim.
+
+Native verified retrieval eligibility is determined by native policy over provenance, lifecycle, relations and temporal validity; `active_legacy` is specifically a legacy tier and is not a generic lifecycle state.
+
+`authority_tier` is computed by a deterministic, versioned policy. It is not written from model judgment and is not interchangeable with `confidence`, importance, vector similarity, semantic relevance, novelty or attention. Every eligible legacy item has lower authority than an eligible verified native memory.
 
 Rollback may reverse a transition through a compensating audited operation. It never erases the original operation.
 
 M1 defines archive semantics but does not implement automatic heat, cold or archive policy. Passive retrieval does not refresh lifecycle state. If heat is later added, only new user evidence or an explicit user action may raise it; system retrieval and prompt injection cannot.
 
-### 5.2 Consolidation rules
+Temporal validity is evaluated before retrieval. An expired or resolved future plan is `disabled` even if it remains historically `active` for lineage. Mutable claims may use an optional `claim_key` to group successive values. Examples such as `preference:food:<subject>` or `plan:travel:<subject>` illustrate the shape only; M1 does not define a hardcoded taxonomy.
+
+### 5.2 Deterministic authority and precedence
+
+Factual conflict precedence is:
+
+```text
+current user statement
+> newer explicit user evidence
+> verified native Memory
+> eligible legacy_unverified Memory
+> model-generated Summary / derived Context
+```
+
+Summary and derived Context do not become provenance and cannot overrule source-backed facts. Prompt context ordering remains separately governed by the existing Context architecture (`current user / Recent -> Active Context -> Summary -> selected Memory`). Prompt ordering is not factual authority ordering.
+
+For the same mutable claim, a newer explicit correction outranks a confirmation, which outranks an older assertion. Deterministic lifecycle, relation, temporal and claim suppression is applied before semantic or vector ranking; the model is not asked to choose the authoritative version at retrieval time.
+
+### 5.3 Consolidation rules
 
 Consolidation preserves the current verified behavior:
 
@@ -209,6 +265,7 @@ Consolidation preserves the current verified behavior:
 - the proposal identifies every source observation and any stable memory it would supersede;
 - applying a proposal never deletes observations;
 - stable output obtains `derived_verified` only through its same-user source relations and verified evidence;
+- `legacy_unverified` memories are never consolidation inputs and cannot enter a future native provenance chain;
 - a model proposes wording and relations; deterministic validation and a transaction decide whether they may persist;
 - PIN/Core are outside consolidation apply.
 
@@ -264,15 +321,34 @@ retrieveMemory({
   limit,
   tokenBudget,
   excludeMemoryIds,
-  excludeContent,
-  includeLegacyQuarantine: false
+  excludeContent
 }) -> {
-  selected: [{ memoryId, content, category, evidenceSummary, scoreParts }],
+  selected: [{
+    memoryId,
+    content,
+    category,
+    provenanceStatus,
+    lifecycleStatus,
+    retrievalTier,
+    authorityTier,
+    claimKey,
+    evidenceSummary,
+    scoreParts,
+    suppressionReason
+  }],
   diagnostics: { retrieved, relevant, eligibleForPrompt, suppressed, version }
 }
 ```
 
-The pipeline applies the hard user/status/version filters first, then hybrid candidate generation, relevance/duplicate/novelty checks, Core exclusion, stable-over-observation suppression and the shared context budget. `includeLegacyQuarantine` is accepted only by authorized shadow tooling.
+The pipeline must execute these stages in order:
+
+1. enforce `user_id` and embedding-version isolation;
+2. apply provenance, lifecycle, retrieval-tier, temporal-validity, claim-key and relation suppression;
+3. suppress Core sources, superseded claims, revalidated legacy rows and entire duplicate clusters blocked by a verified correction;
+4. only then perform lexical/embedding candidate ranking;
+5. apply relevance, novelty, cross-layer duplicate suppression, stable-over-observation preference and the shared context budget.
+
+Suppressed candidates carry a deterministic `suppression_reason` in diagnostics. Quarantined, disabled and shadow-only rows can be inspected only by separately authorized shadow/review tooling; the ordinary retrieval interface cannot promote them through a request flag.
 
 Every returned item has `eligibleForProactiveAttention = false`. The caller cannot promote a retrieval result into Active Context or a proactive event without that subsystem's own current-user evidence and gate.
 
@@ -308,25 +384,40 @@ A future import maps each Ombre bucket without changing Ombre:
 | Text/content | `memory_items.content`, with original checksum recorded before any normalization. |
 | Created/updated time | Native source/event metadata where trustworthy; import time remains separate. |
 | Existing type/category | Mapped to `memory_class` and `category` through a versioned deterministic mapping table. Unknown values remain unknown; they are not guessed. |
-| Pinned state | Imported as a pin candidate in mapping metadata. It does not automatically alter native active PIN/Core. |
+| Pinned state | Imported as `legacy_pin_candidate` in mapping metadata. It does not automatically alter native active PIN/Core. |
 | Source message/conversation metadata | Verified against the canonical message store before becoming `legacy_verified` evidence. |
 | Supersedes/source bucket IDs | Same-user relations only after all referenced rows resolve and cycle checks pass. |
 | Embedding/vector | Not imported as a native embedding unless provider, model, dimensions, preprocessing and input hash are all provable. Default is metadata-only preservation. |
 
 ### 8.1 Legacy rows without provenance
 
-An Ombre memory lacking a verifiable source message is still historically valuable, but it cannot be upgraded into a native verified fact by assertion.
+An Ombre memory lacking a verifiable source message is historically useful but is not a verified native fact. It receives `provenance_status = legacy_unverified` and one `legacy_import` evidence row containing its external ID, source archive/import-run identity and checksum, with `source_role = unknown`. It receives no fabricated message ID, conversation ID, evidence quote, user role or confirmation time.
 
-It is imported, in a later phase, as:
+`legacy_unverified` does not imply quarantine. A deterministic, versioned import policy assigns lifecycle and retrieval independently:
 
-- `status = quarantined`;
-- `verification = legacy_unverified`;
-- one `legacy_import` evidence row containing external ID, source archive/import-run identity and checksum, with `source_role = unknown`;
-- no fabricated message ID, conversation ID, user quote or confirmation time;
-- excluded from normal retrieval, consolidation inputs and PIN activation;
-- available to explicit shadow comparison and future manual review.
+| Classification | Eligible content | Retrieval rule |
+| --- | --- | --- |
+| `ACTIVE` (`active_legacy`) | Intact, owned, non-conflicting, time-bounded low-risk past experiences or continuity details | May participate in ordinary retrieval below verified native authority. |
+| `LOW_AUTHORITY` | Intact but mutable or less certain preferences, habits and ordinary background details | Requires stronger semantic and current-conversation relevance; never overrules verified content. |
+| `SHADOW_ONLY` | High-authority, sensitive or current-relationship claims; historical pinned/stable/digested content pending review; ambiguous temporal claims | Comparison/review only; never enters production prompt context. |
+| `QUARANTINE` | Damaged, checksum-invalid, conflicting, user-unowned, inference-like, structurally invalid, or denied by a verified correction | Excluded from retrieval, PIN and consolidation. |
+| `DISABLED` | Expired/resolved future plans, intentionally archived/deleted items, and non-conflicting duplicates already represented by a verified memory | Preserved for lineage/audit but excluded from ordinary retrieval. |
 
-If the user later explicitly confirms the fact, the system creates a new native, verified memory from that confirmation and links it to the quarantined row with `supersedes` or `duplicates`. It does not rewrite the legacy evidence.
+Ombre `archived`, `resolved`, `digested` and `pinned` metadata are mapped separately because they express different semantics. Importance, score or pinned state may inform review but cannot raise provenance or authority. Legacy items never enter Stable consolidation and never automatically enter native PIN/Core. Existing persisted Core Snapshots remain unchanged.
+
+Claims involving identity, sensitive facts, present relationship state, relationship rules, health, finance, security, precise important dates or similarly high-authority assertions default to `shadow_only` until verified. Mutable preferences without sufficient temporal grounding default to `low_authority` or `shadow_only`. Expired/resolved future plans are `disabled`.
+
+### 8.2 Resurrection prevention
+
+If a verified memory supersedes a legacy claim, retrieval suppresses the covered legacy row and every member of its known legacy duplicate cluster before embedding/vector ranking. Importance, similarity, semantic score or a stale cached rank cannot restore it. Suppression is keyed by same-user explicit relations, optional `claim_key`, duplicate-cluster membership and temporal state; it does not depend on a model deciding conflicts during each read.
+
+A current user correction takes precedence immediately in the current turn. Once captured, the new verified memory records `supersedes` to the old legacy claim, and the contradicted legacy retrieval tier becomes `quarantined`. A revalidated, non-conflicting duplicate becomes `disabled`. A missing reliable claim identity keeps mutable legacy content out of `active_legacy` so the system does not create an unpreventable resurrection path.
+
+### 8.3 Legacy re-verification
+
+A future real user message may create a new verified native memory that independently confirms an old legacy claim. The new memory's provenance points only to the new real user message. It may link to the old legacy row using `revalidates`; a correction uses `supersedes`, and a non-confirming duplicate uses `duplicates`.
+
+The old legacy row retains its original provenance and lifecycle history for lineage/audit. `revalidates` never copies new evidence backward, treats legacy content as evidence for the new memory, or promotes the legacy row to verified. After revalidation, ordinary retrieval returns the verified native memory and suppresses the represented legacy row.
 
 ## 9. Shadow-read migration strategy
 
@@ -344,9 +435,9 @@ Create the reviewed schema later, with RLS, composite owner constraints, operati
 
 Parse the M0 archive offline, produce counts/checksums/mapping diagnostics and reject reports. No production database or Ombre write occurs. Re-running the same archive and importer version must yield the same planned IDs/mappings.
 
-### Phase 3 — quarantined import and capture mirror
+### Phase 3 — classified import and capture mirror
 
-After approval, import legacy rows idempotently. Unverified rows remain quarantined. Ombre stays authoritative. Native capture can run as a best-effort mirror with independent failure diagnostics; mirror failure must never block the current chat response.
+After approval, import legacy rows idempotently with `provenance_status = legacy_unverified` and a deterministic `ACTIVE / LOW_AUTHORITY / SHADOW_ONLY / QUARANTINE / DISABLED` classification. Ombre stays authoritative. Native capture can run as a best-effort mirror with independent failure diagnostics; mirror failure must never block the current chat response.
 
 ### Phase 4 — shadow retrieval
 
@@ -361,6 +452,7 @@ Compare:
 - missing/stale embedding rate;
 - provenance/verification distribution;
 - false inclusion and meaningful false omission on a representative, manually reviewed query set;
+- historical continuity gain and unsafe legacy inclusion as separate metrics;
 - token/cost impact;
 - cross-user isolation and cache isolation.
 
@@ -368,7 +460,7 @@ Overlap alone is not a pass criterion because a better native ranker may legitim
 
 ### Phase 5 — gated native reads
 
-Only after review, switch Dynamic retrieval behind a centralized, immediately reversible read-source gate. Keep capture mode, Dynamic read source, and Core/PIN source as independent gates. Dynamic can move first; PIN/Core moves last. There is no implicit percentage rollout requirement for the private single-user product—a controlled session/test gate is sufficient.
+Only after review, partially activate deterministically approved legacy tiers and switch Dynamic retrieval behind a centralized, immediately reversible read-source gate. Keep capture mode, Dynamic read source, legacy tier activation, and Core/PIN source as independent gates. Dynamic can move first; PIN/Core moves last. There is no implicit percentage rollout requirement for the private single-user product—a controlled session/test gate is sufficient.
 
 Existing conversations retain their persisted Core Snapshot. New conversations use whichever Core source is explicitly active at snapshot creation time.
 
@@ -394,9 +486,9 @@ During the rollout window, a consistency report must identify Ombre-only, native
 The next implementation phase should define measurable thresholds, but the following are hard gates:
 
 - zero cross-user read, relation, PIN, embedding, job or cache leakage in isolation tests;
-- zero `quarantined`, `archived`, `deleted` or superseded-with-active-replacement rows in ordinary retrieval;
+- zero `shadow_only`, `quarantined`, `disabled`, archived, deleted or superseded-with-active-replacement rows in ordinary retrieval;
 - 100% deterministic mapping for the currently active PIN set before Core source cutover;
-- 100% native automatic memories backed by validated user evidence; legacy-unverified content remains distinguishable;
+- 100% native automatic memories backed by validated user evidence; `legacy_unverified` content and its lower authority remain distinguishable;
 - exact import counts/checksums and idempotent rerun behavior;
 - shadow queries demonstrate acceptable useful recall, false inclusion, latency, token and cost behavior on representative real cases;
 - operation idempotency, stale consolidation rejection and supersedes cycle protection pass;
@@ -417,3 +509,14 @@ When a later phase is authorized, the smallest safe sequence is:
 7. begin shadow-only comparison while Ombre remains authoritative.
 
 No step in this sequence authorizes historical import, embedding regeneration, retrieval cutover, Core replacement, Ombre mutation or deletion.
+
+### 12.1 Future implementation guidance
+
+The following improve safety and observability but are not M2 blocking schema requirements:
+
+- record a versioned `legacy_policy_version` so the same archive and policy can reproduce the same classification;
+- assign a stable legacy duplicate-cluster ID where deterministic grouping succeeds, allowing whole-cluster suppression;
+- report migration counts and validation results separately for every retrieval tier;
+- record retrieval-tier promotion/demotion, previous/new tier and reason in the operation ledger;
+- report shadow `continuity_gain` separately from `unsafe_inclusion` rather than relying only on top-k overlap;
+- use the explicit name `legacy_pin_candidate` for imported Ombre pinned metadata so it cannot be confused with native active PIN/Core membership.
