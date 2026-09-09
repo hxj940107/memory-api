@@ -1,6 +1,6 @@
 # XiaoC Memory Engine — M2D Historical Import Design
 
-> Status: schema hardening implemented in repo; production apply pending.
+> Status: schema hardening applied and transactionally validated; historical importer dry-run passed; production historical import not executed.
 > Scope: deterministic historical preservation only. This document does not authorize an import, a retrieval switch, embeddings, or production runtime changes.
 
 ## 1. Decision and boundary
@@ -219,11 +219,11 @@ No executable importer should be created yet. M2D implementation becomes eligibl
 5. exact read-back verification without exposing content;
 6. continued denial of direct protected-table mutation.
 
-The design review concluded **M2D SCHEMA HARDENING REQUIRED**; the implementation below now satisfies that repo-level gate, pending manual production application and database validation.
+The design review concluded **M2D SCHEMA HARDENING REQUIRED**. The additive hardening and its transactional production validation have since passed, satisfying that gate.
 
 ## 12. Schema hardening implementation (2026-09-09)
 
-The forward-only migration `supabase_xiaoc_memory_engine_m2d_hardening.sql` implements the M2D database boundary. It has been created and statically reviewed, but has not been executed against production.
+The forward-only migration `supabase_xiaoc_memory_engine_m2d_hardening.sql` implements the M2D database boundary. It was applied manually to production and the transactional validation passed with all fixtures rolled back.
 
 The hardened contract adds immutable source snapshot, manifest, execution-order and classification digests, an exact expected record count, and a policy version to each import run. An immutable `memory_import_plan_items` table stores all 150 approved identities, hashes, deterministic IDs, retrieval tiers, authority tiers and bounded reason codes. The database recomputes the plan digests, requires the exact `0 / 6 / 95 / 49` distribution, rejects `active_legacy`, and restricts `low_authority` to the six reviewed entries.
 
@@ -233,4 +233,44 @@ Protected RPCs now own `planned -> applying -> complete` and `planned/applying -
 
 Rollback is a protected atomic compensation. A `complete` run may transition to terminal `disabled`; a `failed` run is eligible only when its full 150-row target still matches the locked contract. The same idempotency key returns the existing successful compensation. Rollback disables retrieval and removes legacy authority while retaining canonical Memory, the legacy map, plan and operation history. Any provenance, PIN, embedding, relation (including supersedes, revalidates or consolidation lineage), non-legacy target, incomplete target set or cross-user scope fails closed. No descendant or audit record is cascade-deleted.
 
-Remaining gate: run the hardening migration manually in the production Supabase SQL Editor, then run transactional database validation before any importer implementation or historical import. Runtime retrieval remains off and Ombre remains authoritative.
+Runtime retrieval remains off and Ombre remains authoritative.
+
+## 13. Historical Import Implementation and final dry-run (2026-09-09)
+
+The importer is implemented at `scripts/xiaoc-memory-engine-historical-import.js`. Its default mode is `--dry-run`. It verifies both locked source hashes, builds and validates the complete 150-entry plan in memory, checks archive/manifest coverage, recomputes every content hash and UUIDv5 identity, applies the exact six-entry allowlist, and computes the two database-compatible digests before any Supabase client is created.
+
+### 13.1 CLI safety contract
+
+- No arguments and explicit `--dry-run` are equivalent and perform no external request.
+- `--apply` requires the additional exact `--confirm-source-sha` value. Missing or incorrect confirmation fails before client creation.
+- Conflicting modes are rejected.
+- Apply uses only the protected create, start, item-import and finalize RPCs, plus a read-only import-run status query.
+- `--rollback=<import_run_id>` requires the same source confirmation and calls only the protected rollback RPC.
+- No command performs direct insert, update, delete or upsert against protected tables.
+- Memory bodies exist only in local process memory and, during a future authorized apply, in protected Supabase import RPC payloads. Console and dry-run artifacts exclude them.
+
+### 13.2 Resume and rollback semantics
+
+An interrupted apply is rerun with the identical command and locked inputs. A `planned` run is started; an `applying` run resumes; a `complete` run exits successfully. Replayed entries rely on the validated same-identity/same-hash RPC behavior, while a different-hash conflict stops before finalization. Network failures do not mark a partial run terminal, preserving restart safety.
+
+Rollback is explicit and compensating. It uses the current classification digest and the protected `xiaoc_memory_rollback_import_run` RPC. It never deletes or directly updates Memory rows.
+
+### 13.3 Final dry-run result
+
+The real locked M0 archive and original M2C manifest produced:
+
+| Check | Result |
+|---|---|
+| Snapshot SHA-256 | PASS |
+| Manifest SHA-256 | PASS |
+| Canonical/archive/plan coverage | 150 / 150; missing 0; unexpected 0 |
+| Content hashes | 150 / 150 PASS |
+| Deterministic IDs | 150 / 150 PASS |
+| Classification | `active_legacy=0`, `low_authority=6`, `shadow_only=95`, `disabled=49` |
+| Allowlist | 6 / 6 PASS |
+| Duplicate canonical identities | 0 |
+| Classification digest | `0e77a92da8a5c530ff5fde7d9acaa6e9591f840aead8106c453fe3e5d066ee1e` |
+| Execution-order digest | `5c47bb9291f2656731da21b877aafbf348a1396cf001e48671c562afb8e3b959` |
+| External requests / Supabase writes | 0 / 0 |
+
+The content-free result is stored at `tmp/xiaoc-memory-engine-historical-import-dry-run.json`. Historical import remains pending explicit authorization.
