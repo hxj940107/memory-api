@@ -1,6 +1,6 @@
 # XiaoC Memory Engine — M2D Historical Import Design
 
-> Status: schema hardening applied and transactionally validated; historical importer dry-run passed; production historical import not executed.
+> Status: COMPLETE — schema hardening applied and transactionally validated; production historical import completed 150/150 on 2026-09-09.
 > Scope: deterministic historical preservation only. This document does not authorize an import, a retrieval switch, embeddings, or production runtime changes.
 
 ## 1. Decision and boundary
@@ -17,7 +17,7 @@ The import target is exactly 150 canonical Ombre records. Every imported record 
 
 M2C.1 is rejected. Its classifier artifact is not an input to migration eligibility, classification, ordering, or verification. No external model is needed for M2D.
 
-Import completion does not enable reads. Ombre remains the production Memory source and the XiaoC Memory Engine remains a stored shadow copy.
+Import completion did not enable reads. Ombre remains the production Memory source and the XiaoC Memory Engine remains a stored shadow copy.
 
 ## 2. Source lock
 
@@ -273,4 +273,22 @@ The real locked M0 archive and original M2C manifest produced:
 | Execution-order digest | `5c47bb9291f2656731da21b877aafbf348a1396cf001e48671c562afb8e3b959` |
 | External requests / Supabase writes | 0 / 0 |
 
-The content-free result is stored at `tmp/xiaoc-memory-engine-historical-import-dry-run.json`. Historical import remains pending explicit authorization.
+The content-free result is stored at `tmp/xiaoc-memory-engine-historical-import-dry-run.json`. This dry-run was the pre-apply gate; the authorized production import subsequently completed as recorded below.
+
+## 14. Production historical import completion (2026-09-09)
+
+The authorized historical import completed without enabling XiaoC retrieval:
+
+- import run: `8f80b744-2db8-4f78-85a3-78a2cfec679d`;
+- run state: `completed`;
+- processed / created / failed: `150 / 150 / 0`;
+- database read-back: `memory_items=150`, `legacy_memory_map=150`;
+- retrieval tiers: `active_legacy=0`, `low_authority=6`, `shadow_only=95`, `disabled=49`;
+- provenance: `legacy_unverified=150`;
+- content hashes and deterministic IDs: `150/150 PASS`;
+- operations: `153 PASS` (`run create=1`, `run start=1`, `legacy import=150`, `finalize=1`);
+- native verified provenance, native PINs, and embeddings created: `0 / 0 / 0`.
+
+The first apply attempt stopped on PostgreSQL `42501` at the deferred integrity trigger. The forward-only permission fix changed the deferred trigger function to a fixed-search-path, postgres-owned `SECURITY DEFINER` boundary without restoring caller access to the private helper or direct protected-table mutation. Validation passed, the same run resumed, and no rollback or re-import is required.
+
+Ombre remains the production retrieval source. Completion of historical preservation does not authorize shadow read, embedding generation, Context Gateway integration, or cutover.

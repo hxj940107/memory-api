@@ -609,3 +609,26 @@ Ombre retirement/deletion is not part of M3 and requires explicit authorization.
 - Blocking issues: **none for offline implementation; live Ombre identity overlap remains unavailable and is explicitly non-blocking**
 
 Final recommendation: **READY FOR M3 IMPLEMENTATION**, beginning with offline, feature-gated M3B1 only.
+
+## 18. M3B1 implementation status (2026-09-09)
+
+M3B1 implements an offline-only XiaoC-owned foundation:
+
+- `lib/xiaocMemoryEmbedding.js`: provider identity contract, OpenAI-compatible injected adapter, finite/dimension validation, cosine similarity, deterministic staleness reasons, protected Supabase embedding repository, and shadow-to-active RPC boundary;
+- `lib/xiaocMemoryLexical.js`: Unicode NFKC/case normalization with punctuation and emoji boundaries, Chinese/ASCII token handling, query-coverage n-grams, numeric/entity signals, short-query protection, explainable component scores and reason codes;
+- `lib/xiaocMemoryRetrievalFoundation.js`: structured hybrid candidate contract, initial lifecycle/tier/provenance/authority eligibility boundary, synthetic semantic scoring, lexical-only degradation, and repository-injected offline candidate retrieval;
+- `scripts/xiaoc-memory-engine-embed.js`: default dry-run CLI. Apply requires explicit provider, model, version, dimension, approved scope, exact confirmed record count, provider configuration, and Supabase credentials. It registers shadow embeddings only through `xiaoc_memory_register_embedding`; activation remains a separate protected action.
+
+No module performs work at import or server startup. Tests use synthetic vectors and synthetic Memory rows. M3B1 does not call an external provider, generate historical embeddings, read/write production Supabase, connect to Chat/Context Gateway, or modify Ombre.
+
+Embedding staleness is deterministic: content hash, provider, model, logical model/embedding version, preprocessor version, dimension, or unreadable rollout status. Age alone is not a stale reason. A missing/invalid embedding leaves lexical candidate generation available and reports `semantic_available=false`; it never fabricates a semantic score.
+
+Known gaps intentionally deferred to M3B2/M3B3:
+
+- full claim/relation/temporal eligibility and current-turn conflict resolver;
+- database-side eligible-ID retrieval RPC and pgvector query plan;
+- final hybrid weights, relevance floors, authority bands, tie-breakers, top-k and Context Gateway contract wiring;
+- embedding provider/model/dimension selection and any real generation;
+- production shadow read and content-free comparison telemetry.
+
+No schema change was required. The next gate is M3B2 deterministic eligibility/claim resolution with zero forbidden-tier, cross-user, and resurrection failures before ranking work proceeds.
