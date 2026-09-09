@@ -632,3 +632,44 @@ Known gaps intentionally deferred to M3B2/M3B3:
 - production shadow read and content-free comparison telemetry.
 
 No schema change was required. The next gate is M3B2 deterministic eligibility/claim resolution with zero forbidden-tier, cross-user, and resurrection failures before ranking work proceeds.
+
+## 19. M3B2 implementation status (2026-09-09)
+
+M3B2 is complete as an offline-only deterministic safety layer. `lib/xiaocMemoryEligibility.js` owns eligibility, temporal classification and batch claim/relation resolution. `lib/xiaocMemoryRetrievalFoundation.js` delegates its initial gate to that module and exposes a separate bridge from M3B1 structured candidates into M3B2 resolution. Candidate generation, safety resolution and future ranking remain separate modules/stages.
+
+The implemented order is:
+
+```text
+raw candidates
+  -> same-user scope
+  -> lifecycle
+  -> retrieval tier
+  -> provenance/authority consistency
+  -> temporal validity for the selected mode
+  -> external/current-user claim suppression
+  -> same-claim authority resolution
+  -> explicit relation suppression
+  -> eligible candidates
+  -> future ranking (not implemented in M3B2)
+```
+
+Normal-current retrieval admits only `active` lifecycle rows. Native rows require a null legacy retrieval tier, one of `verified_user`, `manual_confirmed` or `derived_verified`, and `native_verified` authority. Legacy rows require `legacy_unverified`, `legacy_limited`, and either `low_authority` or the future-approved `active_legacy` tier. `shadow_only`, `quarantined`, and `disabled` are hard exclusions. Consequently, the imported `6 / 95 / 49` distribution can expose only the six reviewed low-authority rows, each labeled `legacy_limited`; M3B2 does not alter those records or promote their provenance.
+
+Temporal state is one of `current`, `future`, `expired`, `resolved`, or `unknown`, evaluated against an explicit retrieval time. `normal_current` suppresses future, expired and resolved rows. `historical_recall` may admit those states if every non-temporal hard gate still passes; it does not revive deleted/superseded data or forbidden tiers. Archived lifecycle remains unavailable to normal retrieval. This is a deterministic primitive, not an intent classifier.
+
+Claim resolution uses only structured identity. Candidates with no `claim_key` remain independent; M3B2 never infers claim identity from content, lexical score, embeddings or an LLM. For a shared claim key, direct/manual verified native evidence outranks derived native evidence, which outranks eligible legacy. Recency is considered only inside the same authority band, then stable Memory ID breaks ties. An external/current-turn claim suppresses stored candidates only when the caller supplies an explicit same-user conflict marker for a claim key or exact conflicting Memory IDs. This lets Recent/Active/current user evidence remain authoritative without pretending `memory_items` is the only fact source.
+
+The real relation directions are preserved. `new -> old` `supersedes` suppresses the old target. `new verified native -> old legacy` `revalidates` also suppresses the legacy target but never changes or inherits its `legacy_unverified` provenance. Similarity, lexical score, importance and input order cannot resurrect a suppressed target. Relation creation and lifecycle mutation remain owned by the existing protected database workflow; M3B2 only consumes synthetic/read-only relation rows.
+
+Stable machine-readable reason codes are exported as `MEMORY_ELIGIBILITY_REASON`. They cover user mismatch, inactive lifecycle, every forbidden retrieval tier, invalid tier/provenance/authority combinations, future/expired/resolved temporal state, supersedes/revalidation suppression, higher-authority claim suppression, legacy limitation and successful eligibility. Batch output separates `eligible_candidates` and `suppressed_candidates`; each item carries structured decision metadata including authority, reason codes, suppressor, temporal state and `legacy_limited`. Resolution output is deterministically ordered by Memory ID and diagnostics perform no logging.
+
+Known limitations intentionally deferred:
+
+- no final relevance weights, thresholds, deduplication, top-k or token budgeting;
+- no database-side eligible-ID retrieval/vector RPC;
+- no LLM claim extraction or semantic conflict inference;
+- no production read, shadow telemetry, Context Gateway connection or prompt injection;
+- external claim construction remains a future trusted caller responsibility;
+- `consolidates`, `duplicates`, and `contradicts` need their complete cluster/canonical-representative policy in later offline work before production shadowing.
+
+No schema extension was required for this offline implementation. Production-scale repository filtering and relation-load failure behavior must be designed and validated before M3D. The next gate is M3B3 candidate generation/ranking over only the M3B2 eligible set; ranking may not broaden or bypass M3B2 decisions.
