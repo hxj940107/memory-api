@@ -742,3 +742,9 @@ M3C-R1 subsequently added a deterministic QueryPlan, bounded Recent/Active groun
 The unchanged original 24 expectations now pass, as does an independent 12-case multi-domain holdout. Combined 36-case Recall@1/3, Precision@1/3, MRR, explicit recall, implicit continuity, empty correctness and no-retrieval correctness are 100%; all safety exposure, irrelevant recall, semantic-only ungrounded false admission and semantic collision wrong selection metrics are zero. These synthetic results clear the offline engineering gate but are not production calibration.
 
 Current recommendation: **READY FOR M3D0**, the separately reviewed bounded database retrieval RPC foundation. Production shadow read remains unauthorized until M3D0 is implemented and validated.
+
+## 22. M3D0 bounded database foundation status (2026-09-10)
+
+The M3D0 implementation is complete but intentionally unapplied. It adds three protected, read-only, same-user and DB-bounded RPC definitions plus a fail-closed JavaScript repository adapter. Eligibility is filtered before vector ordering; semantic candidates require an active exact embedding identity and matching content hash; zero compatible embeddings degrades to lexical-only; and a bounded relation lookup preserves suppression when a replacement is outside the topical candidate pool.
+
+No production API imports the adapter, no Context Gateway or Ombre path changed, no shadow read is enabled, and no production database connection was made. Architecture, security, limits, minimal Chinese substring strategy, validation and manual application procedure are documented in `docs/xiaoc-memory-engine-m3d0.md`. The next action is authorized manual migration review/application and transactional validation—not M3D production integration.
