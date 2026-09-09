@@ -673,3 +673,58 @@ Known limitations intentionally deferred:
 - `consolidates`, `duplicates`, and `contradicts` need their complete cluster/canonical-representative policy in later offline work before production shadowing.
 
 No schema extension was required for this offline implementation. Production-scale repository filtering and relation-load failure behavior must be designed and validated before M3D. The next gate is M3B3 candidate generation/ranking over only the M3B2 eligible set; ranking may not broaden or bypass M3B2 decisions.
+
+## 20. M3B3 implementation status (2026-09-09)
+
+M3B3 is complete as an offline-only candidate, ranking and structured-result layer. `lib/xiaocMemoryRanking.js` owns a versioned policy, bounded channel generation, union by `memory_id`, hybrid scoring, thresholding, deterministic ordering, identity-based diversity, conservative top-k, privacy-safe trace generation and the `retrieveXiaoCMemoriesOffline` orchestration entrypoint. It imports M3B1 candidate primitives and sends the complete union through M3B2 before invoking any rank function. The rank function rejects candidates without an explicit eligible M3B2 decision.
+
+### 20.1 Candidate and repository contract
+
+The default offline policy is `m3b3-offline-v1`:
+
+- lexical candidate cap: 24;
+- semantic candidate cap: 24;
+- union/pre-rank cap: 32;
+- passive top-k: 3, configurable but hard-capped at 5;
+- legacy result slot cap: 1.
+
+The repository must expose `listLexicalCandidates({userId, query, limit})`. Semantic generation is optional and occurs only when the caller supplies a query vector, a complete embedding identity and `listSemanticCandidates({userId, queryEmbedding, embeddingIdentity, limit})`. Every returned semantic row must be `active` and exactly match provider, model, embedding version, preprocessor version and dimension. Stale, shadow, retired, mixed-version or malformed rows fail closed. A repository returning more than its requested channel limit is rejected rather than silently treated as a bounded implementation.
+
+Lexical and semantic rows are unioned by `memory_id`; one Memory therefore retains both component signals without becoming two candidates. With no query vector or semantic repository, the path is fully lexical-only and reports `semantic_available=false`, a null semantic score and `LEXICAL_ONLY` degradation. It does not fabricate zero-valued semantic evidence.
+
+### 20.2 Explainable provisional ranking
+
+M3B3 numeric values are deterministic evaluation defaults, not production calibration. Available topical signals are normalized first:
+
+```text
+lexical-only relevance  = lexical
+semantic-only relevance = semantic
+hybrid relevance        = 0.52 * lexical + 0.48 * semantic
+
+hybrid score =
+  0.88 * relevance
+  + 0.04 * clamped importance
+  + 0.03 * bounded event recency
+  + 0.02 * limited authority preference
+  + 0.03 * explicit/historical recall signal
+```
+
+Semantic absence changes the available-signal normalization; it is not treated as semantic zero. Importance is clamped to `0..10` and normalized to `0..1`. Recency uses `event_time`, then `valid_from`, then `created_at`; it decays deterministically with a two-year scale but retains a `0.2` historical floor. Missing time uses a neutral `0.35`. Authority remains metadata and a small preference only: unrelated verified Memory still fails the relevance threshold, while a relevant eligible legacy row remains visibly `legacy_limited`.
+
+Provisional relevance floors are `0.28` lexical-only, `0.58` semantic-only and `0.32` hybrid. Thresholding uses topical relevance, not importance/recency/authority bonuses, so soft metadata cannot rescue an irrelevant row. These floors and weights must be calibrated in M3C and must not be described as production quality targets.
+
+Tie-breaking is stable: hybrid score, topical relevance, lexical score, semantic score, authority component, recency, importance, then lexical `memory_id`. Input permutation cannot change results. After thresholding, diversity uses only deterministic `claim_key`, exact `content_hash`, or Memory identity. It never infers duplicates from embedding similarity. M3B2 already resolves claim winners; this final guard prevents duplicate identity/hash slots. At most one legacy-limited result is selected.
+
+### 20.3 Structured result and trace
+
+Selected results retain Memory/user identity, provenance, authority, retrieval tier, lifecycle, legacy limitation, claim key, temporal state, lexical/semantic availability and scores, normalized importance/recency/authority/relevance components, final hybrid score, stable selection reason codes and available event/validity timestamps. Canonical content is intentionally absent from the selected contract; future formatting/content loading belongs after selection and its own injection gate.
+
+The trace contains policy version, non-content query flags, per-channel/union counts, raw/eligible/suppressed/ranked/selected counts, threshold rejection count, degradation mode, bounded reason-code counts and local latency. It contains neither the full query nor Memory bodies. The module performs no logging and no work at import time.
+
+### 20.4 Safety and future database work
+
+Hard gates remain absolute. Cross-user, inactive, forbidden-tier, temporally invalid, claim-suppressed and relation-suppressed rows never reach ranking; perfect lexical/semantic scores and maximum importance cannot re-admit them. Historical recall changes only M3B2 temporal admission and a bounded soft recall component. It cannot restore deleted, disabled, superseded, quarantined or shadow-only rows.
+
+No schema change was required for the offline implementation. A future production candidate repository does require a reviewed, read-only database query/RPC boundary because the current schema has no bounded hybrid retrieval function. Its minimum contract is same-user scope, M3B2-compatible eligible IDs, bounded lexical and semantic limits, active embedding identity/version/dimension checks, relation loading for the returned IDs and no global nearest-neighbor query followed by unsafe post-filtering. An additive Chinese lexical search artifact/index should be proposed only if measured native volume/query plans justify it; no migration or RPC is created in M3B3.
+
+Known limits are deliberate: no production calibration, no token injection budget, no Context Gateway formatter, no production/shadow read, no real embedding generation and no Ombre integration. The next gate is M3C private offline evaluation of ranking quality, thresholds, legacy behavior and curated safety fixtures before any production shadow authorization.
