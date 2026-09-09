@@ -728,3 +728,17 @@ Hard gates remain absolute. Cross-user, inactive, forbidden-tier, temporally inv
 No schema change was required for the offline implementation. A future production candidate repository does require a reviewed, read-only database query/RPC boundary because the current schema has no bounded hybrid retrieval function. Its minimum contract is same-user scope, M3B2-compatible eligible IDs, bounded lexical and semantic limits, active embedding identity/version/dimension checks, relation loading for the returned IDs and no global nearest-neighbor query followed by unsafe post-filtering. An additive Chinese lexical search artifact/index should be proposed only if measured native volume/query plans justify it; no migration or RPC is created in M3B3.
 
 Known limits are deliberate: no production calibration, no token injection budget, no Context Gateway formatter, no production/shadow read, no real embedding generation and no Ombre integration. The next gate is M3C private offline evaluation of ranking quality, thresholds, legacy behavior and curated safety fixtures before any production shadow authorization.
+
+## 21. M3C private offline evaluation status (2026-09-09)
+
+The first deterministic private offline evaluation is complete. The 24-case, 15-category synthetic suite passes every hard safety gate but fails the initial quality gates: explicit-recall and grounded implicit-continuity misses remain, while synthetic semantic-only collisions create irrelevant selections. No default threshold or ranking weight was changed to manufacture a pass.
+
+Full methodology, metrics, ablation, sensitivity analysis, privacy boundary, failure taxonomy and the intermediate-phase recommendation are recorded in `docs/xiaoc-memory-engine-m3c-evaluation.md`. Current verdict: **NOT READY FOR M3D**. Complete the bounded M3C-R1 offline quality remediation and pass the unchanged gates, then implement the separately reviewed M3D0 bounded database retrieval RPC foundation before any production shadow read.
+
+### 21.1 M3C-R1 architecture delta and result
+
+M3C-R1 subsequently added a deterministic QueryPlan, bounded Recent/Active grounding interface, conservative reference-only skip, semantic-only grounded admission, and strong-lexical-versus-semantic compatibility rejection. It did not change M3B2 safety gates, global thresholds or the M3B3 ranking formula.
+
+The unchanged original 24 expectations now pass, as does an independent 12-case multi-domain holdout. Combined 36-case Recall@1/3, Precision@1/3, MRR, explicit recall, implicit continuity, empty correctness and no-retrieval correctness are 100%; all safety exposure, irrelevant recall, semantic-only ungrounded false admission and semantic collision wrong selection metrics are zero. These synthetic results clear the offline engineering gate but are not production calibration.
+
+Current recommendation: **READY FOR M3D0**, the separately reviewed bounded database retrieval RPC foundation. Production shadow read remains unauthorized until M3D0 is implemented and validated.

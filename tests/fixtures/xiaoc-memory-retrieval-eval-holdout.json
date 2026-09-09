@@ -1,0 +1,53 @@
+{
+  "dataset_version": "m3c-r1-holdout-v1",
+  "retrieval_time": "2026-09-09T12:00:00.000Z",
+  "expectation_defaults": {"expected_reason_codes": []},
+  "cases": [
+    {
+      "id":"holdout_explicit_book","category":"explicit_recall","query":"你还记得《三体》吗","mode":"historical_recall","explicit_recall":true,
+      "memories":[{"id":"book","content":"她以前读过三体"},{"id":"film","content":"她看过一部别的电影"}],"expected_selected_ids":["book"],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_explicit_food","category":"explicit_recall","query":"我以前提过最喜欢抹茶吗","mode":"historical_recall","explicit_recall":true,
+      "memories":[{"id":"matcha","content":"她最喜欢抹茶味甜点"},{"id":"coffee","content":"她喝过咖啡"}],"expected_selected_ids":["matcha"],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_grounded_semantic","category":"implicit_continuity","query":"后来呢","mode":"normal_current","grounding":{"strength":"STRONG","anchors":[{"value":"烘焙课","kind":"active_topic"}]},
+      "memories":[{"id":"baking","content":"她报名了甜点制作课程"}],"query_vector":[1,0],"semantic_vectors":{"baking":[1,0]},"expected_selected_ids":["baking"],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_grounded_purchase","category":"implicit_continuity","query":"还买吗","mode":"normal_current","grounding":{"strength":"STRONG","anchors":[{"value":"降噪耳机","kind":"active_entity"}]},
+      "memories":[{"id":"headphones","content":"她在考虑购买降噪耳机"},{"id":"shoes","content":"她买过一双鞋"}],"expected_selected_ids":["headphones"],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_collision_movie","category":"irrelevant_semantic_similarity","query":"上次那部温柔的电影","mode":"historical_recall",
+      "memories":[{"id":"wrong_movie","content":"一次无关的购物经历"}],"query_vector":[1,0],"semantic_vectors":{"wrong_movie":[0.98,0.19899749]},"expected_selected_ids":[],"expected_suppressed_ids":[],"dangerous_ids":[],"irrelevant_ids":["wrong_movie"]
+    },
+    {
+      "id":"holdout_collision_promise","category":"irrelevant_semantic_similarity","query":"我们之前的约定","mode":"historical_recall",
+      "memories":[{"id":"wrong_promise","content":"另一件无关生活事件"}],"query_vector":[1,0],"semantic_vectors":{"wrong_promise":[1,0]},"expected_selected_ids":[],"expected_suppressed_ids":[],"dangerous_ids":[],"irrelevant_ids":["wrong_promise"]
+    },
+    {
+      "id":"holdout_disagreement_nickname","category":"lexical_semantic_disagreement","query":"小满","mode":"normal_current",
+      "memories":[{"id":"nickname","content":"她喜欢被叫小满"},{"id":"semantic_wrong","content":"一件完全无关的物品"}],"query_vector":[1,0],"semantic_vectors":{"nickname":[0.7,0.71414284],"semantic_wrong":[1,0]},"expected_selected_ids":["nickname"],"expected_suppressed_ids":[],"dangerous_ids":[],"irrelevant_ids":["semantic_wrong"]
+    },
+    {
+      "id":"holdout_disagreement_place","category":"lexical_semantic_disagreement","query":"南京","mode":"normal_current",
+      "memories":[{"id":"nanjing","content":"她现在住在南京"},{"id":"semantic_wrong","content":"另一个城市的旧故事"}],"query_vector":[1,0],"semantic_vectors":{"nanjing":[0.65,0.75993421],"semantic_wrong":[1,0]},"expected_selected_ids":["nanjing"],"expected_suppressed_ids":[],"dangerous_ids":[],"irrelevant_ids":["semantic_wrong"]
+    },
+    {
+      "id":"holdout_ambiguous_later","category":"short_ambiguous_query","query":"后来呢","mode":"normal_current","memories":[{"id":"random","content":"她完成过一件事情"}],"expected_selected_ids":[],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_ambiguous_buy","category":"short_ambiguous_query","query":"还买吗","mode":"normal_current","memories":[{"id":"random_buy","content":"她以前买过相机"}],"expected_selected_ids":[],"expected_suppressed_ids":[],"dangerous_ids":[]
+    },
+    {
+      "id":"holdout_legacy_correction","category":"legacy_trap","query":"现在喜欢吃辣吗","mode":"normal_current",
+      "memories":[{"id":"current_spicy","content":"她现在不喜欢吃辣","claim_key":"preference:spicy"},{"id":"legacy_spicy","content":"她喜欢吃辣","kind":"legacy","claim_key":"preference:spicy","importance":10}],"expected_selected_ids":["current_spicy"],"expected_suppressed_ids":["legacy_spicy"],"dangerous_ids":["legacy_spicy"],"legacy_false_current_ids":["legacy_spicy"]
+    },
+    {
+      "id":"holdout_superseded_appointment","category":"superseded_claim","query":"周末约在哪里","mode":"normal_current",
+      "memories":[{"id":"old_place","content":"周末约在旧书店","kind":"legacy","importance":10},{"id":"new_place","content":"周末约在美术馆"}],"relations":[{"user_id":"user","from_memory_id":"new_place","to_memory_id":"old_place","relation_type":"supersedes"}],"expected_selected_ids":["new_place"],"expected_suppressed_ids":["old_place"],"dangerous_ids":["old_place"],"superseded_ids":["old_place"]
+    }
+  ]
+}

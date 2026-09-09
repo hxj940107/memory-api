@@ -96,7 +96,7 @@ test("repository cannot return an unbounded pool", async () => {
 test("strong exact lexical and strong semantic candidates survive thresholds", async () => {
   const exact = await retrieve(repository({ lexical: [native("exact", "长滩岛")] }))
   assert.deepEqual(exact.results.map((item) => item.memory_id), ["exact"])
-  const semantic = await retrieve(repository({ lexical: [], semantic: [semanticRow(native("semantic", "旧日海边旅行"), [1, 0])] }), { queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  const semantic = await retrieve(repository({ lexical: [], semantic: [semanticRow(native("semantic", "旧日海边旅行"), [1, 0])] }), { queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY, retrievalContext: { grounding: { strength: "STRONG", anchors: ["海边度假"] } } })
   assert.deepEqual(semantic.results.map((item) => item.memory_id), ["semantic"])
 })
 
@@ -131,7 +131,7 @@ test("authority preference is limited and cannot rescue irrelevant verified memo
 })
 
 test("legacy high semantic remains explicitly legacy-limited", async () => {
-  const result = await retrieve(repository({ lexical: [], semantic: [semanticRow(legacy("legacy", "旧旅行"), [1, 0])] }), { queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  const result = await retrieve(repository({ lexical: [], semantic: [semanticRow(legacy("legacy", "旧旅行"), [1, 0])] }), { queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY, retrievalContext: { grounding: { strength: "STRONG", anchors: ["旧旅行"] } } })
   assert.equal(result.results[0].legacy_limited, true)
   assert.equal(result.results[0].authority_tier, "legacy_limited")
 })

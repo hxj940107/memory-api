@@ -1,0 +1,130 @@
+{
+  "dataset_version": "m3c-synthetic-v1",
+  "retrieval_time": "2026-09-09T12:00:00.000Z",
+  "expectation_defaults": {"expected_reason_codes": []},
+  "cases": [
+    {
+      "id": "explicit_boracay_history", "category": "explicit_recall", "query": "你还记得长滩岛吗", "mode": "historical_recall", "explicit_recall": true,
+      "memories": [{"id":"boracay","content":"她以前去过长滩岛旅行","event_time":"2024-10-01"},{"id":"work","content":"她完成过一次工作汇报"}],
+      "expected_selected_ids": ["boracay"], "expected_suppressed_ids": [], "dangerous_ids": [], "failure_taxonomy_hint":"LEXICAL_MISS"
+    },
+    {
+      "id": "implicit_island_grounded", "category": "implicit_continuity", "query": "之前那个海岛后来怎么样", "mode": "normal_current",
+      "memories": [{"id":"island","content":"之前那个海岛是长滩岛"},{"id":"movie","content":"之前看过一部电影"}],
+      "expected_selected_ids": ["island"], "expected_suppressed_ids": [], "dangerous_ids": [], "failure_taxonomy_hint":"THRESHOLD_FAILURE"
+    },
+    {
+      "id": "current_preference_correction", "category": "current_state_contradiction", "query": "现在不喜欢榴莲了", "mode": "normal_current",
+      "memories": [{"id":"old_durian","content":"她喜欢榴莲","kind":"legacy","claim_key":"preference:durian","importance":10}],
+      "external_claims": [{"id":"current-turn","user_id":"user","claim_key":"preference:durian","conflict":true}],
+      "expected_selected_ids": [], "expected_suppressed_ids": ["old_durian"], "dangerous_ids": ["old_durian"], "legacy_false_current_ids": ["old_durian"]
+    },
+    {
+      "id": "changed_plan_current", "category": "changed_plan", "query": "国庆现在去哪", "mode": "normal_current",
+      "memories": [{"id":"old_plan","content":"国庆去长滩岛","kind":"legacy","importance":10},{"id":"new_plan","content":"国庆现在计划去京都","claim_key":"plan:national-day"}],
+      "relations": [{"user_id":"user","from_memory_id":"new_plan","to_memory_id":"old_plan","relation_type":"supersedes"}],
+      "expected_selected_ids": ["new_plan"], "expected_suppressed_ids": ["old_plan"], "dangerous_ids": ["old_plan"], "superseded_ids": ["old_plan"]
+    },
+    {
+      "id": "changed_plan_historical", "category": "changed_plan", "query": "去年国庆原本准备去哪", "mode": "historical_recall", "explicit_recall": true,
+      "memories": [{"id":"past_plan","content":"去年国庆原本准备去长滩岛","valid_until":"2025-10-10"}],
+      "expected_selected_ids": ["past_plan"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "resolved_event_current_empty", "category": "historical_event", "query": "海岛旅行", "mode": "normal_current",
+      "memories": [{"id":"resolved_trip","content":"去年海岛旅行去了长滩岛","resolved_at":"2025-10-10"}],
+      "expected_selected_ids": [], "expected_suppressed_ids": ["resolved_trip"], "dangerous_ids": ["resolved_trip"]
+    },
+    {
+      "id": "resolved_event_historical", "category": "historical_event", "query": "去年海岛旅行", "mode": "historical_recall", "explicit_recall": true,
+      "memories": [{"id":"resolved_trip","content":"去年海岛旅行去了长滩岛","resolved_at":"2025-10-10"}],
+      "expected_selected_ids": ["resolved_trip"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "relationship_authority", "category": "relationship_fact", "query": "我们的关系纪念日", "mode": "normal_current",
+      "memories": [{"id":"verified_relation","content":"我们的关系纪念日是五月二十日","claim_key":"relationship:anniversary"},{"id":"legacy_relation","content":"我们的关系纪念日是六月一日","kind":"legacy","claim_key":"relationship:anniversary","importance":10}],
+      "expected_selected_ids": ["verified_relation"], "expected_suppressed_ids": ["legacy_relation"], "dangerous_ids": ["legacy_relation"], "legacy_false_current_ids": ["legacy_relation"]
+    },
+    {
+      "id": "nickname_exact", "category": "nickname_entity", "query": "团子", "mode": "normal_current",
+      "memories": [{"id":"nickname","content":"她的小名叫团子"},{"id":"food","content":"她喜欢吃饭团"}],
+      "expected_selected_ids": ["nickname"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "mixed_entity_boracay", "category": "nickname_entity", "query": "Boracay 长滩岛", "mode": "historical_recall", "explicit_recall": true,
+      "memories": [{"id":"mixed_place","content":"Boracay 就是长滩岛的英文名"},{"id":"other_place","content":"Bohol 是薄荷岛"}],
+      "expected_selected_ids": ["mixed_place"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "temporal_future", "category": "temporal", "query": "明年北海道旅行", "mode": "normal_current",
+      "memories": [{"id":"future_trip","content":"明年北海道旅行","valid_from":"2027-01-01"}],
+      "expected_selected_ids": [], "expected_suppressed_ids": ["future_trip"], "dangerous_ids": ["future_trip"]
+    },
+    {
+      "id": "temporal_current", "category": "temporal", "query": "现在学日语", "mode": "normal_current",
+      "memories": [{"id":"current_study","content":"她现在正在学日语","valid_from":"2026-01-01","valid_until":"2026-12-31"}],
+      "expected_selected_ids": ["current_study"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "temporal_unknown", "category": "temporal", "query": "喜欢蓝色", "mode": "normal_current",
+      "memories": [{"id":"unknown_time","content":"她喜欢蓝色"}],
+      "expected_selected_ids": ["unknown_time"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "semantic_paraphrase", "category": "semantic_behavior", "query": "之前那次海边度假", "mode": "historical_recall", "explicit_recall": true,
+      "memories": [{"id":"semantic_trip","content":"她曾完成一次岛屿旅行"}], "query_vector":[1,0], "semantic_vectors":{"semantic_trip":[1,0]},
+      "expected_selected_ids": ["semantic_trip"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "weak_semantic_empty", "category": "semantic_behavior", "query": "之前那次海边度假", "mode": "historical_recall",
+      "memories": [{"id":"weak_semantic","content":"她曾完成一次岛屿旅行"}], "query_vector":[1,0], "semantic_vectors":{"weak_semantic":[0.5,0.8660254]},
+      "expected_selected_ids": [], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "semantic_collision", "category": "irrelevant_semantic_similarity", "query": "上次说的海岛旅行", "mode": "historical_recall",
+      "memories": [{"id":"wrong_event","content":"另一位朋友的一次完全不同经历"}], "query_vector":[1,0], "semantic_vectors":{"wrong_event":[0.99,0.14106736]},
+      "expected_selected_ids": [], "expected_suppressed_ids": [], "dangerous_ids": [], "irrelevant_ids": ["wrong_event"], "failure_taxonomy_hint":"RANKING_FAILURE"
+    },
+    {
+      "id": "short_ambiguous", "category": "short_ambiguous_query", "query": "那个呢", "mode": "normal_current",
+      "memories": [{"id":"random_memory","content":"她上周完成了阅读"},{"id":"random_trip","content":"她去年去了旅行"}],
+      "expected_selected_ids": [], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "no_retrieval_greeting", "category": "no_retrieval_needed", "query": "早上好", "mode": "normal_current", "should_retrieve": false,
+      "memories": [{"id":"morning","content":"她喜欢早晨散步"}],
+      "expected_selected_ids": [], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "no_retrieval_ack", "category": "no_retrieval_needed", "query": "嗯嗯知道了", "mode": "normal_current", "should_retrieve": false,
+      "memories": [{"id":"ack_trap","content":"她知道一个历史事件"}],
+      "expected_selected_ids": [], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "legacy_trap", "category": "legacy_trap", "query": "现在最喜欢的饮料", "mode": "normal_current",
+      "memories": [{"id":"verified_drink","content":"她现在最喜欢的饮料是茶","claim_key":"preference:drink"},{"id":"legacy_drink","content":"她现在最喜欢的饮料是咖啡","kind":"legacy","claim_key":"preference:drink","importance":10}], "query_vector":[1,0], "semantic_vectors":{"legacy_drink":[1,0],"verified_drink":[0.7,0.71414284]},
+      "expected_selected_ids": ["verified_drink"], "expected_suppressed_ids": ["legacy_drink"], "dangerous_ids": ["legacy_drink"], "legacy_false_current_ids": ["legacy_drink"]
+    },
+    {
+      "id": "superseded_resurrection", "category": "superseded_claim", "query": "以前最喜欢的城市", "mode": "normal_current",
+      "memories": [{"id":"old_city","content":"她以前最喜欢的城市是上海","kind":"legacy","importance":10},{"id":"new_city","content":"她现在最喜欢的城市是南京"}], "query_vector":[1,0], "semantic_vectors":{"old_city":[1,0],"new_city":[0.8,0.6]},
+      "relations": [{"user_id":"user","from_memory_id":"new_city","to_memory_id":"old_city","relation_type":"supersedes"}],
+      "expected_selected_ids": ["new_city"], "expected_suppressed_ids": ["old_city"], "dangerous_ids": ["old_city"], "superseded_ids": ["old_city"]
+    },
+    {
+      "id": "cross_user_isolation", "category": "cross_user_isolation", "query": "长滩岛", "mode": "historical_recall",
+      "memories": [{"id":"other_user","content":"长滩岛","user_id":"other"},{"id":"same_user","content":"她去过长滩岛"}],
+      "expected_selected_ids": ["same_user"], "expected_suppressed_ids": ["other_user"], "dangerous_ids": ["other_user"], "cross_user_ids": ["other_user"]
+    },
+    {
+      "id": "date_fullwidth", "category": "nickname_entity", "query": "２０２５／１０／０１", "mode": "historical_recall",
+      "memories": [{"id":"date_event","content":"事件日期是2025/10/01"}],
+      "expected_selected_ids": ["date_event"], "expected_suppressed_ids": [], "dangerous_ids": []
+    },
+    {
+      "id": "lexical_semantic_disagreement", "category": "irrelevant_semantic_similarity", "query": "长滩岛", "mode": "historical_recall",
+      "memories": [{"id":"exact_place","content":"长滩岛"},{"id":"semantic_distractor","content":"完全不同的另一段事件"}], "query_vector":[1,0], "semantic_vectors":{"exact_place":[0.6,0.8],"semantic_distractor":[1,0]},
+      "expected_selected_ids": ["exact_place"], "expected_suppressed_ids": [], "dangerous_ids": [], "irrelevant_ids": ["semantic_distractor"], "failure_taxonomy_hint":"RANKING_FAILURE"
+    }
+  ]
+}
