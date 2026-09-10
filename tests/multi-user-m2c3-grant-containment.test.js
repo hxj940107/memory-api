@@ -1,0 +1,93 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import test from "node:test"
+
+const forward = readFileSync(new URL("../supabase_multi_user_m2c3_grant_containment.sql", import.meta.url), "utf8")
+const validation = readFileSync(new URL("../supabase_multi_user_m2c3_grant_validation.sql", import.meta.url), "utf8")
+const rollback = readFileSync(new URL("../supabase_multi_user_m2c3_grant_rollback.sql", import.meta.url), "utf8")
+
+const coreTables = ["conversation_summary", "conversations", "memories", "messages", "user_state"]
+const sequences = [
+  "album_assets_id_seq",
+  "background_worker_run_audit_id_seq",
+  "conversation_summary_id_seq",
+  "moment_candidates_id_seq",
+  "moment_check_audit_id_seq",
+  "moment_xiaoc_activity_id_seq",
+  "treehole_execution_audit_id_seq",
+  "xiaoc_proactive_tasks_id_seq",
+]
+const guards = [
+  "xiaoc_memory_guard_append_only",
+  "xiaoc_memory_guard_embedding_transition",
+  "xiaoc_memory_guard_import_run",
+  "xiaoc_memory_guard_item_immutable",
+  "xiaoc_memory_guard_operation_transition",
+]
+
+test("M2C.3 is an atomic ACL-only migration with drift detection", () => {
+  const executableSql = forward.replace(/^\s*--.*$/gm, "")
+
+  assert.match(forward, /^-- Multi-user M2C\.3/m)
+  assert.match(forward, /begin;[\s\S]*commit;/i)
+  assert.match(forward, /pg_advisory_xact_lock/)
+  assert.match(forward, /M2C3_PARTIAL_OR_DRIFTED_ACL_STATE/)
+  assert.match(forward, /v_before :=/)
+  assert.match(forward, /v_after :=/)
+
+  assert.doesNotMatch(forward, /\b(?:create|alter|drop)\s+table\b/i)
+  assert.doesNotMatch(forward, /\b(?:enable|disable|force)\s+row\s+level\s+security\b/i)
+  assert.doesNotMatch(forward, /\bcreate\s+policy\b/i)
+  assert.doesNotMatch(forward, /\b(?:insert|update|delete|truncate)\s+(?:into|from|table)\b/i)
+  assert.doesNotMatch(executableSql, /storage\.|ombre|auth\.users|user_uuid|owner_uuid/i)
+})
+
+test("M2C.3 removes the exposed Moment RPC and direct trigger-function execution", () => {
+  assert.match(forward, /revoke all on function public\.check_pending_moments_for_xiaoc\(\) from public, anon, authenticated/i)
+  assert.match(forward, /grant execute on function public\.check_pending_moments_for_xiaoc\(\) to service_role/i)
+  for (const guard of guards) {
+    assert.match(forward, new RegExp(`revoke all on function public\\.${guard}\\(\\) from public, anon, authenticated`, "i"))
+    assert.match(rollback, new RegExp(`grant execute on function public\\.${guard}\\(\\) to public, anon, authenticated, service_role`, "i"))
+  }
+})
+
+test("M2C.3 denies ordinary roles on RLS-off Core and all public sequences", () => {
+  for (const table of coreTables) {
+    assert.match(forward, new RegExp(`public\\.${table}`))
+    assert.match(validation, new RegExp(`public\\.${table}`))
+  }
+  assert.match(forward, /revoke all privileges on table[\s\S]*from anon, authenticated/i)
+  for (const sequence of sequences) {
+    assert.match(forward, new RegExp(`public\\.${sequence}`))
+    assert.match(rollback, new RegExp(`public\\.${sequence}`))
+  }
+  assert.match(forward, /revoke all privileges on sequence[\s\S]*from anon, authenticated/i)
+})
+
+test("future defaults become explicit without reducing service_role", () => {
+  assert.match(forward, /alter default privileges for role postgres in schema public revoke all privileges on tables from anon, authenticated/i)
+  assert.match(forward, /alter default privileges for role postgres in schema public revoke all privileges on sequences from anon, authenticated/i)
+  assert.match(forward, /alter default privileges for role postgres in schema public revoke execute on functions from public, anon, authenticated/i)
+  assert.doesNotMatch(forward, /revoke[^;]*from service_role/i)
+})
+
+test("validation covers private, worker, sequence, Core, and Memory Engine lanes", () => {
+  for (const label of [
+    "check_pending retained for service_role",
+    "service core table lane retained",
+    "service sequence lane retained",
+    "Memory Engine callable RPCs remain service-only",
+    "worker RPCs retain service execute",
+  ]) assert.match(validation, new RegExp(label))
+  assert.match(validation, /begin transaction read only/i)
+  assert.match(validation, /rollback;/i)
+})
+
+test("rollback restores every privilege class changed by forward", () => {
+  assert.match(rollback, /begin;[\s\S]*commit;/i)
+  assert.match(rollback, /grant all privileges on table[\s\S]*to anon, authenticated, service_role/i)
+  assert.match(rollback, /grant all privileges on sequence[\s\S]*to anon, authenticated, service_role/i)
+  assert.match(rollback, /alter default privileges[\s\S]*grant execute on functions to anon, authenticated, service_role/i)
+  assert.doesNotMatch(rollback, /\b(?:create|alter|drop)\s+table\b/i)
+  assert.doesNotMatch(rollback, /\bcreate\s+policy\b/i)
+})
