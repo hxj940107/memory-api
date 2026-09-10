@@ -25,15 +25,15 @@ select 'core tables denied to anon/authenticated',
          cross join unnest(array[
            'public.conversation_summary','public.conversations','public.memories','public.messages','public.user_state'
          ]) t
-         cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+         cross join unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) p
          where has_table_privilege(r,t,p)
        ), null
 union all
-select 'no public table has anon/auth high-risk privilege',
+select 'no public table has anon/auth high-risk privilege including MAINTAIN',
        not exists (
          select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
          cross join unnest(array['anon','authenticated']) r
-         cross join unnest(array['TRUNCATE','REFERENCES','TRIGGER']) p
+         cross join unnest(array['TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) p
          where n.nspname='public' and c.relkind in ('r','p')
            and has_table_privilege(r,c.oid,p)
        ), null

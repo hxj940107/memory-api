@@ -39,9 +39,9 @@ These are the five Production tables with RLS OFF. Repository caller review foun
 
 ### 2.3 High-risk table privileges safe to contain now
 
-Revoke `TRUNCATE`, `TRIGGER`, and `REFERENCES` from `anon`/`authenticated` wherever M2A observed them, with the two audit tables receiving their actual `REFERENCES`/`TRIGGER` subset.
+Revoke `TRUNCATE`, `TRIGGER`, `REFERENCES`, and PostgreSQL 17 `MAINTAIN` from `anon`/`authenticated` wherever the current catalog observed them. The two audit tables receive their actual `REFERENCES`/`TRIGGER`/`MAINTAIN` subset.
 
-This is narrower than removing ordinary CRUD from every RLS-enabled table. RLS does not protect `TRUNCATE`, and these administration/DDL-adjacent privileges are not legitimate client capabilities. No current Private App route needs them.
+This is narrower than removing ordinary CRUD from every RLS-enabled table. RLS does not protect these maintenance and administration privileges, and they are not legitimate client capabilities. `MAINTAIN` permits operations such as `VACUUM`, `ANALYZE`, `REINDEX`, and `CLUSTER`. No current Private App route needs them.
 
 ### 2.4 Sequences safe to contain now
 
@@ -76,7 +76,7 @@ These are deliberately outside M2C.3:
 
 ## 4. Repeatability and partial-apply behavior
 
-All forward ACL statements are idempotent. More importantly, the transaction preflight counts the exact M2A baseline across exposed functions, five Core tables, high-risk table privileges, eight sequences, and future default ACLs.
+All forward ACL statements are idempotent. More importantly, the transaction preflight counts the exact refreshed Production baseline across exposed functions, five Core tables, high-risk table privileges, eight sequences, and future default ACLs. The PostgreSQL 17 baseline is `80` Core privilege instances, `140` high-risk table privilege instances, and `24` relevant default-ACL privilege instances; the earlier `70`/`104`/`22` counts omitted `MAINTAIN`.
 
 - Exact baseline: proceed.
 - Exact desired state: safe repeat; statements remain no-ops.
@@ -92,7 +92,7 @@ Expected behavior change:
 
 - unauthenticated/authenticated PostgREST callers can no longer invoke the global Moment writer;
 - ordinary roles can no longer directly reach the RLS-off Core tables;
-- ordinary roles cannot truncate/alter trigger/reference behavior on covered business tables or access public sequences;
+- ordinary roles cannot truncate, maintain, alter trigger/reference behavior on covered business tables, or access public sequences;
 - future public objects do not inherit ordinary-role privileges automatically.
 
 Expected unchanged behavior:

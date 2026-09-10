@@ -64,6 +64,19 @@ test("M2C.3 denies ordinary roles on RLS-off Core and all public sequences", () 
   assert.match(forward, /revoke all privileges on sequence[\s\S]*from anon, authenticated/i)
 })
 
+test("PostgreSQL 17 MAINTAIN is baselined, denied, validated, and reversible", () => {
+  assert.match(forward, /v_core_grants = 80/i)
+  assert.match(forward, /v_high_risk_grants = 140/i)
+  assert.match(forward, /v_default_acl_grants = 24/i)
+  assert.match(forward, /revoke truncate, references, trigger, maintain on table/i)
+  assert.match(forward, /revoke references, trigger, maintain on table/i)
+  assert.match(validation, /high-risk privilege including MAINTAIN/i)
+  assert.match(validation, /'TRUNCATE','REFERENCES','TRIGGER','MAINTAIN'/i)
+  assert.match(rollback, /grant truncate, references, trigger, maintain on table/i)
+  assert.match(rollback, /grant references, trigger, maintain on table/i)
+  assert.equal(forward.match(/\('public\.[^']+', 'MAINTAIN'\)/g)?.length, 18)
+})
+
 test("future defaults become explicit without reducing service_role", () => {
   assert.match(forward, /alter default privileges for role postgres in schema public revoke all privileges on tables from anon, authenticated/i)
   assert.match(forward, /alter default privileges for role postgres in schema public revoke all privileges on sequences from anon, authenticated/i)

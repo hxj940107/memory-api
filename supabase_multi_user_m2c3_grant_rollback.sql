@@ -23,7 +23,7 @@ grant all privileges on table
   public.user_state
 to anon, authenticated, service_role;
 
-grant truncate, references, trigger on table
+grant truncate, references, trigger, maintain on table
   public.album_assets,
   public.conversation_summary,
   public.conversations,
@@ -42,7 +42,7 @@ grant truncate, references, trigger on table
   public.xiaoc_proactive_tasks
 to anon, authenticated, service_role;
 
-grant references, trigger on table
+grant references, trigger, maintain on table
   public.background_worker_run_audit,
   public.treehole_execution_audit
 to anon, authenticated, service_role;

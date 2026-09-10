@@ -63,7 +63,7 @@ begin
     'public.user_state'
   ]) as table_name
   cross join unnest(array[
-    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'
   ]) as privilege_name
   where has_table_privilege(role_name, table_name, privilege_name);
 
@@ -88,7 +88,25 @@ begin
       ('public.treehole_entries', 'REFERENCES'), ('public.treehole_entries', 'TRIGGER'), ('public.treehole_entries', 'TRUNCATE'),
       ('public.treehole_execution_audit', 'REFERENCES'), ('public.treehole_execution_audit', 'TRIGGER'),
       ('public.user_state', 'REFERENCES'), ('public.user_state', 'TRIGGER'), ('public.user_state', 'TRUNCATE'),
-      ('public.xiaoc_proactive_tasks', 'REFERENCES'), ('public.xiaoc_proactive_tasks', 'TRIGGER'), ('public.xiaoc_proactive_tasks', 'TRUNCATE')
+      ('public.xiaoc_proactive_tasks', 'REFERENCES'), ('public.xiaoc_proactive_tasks', 'TRIGGER'), ('public.xiaoc_proactive_tasks', 'TRUNCATE'),
+      ('public.album_assets', 'MAINTAIN'),
+      ('public.background_worker_run_audit', 'MAINTAIN'),
+      ('public.conversation_summary', 'MAINTAIN'),
+      ('public.conversations', 'MAINTAIN'),
+      ('public.diary_entries', 'MAINTAIN'),
+      ('public.memories', 'MAINTAIN'),
+      ('public.messages', 'MAINTAIN'),
+      ('public.moment_candidates', 'MAINTAIN'),
+      ('public.moment_check_audit', 'MAINTAIN'),
+      ('public.moment_comments', 'MAINTAIN'),
+      ('public.moment_entries', 'MAINTAIN'),
+      ('public.moment_interaction_state', 'MAINTAIN'),
+      ('public.moment_xiaoc_activity', 'MAINTAIN'),
+      ('public.shared_contexts', 'MAINTAIN'),
+      ('public.treehole_entries', 'MAINTAIN'),
+      ('public.treehole_execution_audit', 'MAINTAIN'),
+      ('public.user_state', 'MAINTAIN'),
+      ('public.xiaoc_proactive_tasks', 'MAINTAIN')
   ) as target(table_name, privilege_name)
   where has_table_privilege(role_name, target.table_name, target.privilege_name);
 
@@ -122,10 +140,10 @@ begin
 
   v_before := v_check_grants = 2
     and v_guard_grants = 10
-    and v_core_grants = 70
-    and v_high_risk_grants = 104
+    and v_core_grants = 80
+    and v_high_risk_grants = 140
     and v_sequence_grants = 48
-    and v_default_acl_grants = 22;
+    and v_default_acl_grants = 24;
 
   v_after := v_check_grants = 0
     and v_guard_grants = 0
@@ -166,7 +184,7 @@ revoke all privileges on table
 from anon, authenticated;
 
 -- These privileges are not row-level CRUD and must not remain on business tables.
-revoke truncate, references, trigger on table
+revoke truncate, references, trigger, maintain on table
   public.album_assets,
   public.conversation_summary,
   public.conversations,
@@ -185,7 +203,7 @@ revoke truncate, references, trigger on table
   public.xiaoc_proactive_tasks
 from anon, authenticated;
 
-revoke references, trigger on table
+revoke references, trigger, maintain on table
   public.background_worker_run_audit,
   public.treehole_execution_audit
 from anon, authenticated;
