@@ -42,6 +42,7 @@ import {
 import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
+import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 import {
   buildProactivePushMessage,
   sendExpoPushMessage,
@@ -3334,6 +3335,16 @@ try {
     }
   )
   dynamicMemory = memoryResult.dynamicMemory
+  waitUntil(runXiaoCMemoryShadowRead({
+    client: supabase,
+    env: process.env,
+    trustedUserId: APP_USER.defaultUserId,
+    requestedUserId: user_id,
+    message,
+    correlationId: userMessageId || `${cid}:memory-shadow`,
+    ombreResults: dynamicMemory,
+    activeItems: activeConversationContext.items,
+  }).catch(() => null))
 } catch (err) {
   console.error("dynamic memory exclusion load failed; injection skipped:", err)
 }
