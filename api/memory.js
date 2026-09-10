@@ -93,6 +93,13 @@ import {
   withRetryMarker,
 } from "../lib/backgroundTaskReliability.js"
 import {
+  bestEffortCleanupObservability,
+  bestEffortInsertAudit,
+  buildTreeholeExecutionAudit,
+  buildWorkerRunAudit,
+  shouldRunObservabilityCleanup,
+} from "../lib/backgroundObservability.js"
+import {
   WEATHER_SHADOW_SOURCE_TYPE,
   WEATHER_SHADOW_TASK_TYPE,
   decideWeatherShadowEligibility,
@@ -2447,10 +2454,11 @@ async function getAutonomousTreeholeContext(user_id) {
   }
 }
 
-async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext = null) {
+async function generateAndSaveTreeholeUpdates(user_id, source, preparedContext = null, auditTrace = null) {
   const { chatContext, treeholeContext, sourceMessages = [] } = preparedContext ||
     await getAutonomousTreeholeContext(user_id)
   const currentDate = getMomentLocalTime().date.replace(/-/g, ".")
+  if (auditTrace) auditTrace.judgeAttempted = true
   const raw = await callSmallLLM(
     [
       {
@@ -2550,6 +2558,7 @@ ${treeholeContext}
     }
   }
 
+  if (auditTrace) auditTrace.publishAttempted = true
   const { data, error } = await supabase
     .from("treehole_entries")
     .insert(drafts.map((draft) => ({
@@ -2563,7 +2572,10 @@ ${treeholeContext}
     })))
     .select("id")
 
-  if (error) throw error
+  if (error) {
+    error.observabilityCode = "TREEHOLE_PUBLISH_FAILED"
+    throw error
+  }
 
   await sendContentUpdateNotification(user_id, "treehole_update")
 
@@ -2580,6 +2592,7 @@ ${treeholeContext}
 }
 
 async function executeAutonomousTreeholeUpdate(task) {
+  const auditTrace = task.treeholeAuditTrace || null
   const { data: latestEntry, error: latestError } = await supabase
     .from("treehole_entries")
     .select("created_at")
@@ -2604,6 +2617,11 @@ async function executeAutonomousTreeholeUpdate(task) {
   }
 
   const context = await getAutonomousTreeholeContext(task.user_id)
+  if (auditTrace) {
+    auditTrace.newUserMessageCount = context.newUserMessageCount
+    auditTrace.newUserChars = context.newUserChars
+    auditTrace.prefilterResult = "insufficient_new_material"
+  }
   const hasEnoughNewMaterial =
     context.newUserMessageCount >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewUserMessages &&
     context.newUserChars >= TREEHOLE_AUTONOMOUS_POLICY.minimumNewChatChars
@@ -2617,6 +2635,10 @@ async function executeAutonomousTreeholeUpdate(task) {
         ...(task.payload || {}),
         treehole_generation_attempted: false,
         treehole_prefilter_reason: "insufficient_new_material",
+        treehole_prefilter_detail:
+          context.newUserMessageCount < TREEHOLE_AUTONOMOUS_POLICY.minimumNewUserMessages
+            ? "insufficient_new_messages"
+            : "insufficient_new_chars",
         treehole_new_user_message_count: context.newUserMessageCount,
         treehole_new_user_chars: context.newUserChars,
         treehole_new_chat_chars: context.newChatChars,
@@ -2625,7 +2647,8 @@ async function executeAutonomousTreeholeUpdate(task) {
     }
   }
 
-  const result = await generateAndSaveTreeholeUpdates(task.user_id, "autonomous", context)
+  if (auditTrace) auditTrace.prefilterResult = "sufficient_new_material"
+  const result = await generateAndSaveTreeholeUpdates(task.user_id, "autonomous", context, auditTrace)
   return {
     ...result,
     payload: {
@@ -3962,12 +3985,13 @@ async function checkPendingProactiveTasks() {
     .order("due_at", { ascending: true })
     .limit(10)
 
+  const taskCounts = { processed: 0, skipped: 0, by_type: {} }
   if (error && error.code === "42P01") {
-    return { checked: 0, completed: 0, deferred: 0, failed: 0, missingTable: true }
+    return { checked: 0, completed: 0, deferred: 0, failed: 0, missingTable: true, task_counts: taskCounts }
   }
 
   if (error) throw error
-  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0, reconciliation }
+  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0, reconciliation, task_counts: taskCounts }
 
   const shadowWakeups = pending.filter(item => item.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
   const quietDeferred = pending.filter(item => item.type !== PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
@@ -3981,8 +4005,13 @@ async function checkPendingProactiveTasks() {
 
     if (deferError) throw deferError
 
+    taskCounts.processed += quietDeferred.length
+    for (const task of quietDeferred) {
+      taskCounts.by_type[task.type] = (taskCounts.by_type[task.type] || 0) + 1
+    }
+
     if (!shadowWakeups.length) {
-      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt, reconciliation }
+      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt, reconciliation, task_counts: taskCounts }
     }
   }
 
@@ -4013,8 +4042,18 @@ async function checkPendingProactiveTasks() {
 
     if (claimError || !claimed) continue
 
+    taskCounts.processed += 1
+    taskCounts.by_type[task.type] = (taskCounts.by_type[task.type] || 0) + 1
+    const treeholeStartedAt = task.type === "treehole_autonomous_update"
+      ? new Date().toISOString()
+      : null
+    if (treeholeStartedAt) task.treeholeAuditTrace = {}
+    let treeholeResult = null
+    let treeholeError = null
+
     try {
       const result = await executeProactiveTask(task)
+      treeholeResult = result
 
       if (result.deferred) {
         await supabase
@@ -4033,6 +4072,7 @@ async function checkPendingProactiveTasks() {
       }
 
       if (result.skipped) {
+        taskCounts.skipped += 1
         await supabase
           .from("xiaoc_proactive_tasks")
           .update({
@@ -4062,6 +4102,7 @@ async function checkPendingProactiveTasks() {
       completed += 1
 
     } catch (taskError) {
+      treeholeError = taskError
       failed += 1
       console.error("xiaoc proactive task failed:", taskError)
       const isEmptyTreeholeGeneration = task.type === "treehole_autonomous_update" &&
@@ -4105,10 +4146,25 @@ async function checkPendingProactiveTasks() {
         })
         .eq("id", task.id)
         .eq("status", "processing")
+    } finally {
+      if (treeholeStartedAt) {
+        await bestEffortInsertAudit(
+          supabase,
+          "treehole_execution_audit",
+          buildTreeholeExecutionAudit({
+            task,
+            startedAt: treeholeStartedAt,
+            finishedAt: new Date().toISOString(),
+            result: treeholeResult,
+            error: treeholeError,
+            trace: task.treeholeAuditTrace,
+          })
+        )
+      }
     }
   }
 
-  return { checked: pending.length, completed, deferred, failed, reconciliation }
+  return { checked: pending.length, completed, deferred, failed, reconciliation, task_counts: taskCounts }
 }
 
 function normalizeMomentCandidateText(value) {
@@ -4999,11 +5055,34 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: "Unauthorized" })
       }
 
-      const [proactive, momentCandidates] = await Promise.all([
-        checkPendingProactiveTasks(),
-        checkPendingMomentCandidates(),
-      ])
-      const result = { proactive, momentCandidates }
+      const startedAt = new Date().toISOString()
+      let result = null
+      let workerError = null
+      try {
+        const [proactive, momentCandidates] = await Promise.all([
+          checkPendingProactiveTasks(),
+          checkPendingMomentCandidates(),
+        ])
+        result = { proactive, momentCandidates }
+      } catch (error) {
+        workerError = error
+      }
+      const finishedAt = new Date().toISOString()
+      await bestEffortInsertAudit(
+        supabase,
+        "background_worker_run_audit",
+        buildWorkerRunAudit({
+          userId: APP_USER.defaultUserId,
+          startedAt,
+          finishedAt,
+          result,
+          error: workerError,
+        })
+      )
+      if (shouldRunObservabilityCleanup(new Date(finishedAt))) {
+        await bestEffortCleanupObservability(supabase)
+      }
+      if (workerError) throw workerError
 
       console.log("XIAOC BACKGROUND CHECK COMPLETED")
       return res.status(200).json({ success: true, ...result })

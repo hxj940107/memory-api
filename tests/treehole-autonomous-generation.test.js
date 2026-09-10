@@ -12,7 +12,7 @@ test("autonomous treehole checks for new shared-life material before calling the
   assert.match(source, /insufficient_new_material/)
   assert.match(source, /newUserChars >= TREEHOLE_AUTONOMOUS_POLICY\.minimumNewChatChars/)
   assert.match(source, /treehole_new_user_chars/)
-  assert.match(source, /generateAndSaveTreeholeUpdates\(task\.user_id, "autonomous", context\)/)
+  assert.match(source, /generateAndSaveTreeholeUpdates\(task\.user_id, "autonomous", context, auditTrace\)/)
 })
 
 test("a paid treehole generation may honestly decline instead of forcing an entry", () => {
