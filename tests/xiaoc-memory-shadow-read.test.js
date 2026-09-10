@@ -70,15 +70,15 @@ test("deterministic sampling selects safely without random state", async () => {
 test("missing or mismatched trusted user scope fails closed", async () => {
   for (const scope of [{ trustedUserId: "", requestedUserId: USER }, { trustedUserId: USER, requestedUserId: "other" }]) {
     const repo = repository()
-    const result = await runXiaoCMemoryShadowRead({ env: enabled, repository: repo, ...scope, message: "海岛", correlationId: "scope" })
-    assert.equal(result.skipped_reason, "TRUSTED_USER_SCOPE_MISSING")
+    const result = await runXiaoCMemoryShadowRead({ env: enabled, repository: repo, ...scope, message: "海岛", correlationId: "scope", logger: logger() })
+    assert.equal(result.skipped_reason, "TRUSTED_USER_MISSING")
     assert.equal(repo.calls.length, 0)
   }
 })
 
 test("query plan skips greetings and grounding adapter is bounded", async () => {
   const repo = repository()
-  const result = await runXiaoCMemoryShadowRead({ env: enabled, repository: repo, trustedUserId: USER, requestedUserId: USER, message: "嗯", correlationId: "skip" })
+  const result = await runXiaoCMemoryShadowRead({ env: enabled, repository: repo, trustedUserId: USER, requestedUserId: USER, message: "嗯", correlationId: "skip", logger: logger() })
   assert.equal(result.skipped_reason, "QUERY_PLAN_SKIP")
   assert.equal(repo.calls.length, 0)
   assert.deepEqual(buildProductionShadowGrounding({ activeItems: Array.from({ length: 8 }, (_, i) => ({ topic: `topic-${i}` })) }).anchors.length, 4)
@@ -103,9 +103,9 @@ test("comparison covers exact, partial, none, empty, one-sided and rank differen
 
 test("DB failure, malformed cross-user rows and timeout are isolated", async () => {
   const cases = [
-    { repo: repository({ error: new Error("LEXICAL_RPC_FAILED:500") }), code: "LEXICAL_RPC_FAILED" },
-    { repo: repository({ error: new Error("DB_CANDIDATE_USER_OR_ID_INVALID") }), code: "DB_CANDIDATE_USER_OR_ID_INVALID" },
-    { repo: repository({ delay: 80 }), env: { ...enabled, XIAOC_MEMORY_SHADOW_TIMEOUT_MS: "50" }, code: "SHADOW_TIMEOUT" },
+    { repo: repository({ error: new Error("LEXICAL_RPC_FAILED:500") }), code: "DB_ERROR" },
+    { repo: repository({ error: new Error("DB_CANDIDATE_USER_OR_ID_INVALID") }), code: "MALFORMED_RESPONSE" },
+    { repo: repository({ delay: 80 }), env: { ...enabled, XIAOC_MEMORY_SHADOW_TIMEOUT_MS: "50" }, code: "TIMEOUT" },
   ]
   for (const item of cases) {
     const result = await runXiaoCMemoryShadowRead({ env: item.env || enabled, repository: item.repo, trustedUserId: USER, requestedUserId: USER, message: "海岛", correlationId: item.code, now: () => NOW, logger: logger() })
