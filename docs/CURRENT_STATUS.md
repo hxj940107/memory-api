@@ -1,6 +1,6 @@
 # XiaoC Current Status
 
-> Canonical snapshot: 2026-09-05 (Asia/Shanghai). This is a current fact and release-gate snapshot, not a changelog.
+> Canonical snapshot: 2026-09-10 (Asia/Shanghai). This is a current fact and release-gate snapshot, not a changelog.
 
 ## Status Legend
 
@@ -19,6 +19,10 @@
 - **PENDING VERIFICATION** — Strict private API auth must remain disabled until that token-bearing binary is installed and verified.
 
 ## Memory / Context
+
+- **PRODUCTION SHADOW (1%)** — XiaoC Memory Engine has progressed from M0 source preservation through M1/M2 schema and historical import to M3D/M3D1 production Shadow. The 1% Shadow read is active, read-only, failure-isolated, and cannot inject into Chat or Context Gateway.
+- **PRODUCTION AUTHORITATIVE** — Ombre remains the authoritative Memory runtime and retrieval source. No XiaoC Memory Engine cutover, fallback, merge path, or embedding-based production retrieval is enabled.
+- **COMPLETE** — Historical preservation imported all `150/150` locked legacy memories into the XiaoC-owned schema with stable identity and lineage. Import completion did not enable production reads or create embeddings.
 
 - **COMPLETE** — P0: factual Memory and conversational attention are separated; duplicate/novelty behavior, provenance boundaries, and “remembered but should not be raised now” regressions are covered.
 - **COMPLETE** — P1: Memory / Context Gateway, Stable Memory consolidation, provenance and supersedes, Core Memory Snapshot, token-aware Recent, Summary Segments, old-summary compression, and Dynamic Context Budget are implemented.
@@ -66,6 +70,8 @@
 
 ## Voice / Audio
 
+- **COMPLETE / PAUSED** — Voice Call Phase 0 Checkpoints A and B passed. The media foundation is deliberately paused before model-pipeline expansion; the next gate is Checkpoint C (STT).
+
 - **PRODUCTION** — XiaoC TTS uses MiniMax China (`speech-2.8-hd` by default) through the provider-neutral persistence boundary.
 - **PRODUCTION** — User STT uses Groq `whisper-large-v3`; transcript and voice modality enter the existing chat path without fabricated acoustic perception.
 - **COMPLETE** — Recording and XiaoC/user playback are unified on `expo-av ~16.0.8`. `expo-audio` is removed from dependencies and native plugins.
@@ -102,6 +108,15 @@ Refresh this baseline whenever code changes. As of this snapshot:
 - `git diff --check`: passing.
 - Vercel API Functions: `12/12`.
 
+## Observability
+
+- **PRODUCTION / HEALTHY** — Treehole execution and `xiaoc_background_check` run audits are active with privacy-safe, append-only records and 60-day retention.
+- **PRODUCTION / HEALTHY** — Audit writes are failure-isolated; `service_role` has direct `SELECT`/`INSERT` only, while expired-row deletion is restricted to the cleanup RPC.
+
+## Planned Product Phase
+
+- **NOT STARTED** — Multi-user is the planned next-stage direction. Until that phase is explicitly designed and started, the current production product, runtime assumptions, and security model remain single-user.
+
 ## Current Priorities
 
 ### Release blockers / required sequence
@@ -114,6 +129,9 @@ Refresh this baseline whenever code changes. As of this snapshot:
 
 ### Follow-up, not release blockers
 
+- Keep XiaoC Memory Engine at 1% Shadow until its review gate is satisfied; Ombre remains authoritative and cutover requires separate approval.
+- Resume Voice Call at Checkpoint C only when the paused Phase 0 work is explicitly restarted.
+- Define the Multi-user phase before implementation; do not infer account, organization, billing, or public-SaaS requirements from the roadmap label alone.
 - Observe production Token/Cost after cache warm-up and compare with the offline estimate.
 - Continue Moments event-time/publish-time and historical-material perspective checks.
 - Decide whether permanent bundled diary samples should remain a lasting product feature; until then, preserve them.

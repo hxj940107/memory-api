@@ -1,6 +1,8 @@
 # XiaoC Voice Call Phase 0 — media checkpoint
 
-Status: **Checkpoint A prepared locally, NOT PASS. B–G not passed.**
+Status: **Checkpoints A and B PASS. Phase 0 is PAUSED; next gate is Checkpoint C (STT).**
+
+The A/B media foundation has completed its acceptance gate. The project is intentionally paused before adding STT, LLM, TTS, or barge-in behavior. The setup and test procedure below are retained as the Phase 0 implementation record; they are not the current blocker.
 
 This is a media-only development probe. It receives and counts microphone frames
 and sends a quiet generated tone (one second on, one second off). It does not echo
@@ -178,14 +180,14 @@ audit, EAS build, production calls, database changes, commit or push was done.
 
 | Checkpoint | Status |
 | --- | --- |
-| A dependencies + skeleton + runnable development build | Local preparation done; build/install blocked on device setup |
-| B true iPhone duplex | Harness prepared; NOT RUN; LiveKit/test HTTPS route also required |
-| C STT | NOT STARTED, waiting for B |
+| A dependencies + skeleton + runnable development build | PASS |
+| B true iPhone duplex | PASS |
+| C STT | NOT STARTED; next checkpoint |
 | D LLM | NOT STARTED, waiting for C |
 | E MiniMax | NOT STARTED, waiting for D |
 | F automatic barge-in/epoch cancellation | NOT STARTED, waiting for E |
 | G full voice conversation + measured P50/P95 | NOT RUN |
 
-**STOP at A/B prerequisites. Phase 0 is not PASS.** Resume media verification
-after the user confirms the test project, device registration and Worker route.
-No files implementing future models should be added before the media gate passes.
+**PAUSED after Checkpoint B.** Resume only with an explicit Checkpoint C scope.
+Passing A/B authorizes evaluation of STT next; it does not implicitly authorize
+LLM, TTS, automatic barge-in, production deployment, or later checkpoints.

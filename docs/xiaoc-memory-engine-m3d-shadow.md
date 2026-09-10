@@ -1,6 +1,6 @@
 # XiaoC Memory Engine M3D — Production Shadow Read
 
-> Status: implemented; production flags remain OFF.
+> Status: M3D/M3D1 deployed; Production 1% Shadow ACTIVE.
 > Scope: read-only, non-injecting comparison beside the existing Ombre production path.
 
 ## Architecture and non-interference
@@ -29,7 +29,7 @@ The task receives copies of already available inputs and has no return path into
 - Sampling happens only after the deterministic QueryPlan says retrieval is appropriate. With Shadow enabled and a nonzero rate, each trusted decision emits one body-free event: `eligible_opportunity` identifies the denominator, `sampled` identifies selection, and `attempted` identifies an executed read. Flag OFF and sample `0` emit nothing and make no Shadow RPC.
 - The timeout is one total wall-clock deadline covering grounding/QueryPlan, DB retrieval, relation resolution, eligibility and ranking—not a separate budget for every RPC. The configured default remains `350ms`.
 
-No production environment value is changed by this implementation.
+The approved Production baseline is currently Shadow enabled at a `0.01` sample rate with the bounded timeout unchanged. This activation does not authorize a higher sample rate or cutover.
 
 ## Trusted scope and QueryPlan grounding
 
@@ -70,15 +70,15 @@ The normal error vocabulary is intentionally coarse: `TIMEOUT`, `DB_ERROR`, `MAL
 
 Flag OFF, sample zero, unsampled requests, untrusted scope and QueryPlan skips make zero DB calls and emit no new telemetry. DB errors, malformed rows, relation errors, ranking errors and timeout are caught inside the shadow task, reduced to privacy-safe error metadata and never reject Chat. There is no retry and no distributed breaker; the feature flag is the kill switch.
 
-## Rollout plan (not executed)
+## Rollout plan
 
 1. Stage 0: flag OFF, sample `0`.
-2. Stage 1: explicitly approved `1%` sample with exactly:
+2. **Current stage:** explicitly approved `1%` sample with exactly:
    - `XIAOC_MEMORY_SHADOW_READ_ENABLED=true`
    - `XIAOC_MEMORY_SHADOW_SAMPLE_RATE=0.01`
    - `XIAOC_MEMORY_SHADOW_TIMEOUT_MS=350`
-3. Stage 2: explicitly approved `10%` sample.
-4. Stage 3: explicitly approved `100%` shadow.
+3. Stage 2: separately approved `10%` sample; not started.
+4. Stage 3: separately approved `100%` shadow; not started.
 
 Each stage requires review of error/timeout rate, latency, Ombre/XiaoC overlap and empty rates, legacy-tier distribution and reason-code distribution. Advancement is manual.
 

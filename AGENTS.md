@@ -11,7 +11,7 @@ XiaoC 是私人、单用户 AI 伴侣项目。
 
 XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工具，也不是效率助手。
 
-这个项目只为一个用户设计。除非用户明确改变项目方向，否则不要设计多用户切换、团队、组织、公开 SaaS、商业化或计费能力。
+当前生产项目只为一个用户设计。Multi-user 是计划中的下一阶段方向，但尚未开始；在专项设计启动前，不要提前实现用户切换、团队、组织、公开 SaaS、商业化或计费能力。
 
 ## 最高原则
 
@@ -36,6 +36,14 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 - 成本控制也是长期体验的一部分，需要尽可能节省 token 和外部模型调用。
 
 ## 当前进程
+
+- XiaoC Memory Engine 已从 M0 推进到 M3D/M3D1：150 条 legacy memories 已完成历史导入，Production `1%` Shadow ACTIVE；Shadow 只读且不进入 prompt，Ombre 仍 authoritative，尚未 cutover。
+
+- Treehole / Background Worker Observability 已在 Production 验证 HEALTHY：审计记录 privacy-safe、append-only、60 天保留，写入失败不影响业务链路。
+
+- Voice Call Phase 0 Checkpoint A/B 已 PASS，目前 PAUSED；下一步是 Checkpoint C（STT），未授权继续实现后续模型链路。
+
+- Multi-user 是计划中的下一阶段方向，状态为 NOT STARTED；当前生产与开发约束仍按单用户执行，直到专项方案明确启动。
 
 - 手机 App 已形成聊天、历史会话、Memory、Moments、共享相册、深夜树洞和 Wife Observation Diary 的主体验框架。
 
@@ -124,13 +132,13 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 - 设置页 token 花费已改为优先读取 OpenRouter 当前 key 的真实月度 usage，同时保留本地统计作为降级路径。
 
-- 2026-08-29 Phase 1 全项目体检 reliability 修复已在当前工作树完成，尚待部署后验证：
+- 2026-08-29 Phase 1 reliability 修复已进入已部署基线：
   - 已加入后台任务有限重试、15 分钟 stale `processing` 回收和 task/message 幂等；没有新增 schema。
   - post-chat 图片描述持久化、Summary dispatch、conversation state 使用 `waitUntil`。
   - Shared Context 支持 checkpoint 越窗恢复、missing fail-closed 和 parse-failure 30 分钟 backoff。
   - 历史图片只信任独立 `imageDescription`；Treehole admission 使用真实 user 素材字符；inactivity fallback 记录原因。
   - 本地验证为 134/134 Node tests、JS syntax 与 `git diff --check` 通过，API Function 仍为 12/12。
-  - 下一步不是新功能：先部署，正常使用约 12–24 小时，再做只读 production audit。通过后才评估 Judge prefilter real skip；在 30–50 个代表性 turn 且 dangerous false skip 为 0 前必须保持 Shadow。
+  - Judge prefilter real skip 仍未授权；在 30–50 个代表性 turn 且 dangerous false skip 为 0 前必须保持 Shadow。
 
 ## 伴侣人格
 

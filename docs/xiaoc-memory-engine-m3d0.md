@@ -1,8 +1,8 @@
 # XiaoC Memory Engine M3D0 — Bounded DB Retrieval RPC Foundation
 
-Status: implementation complete; migration intentionally not applied.
+Status: implementation complete; migration applied and validated; consumed only by the Production 1% M3D/M3D1 Shadow path.
 
-M3D0 adds the smallest read-only database boundary needed by a future M3D shadow read. It does not connect XiaoC retrieval to Chat, Context Gateway, Ombre, or production telemetry.
+M3D0 provides the smallest read-only database boundary used by the current M3D/M3D1 Shadow read. It does not connect XiaoC retrieval to Chat, Context Gateway, prompts, or the authoritative Ombre result.
 
 ## Architecture and ownership
 
@@ -30,11 +30,11 @@ Semantic retrieval filters same-user eligible rows and joins only `active` embed
 
 ## JavaScript adapter
 
-`XiaoCMemoryDbRetrievalRepository` maps the three RPC contracts into the existing M3B/M3C structured candidate and relation shapes. It repeats hard limits locally, validates user ownership and policy fields, validates active embedding identity and similarity, rejects oversized or malformed responses, and propagates RPC failures without partial results. The in-memory evaluation repository remains unchanged. The DB adapter is not imported by any production API.
+`XiaoCMemoryDbRetrievalRepository` maps the three RPC contracts into the existing M3B/M3C structured candidate and relation shapes. It repeats hard limits locally, validates user ownership and policy fields, validates active embedding identity and similarity, rejects oversized or malformed responses, and propagates RPC failures without partial results. The in-memory evaluation repository remains unchanged. The DB adapter is used only by the failure-isolated M3D/M3D1 Production Shadow task; its results have no path into Chat, Context Gateway, prompts, or Memory mutation.
 
 ## Manual migration and validation
 
-No SQL was executed by this phase. After review, an authorized operator must:
+The migration and transactional validation were applied successfully before the 1% Shadow activation. The required operational sequence was:
 
 1. Apply `supabase_xiaoc_memory_engine_m3d0_retrieval.sql` in the intended Supabase project.
 2. Separately run `supabase_xiaoc_memory_engine_m3d0_retrieval_validation.sql` in SQL Editor.
@@ -47,4 +47,4 @@ Rollback, if later authorized, should be a separate compensating migration that 
 
 ## M3D readiness boundary
 
-M3D shadow work remains blocked until the migration and rollback validation have been manually reviewed and applied successfully, database query plans/latency have been observed, production-safe feature flags and telemetry sinks have been separately reviewed, and Chat/Context integration receives explicit authorization. M3D0 itself does not enable a feature flag, emit telemetry, create embeddings, inspect real Memory bodies, or change Ombre retrieval.
+The migration, validation, query-plan review, production-safe flags, and telemetry readiness gates have been satisfied for the current 1% Shadow stage. M3D0 itself still does not authorize prompt injection, create embeddings, mutate Memory, or change Ombre retrieval. Any rollout increase or cutover remains a separate decision.
