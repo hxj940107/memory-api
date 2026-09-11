@@ -45,6 +45,8 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 - Multi-user 是计划中的下一阶段方向，状态为 NOT STARTED；当前生产与开发约束仍按单用户执行，直到专项方案明确启动。
 
+- Multi-user M2C.3 Production grant containment completed：危险的普通角色 table / sequence / function grants 与默认权限已按批准 allowlist 收紧，Production validation `13/13 PASS`，`service_role` 私人链路保持可用；尚未进入 M2C.4。
+
 - 手机 App 已形成聊天、历史会话、Memory、Moments、共享相册、深夜树洞和 Wife Observation Diary 的主体验框架。
 
 - Moments 朋友圈已进入稳定迭代阶段：

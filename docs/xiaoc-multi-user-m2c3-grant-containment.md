@@ -1,14 +1,31 @@
-# XiaoC Multi-user M2C.3 — Grant Containment Preparation
+# XiaoC Multi-user M2C.3 — Grant Containment
 
-> Status: SEQUENCE RUNTIME FIX PREPARED; RE-PREFLIGHT REQUIRED
+> Status: COMPLETE — PRODUCTION GRANT CONTAINMENT ACTIVE
 >
 > Basis: M2A Production catalog, M2B isolation design, M2C plan, M2C.1 caller/function review, and M2C.2 rollback rehearsal.
 >
-> This revised package has not been executed against Production. The earlier package was applied and rolled back as recorded below. This revision does not change tenant schema, owner data, RLS policies, application code, Storage policies, Ombre, deployment, or git history.
+> The final revised package was applied to Production and validated on 2026-09-11. It changed ACLs and default privileges only; it did not change tenant schema, owner data, RLS policies, application code, Storage policies, Ombre, or deployment.
 
 ## 1. Outcome
 
 M2C.3 is a single transactional ACL-only containment package. It closes privileges that are dangerous independently of tenant UUID/RLS work while preserving the current `service_role` compatibility lane.
+
+Final Production outcome: **COMPLETE**. The forward transaction committed, all
+13 validation checks passed, and the frozen post-forward ACL snapshot matched
+the reviewed containment allowlist exactly. Rollback was not required. M2C.4
+was not started.
+
+### 1.1 Final Production evidence
+
+- Forward: `PASS`
+- Validation: `13/13 PASS`
+- Post-forward canonical rows: `665`
+- Post-forward canonical SHA-256: `567A3B1B1BE2E40FD34F337511D8A357154E7A3F0FDDEB0F3D053167FDF88F87`
+- Baseline `EXCEPT` post-forward: `270`
+- Post-forward `EXCEPT` baseline: `1`
+- Approved allowlist comparison: `PASS`
+- Rollback executed: `NO`
+- Final Production state: M2C.3 grant containment active
 
 The first Production apply was rolled back because UI-driven validation could not be completed inside the declared window. Read-only investigation confirmed that effective privileges returned to the approved baseline, but the original rollback left four redundant explicit `service_role EXECUTE` ACL entries. Those functions had received the same effective access through `PUBLIC` before M2C.3. This revision fixes the rollback representation and makes canonical ACL shape part of preflight, validation, rehearsal, and rollback postflight.
 
@@ -169,34 +186,37 @@ Default rollback window: at least ten minutes after apply, covering two backgrou
 
 After rollback, rerun the captured baseline ACL query, require a bidirectional canonical set diff of zero, and repeat the same Private App/worker/Memory canaries. Because this checkpoint has no data mutation, no data restore is expected. Backup/PITR remains an operational gate, not the primary ACL rollback mechanism.
 
-## 8. Canonical recovery preparation
+## 8. Canonical recovery record
 
-Production currently has the approved effective baseline but four redundant explicit `service_role EXECUTE` entries left by the first forward/rollback attempt. The prepared recovery package is deliberately separate from M2C.3:
+Before the final apply, Production was restored to the approved canonical
+baseline, including removal of four redundant explicit `service_role EXECUTE`
+entries. The recovery package remained deliberately separate from M2C.3:
 
 - `supabase_multi_user_m2c3_canonical_recovery.sql` verifies all four functions still expose EXECUTE through `PUBLIC`, all four explicit service entries exist, effective service access remains true, and `12 / 80 / 140 / 24 / 48` matches before removing only those explicit entries.
 - `supabase_multi_user_m2c3_canonical_recovery_validation.sql` is read-only and verifies canonical absence, inherited/effective access, and the complete baseline after recovery.
 - `supabase_multi_user_m2c3_canonical_recovery_rollback.sql` is a compensating package that restores only the four explicit entries if recovery validation fails. It does not invoke either M2C.3 package.
 
-Expected transition:
+Recovery transition:
 
 - Before: four `PUBLIC EXECUTE` entries plus four redundant explicit `service_role EXECUTE` entries; service effective access is true.
 - After: the same four `PUBLIC EXECUTE` entries, zero explicit service entries, and unchanged service effective access through `PUBLIC`.
 - Canonical proof: normalized post-recovery ACL compared bidirectionally with the pre-apply snapshot must produce zero rows.
 
-This preparation does not authorize Production execution. Recovery apply requires a fresh read-only preflight, exact file/hash review, timestamped rollback window, and separate user approval. M2C.3 forward and M2C.4 remain prohibited during recovery.
+That recovery completed before the final M2C.3 re-preflight. It is not part of
+the retained post-forward delta. M2C.4 remains outside this checkpoint.
 
-## 9. Apply readiness
+## 9. Completion state
 
-The change package is technically prepared and locally checked. Production execution remains blocked until:
+The final package passed its preflight, Production forward transaction,
+immediate read-only validation, frozen ACL recapture, and canonical allowlist
+comparison. The retained Production state is the contained ACL state described
+in this document.
 
-- backup/PITR and restore limitations are recorded;
-- the current ACL/default-ACL snapshot is freshly recaptured and matches the preflight counts;
-- a named operator, maintenance timestamp, rollback deadline, and canary checklist are recorded;
-- the user separately authorizes running the forward SQL against Production.
+Final state: **M2C.3 COMPLETE; PRODUCTION CONTAINMENT ACTIVE.**
 
-Final state: **PACKAGE READY; PRODUCTION APPLY STOP.**
+This completion does not authorize or begin M2C.4.
 
-## 10. Canonical baseline re-establishment preparation
+## 10. Canonical baseline and comparison contract
 
 The original `941`-row pre-M2C.3 CSV could not be recovered from the local
 workspace, user profile, browser-accessible download state, or the surviving
@@ -205,10 +225,11 @@ successful recovery validation and the previously identified four-row delta
 remain valid operational evidence, but they do not prove file-level historical
 equality and must never be described as such.
 
-The current, validated-safe Production ACL state will become a new versioned
-baseline only after a separately authorized read-only capture. The capture must
-use one frozen query and produce a baseline bundle; a row count by itself is not
-an identity check.
+The validated pre-forward Production ACL state was captured as versioned
+baseline `m2c3-acl-v1-20260911T163305+0800` using the frozen query. Its
+canonical row count was `934` and its SHA-256 was
+`BFC5F8C7A2E0C2462B16EA370AF5C0130396CFD3B02B22EFF8CE6B5689B9B00C`.
+The final post-forward evidence is recorded in section 1.1.
 
 ### 10.1 Frozen canonical projection
 
@@ -284,6 +305,5 @@ bidirectional delta equals the reviewed M2C.3 allowlist exactly. After rollback,
 recapture again and require both directions to be zero. Compare tuple sets and
 SHA-256 artifacts; matching row counts alone never pass the gate.
 
-This section prepares only the evidence procedure. It does not authorize a
-Production query, M2C.3 forward, rollback, M2C.4, deployment, or any permission
-mutation.
+This section records the evidence procedure used for M2C.3. It does not
+authorize rollback, M2C.4, deployment, or any further permission mutation.
