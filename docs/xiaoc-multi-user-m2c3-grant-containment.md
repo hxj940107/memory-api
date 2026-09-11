@@ -1,6 +1,6 @@
 # XiaoC Multi-user M2C.3 — Grant Containment Preparation
 
-> Status: SAFE RECOVERY PACKAGE REVISION; NOT AUTHORIZED FOR RE-APPLY
+> Status: SEQUENCE RUNTIME FIX PREPARED; RE-PREFLIGHT REQUIRED
 >
 > Basis: M2A Production catalog, M2B isolation design, M2C plan, M2C.1 caller/function review, and M2C.2 rollback rehearsal.
 >
@@ -11,6 +11,18 @@
 M2C.3 is a single transactional ACL-only containment package. It closes privileges that are dangerous independently of tenant UUID/RLS work while preserving the current `service_role` compatibility lane.
 
 The first Production apply was rolled back because UI-driven validation could not be completed inside the declared window. Read-only investigation confirmed that effective privileges returned to the approved baseline, but the original rollback left four redundant explicit `service_role EXECUTE` ACL entries. Those functions had received the same effective access through `PUBLIC` before M2C.3. This revision fixes the rollback representation and makes canonical ACL shape part of preflight, validation, rehearsal, and rollback postflight.
+
+A later re-apply reached the contained state but was immediately rolled back
+because the validation package raised `"saml_providers_pkey" is not a
+sequence`. The ACL recovery completed and the frozen snapshot matched the
+934-row canonical baseline bidirectionally. The failure was caused by relying
+on the textual conjunction `c.relkind = 'S' AND
+has_sequence_privilege(...)`: PostgreSQL may reorder those predicates and call
+the privilege function for a non-sequence `pg_class` row first. Validation and
+rollback postflight now place every catalog-wide sequence privilege call in a
+short-circuiting `CASE WHEN c.relkind = 'S'` expression. The forward package
+already uses its explicit reviewed list of eight sequence names and does not
+perform this catalog-wide call pattern.
 
 Files:
 

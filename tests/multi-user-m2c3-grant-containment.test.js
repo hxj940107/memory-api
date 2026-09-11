@@ -83,6 +83,38 @@ test("M2C.3 denies ordinary roles on RLS-off Core and all public sequences", () 
   assert.match(forward, /revoke all privileges on sequence[\s\S]*from anon, authenticated/i)
 })
 
+test("catalog sequence checks never evaluate privileges for non-sequence pg_class rows", () => {
+  const catalogScanners = [validation, rollback]
+
+  for (const sql of catalogScanners) {
+    const sequenceCalls = [...sql.matchAll(/case\s+when\s+c\.relkind\s*=\s*'S'\s+then\s+(?:not\s+)?has_sequence_privilege\([^)]*c\.oid[^)]*\)\s+else\s+false\s+end/gi)]
+    assert.equal(sequenceCalls.length, 2)
+    assert.doesNotMatch(
+      sql,
+      /c\.relkind\s*=\s*'S'\s+and\s+(?:not\s+)?has_sequence_privilege\([^)]*c\.oid/gi,
+    )
+  }
+
+  const syntheticPublicCatalog = [
+    { name: "moment_candidates_id_seq", relkind: "S" },
+    { name: "saml_providers_pkey", relkind: "i" },
+    { name: "saml_providers_pkey_constraint", relkind: "c" },
+    { name: "messages", relkind: "r" },
+  ]
+  const privilegeFunctionInputs = syntheticPublicCatalog
+    .filter(({ relkind }) => relkind === "S")
+    .map(({ name }) => name)
+
+  assert.deepEqual(privilegeFunctionInputs, ["moment_candidates_id_seq"])
+})
+
+test("forward sequence containment remains an explicit reviewed allowlist", () => {
+  assert.doesNotMatch(forward, /has_sequence_privilege\([^)]*c\.oid/i)
+  for (const sequence of sequences) {
+    assert.match(forward, new RegExp(`public\\.${sequence}`))
+  }
+})
+
 test("synthetic canonical ACL forward then rollback is an exact set round trip", () => {
   const canonicalBefore = new Set([
     ...inheritedServiceFunctions.map((name) => `${name}:PUBLIC:EXECUTE`),

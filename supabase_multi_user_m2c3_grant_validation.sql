@@ -41,10 +41,16 @@ union all
 select 'no public sequence accessible to anon/authenticated',
        not exists (
          select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
-         cross join unnest(array['anon','authenticated']) r
-         cross join unnest(array['SELECT','USAGE','UPDATE']) p
-         where n.nspname='public' and c.relkind='S'
-           and has_sequence_privilege(r,c.oid,p)
+         cross join unnest(array['anon','authenticated']) as roles(role_name)
+         cross join unnest(array['SELECT','USAGE','UPDATE']) as privileges(privilege_name)
+         where n.nspname='public'
+           -- PostgreSQL may reorder ordinary WHERE predicates. Guard the
+           -- privilege function with CASE so it is never called for an index,
+           -- table, constraint backing index, or any other pg_class object.
+           and case when c.relkind='S'
+             then has_sequence_privilege(role_name,c.oid,privilege_name)
+             else false
+           end
        ), null
 union all
 select 'future public defaults deny PUBLIC/anon/authenticated',
@@ -74,8 +80,11 @@ union all
 select 'service sequence lane retained',
        not exists (
          select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
-         where n.nspname='public' and c.relkind='S'
-           and not has_sequence_privilege('service_role',c.oid,'USAGE')
+         where n.nspname='public'
+           and case when c.relkind='S'
+             then not has_sequence_privilege('service_role',c.oid,'USAGE')
+             else false
+           end
        ), null
 union all
 select 'Memory Engine callable RPCs remain service-only',

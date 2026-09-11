@@ -140,10 +140,16 @@ begin
   select count(*) into v_sequences
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
-  cross join unnest(array['anon','authenticated']) r
-  cross join unnest(array['SELECT','USAGE','UPDATE']) p
-  where n.nspname = 'public' and c.relkind = 'S'
-    and has_sequence_privilege(r, c.oid, p);
+  cross join unnest(array['anon','authenticated']) as roles(role_name)
+  cross join unnest(array['SELECT','USAGE','UPDATE']) as privileges(privilege_name)
+  where n.nspname = 'public'
+    -- CASE provides a hard evaluation boundary. A plain relkind predicate is
+    -- not sufficient because PostgreSQL may evaluate the privilege function
+    -- first for a non-sequence pg_class row.
+    and case when c.relkind = 'S'
+      then has_sequence_privilege(role_name, c.oid, privilege_name)
+      else false
+    end;
 
   select count(*) into v_redundant_explicit
   from unnest(array[
@@ -178,8 +184,11 @@ begin
     where not has_table_privilege('service_role', t, p)
   ) or exists (
     select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
-    where n.nspname='public' and c.relkind='S'
-      and not has_sequence_privilege('service_role', c.oid, 'USAGE')
+    where n.nspname='public'
+      and case when c.relkind='S'
+        then not has_sequence_privilege('service_role', c.oid, 'USAGE')
+        else false
+      end
   ) then
     raise exception 'M2C3_ROLLBACK_SERVICE_DATA_LANE_MISSING';
   end if;
