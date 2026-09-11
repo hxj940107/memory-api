@@ -1,10 +1,36 @@
 # XiaoC Multi-user M2C.4 — Additive UUID Foundation
 
-> Status: REPO PACKAGE PREPARED; PRODUCTION NOT APPLIED
+> Status: COMPLETE — PRODUCTION APPLIED AND VALIDATED
 >
 > Scope: empty Auth-backed tenant root plus nullable UUID ownership foundation
 > for the five legacy Core tables. This checkpoint does not authorize
-> Production execution or M2C.5.
+> M2C.5. M2C.4 is complete; M2C.5 has not started.
+
+## Production completion evidence
+
+M2C.4 was applied to Production as the approved single-transaction additive
+foundation. No companion root row or UUID backfill was created.
+
+- Forward: `PASS`
+- Validation: `11/11 PASS`
+- Post-apply schema snapshot: `118` rows
+- Post-apply snapshot SHA-256:
+  `1E52422B4FFD118E31FCF75D1F5A8AA4C64E97F776E7D7F1102F184F41193FC5`
+- Pre-M2C.4 baseline `EXCEPT` post-apply: `0`
+- Post-apply `EXCEPT` pre-M2C.4 baseline: `23`
+- Approved-change allowlist: `PASS`
+- Rollback executed: `NO`
+- Standalone rollback deadline: still open, but only until M2C.5 begins and
+  only while the rollback guard remains satisfied
+- `companion_instances`: present and empty
+- All five `user_uuid` bridges: present, nullable, default-free, and entirely
+  `NULL`
+- Legacy columns, primary/unique keys, runtime ownership path, RLS, and ACL:
+  unchanged
+
+The 23 snapshot additions are exactly five UUID columns, five `NOT VALID`
+root FKs, five tenant-qualified unique constraints, the five backing indexes
+created by those unique constraints, and three explicit tenant access indexes.
 
 ## 1. Confirmed Production baseline
 
@@ -150,4 +176,4 @@ unexpected ordinary-role Core access, RLS drift, lock timeout, any non-null
 UUID value, any companion row, validation failure, catalog change outside the
 allowlist, or Private XiaoC regression.
 
-**READY FOR M2C.4 PRODUCTION PREFLIGHT. PRODUCTION APPLY NOT AUTHORIZED.**
+**M2C.4 COMPLETE. M2C.5 NOT STARTED.**
