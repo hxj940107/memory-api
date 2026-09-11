@@ -88,6 +88,30 @@ test('validation is read-only and proves compatibility invariants', () => {
   ]) assert.match(validation, new RegExp(phrase, 'i'))
 })
 
+test('legacy-key validation is relation-scoped when another object reuses a constraint name', () => {
+  const expected = [
+    ['public.conversations', 'conversations_pkey'],
+    ['public.messages', 'messages_pkey'],
+    ['public.memories', 'memories_pkey'],
+    ['public.user_state', 'user_state_pkey'],
+    ['public.conversation_summary', 'conversation_summary_conversation_id_key'],
+  ]
+  const catalog = [
+    ...expected,
+    ['auth.users', 'messages_pkey'],
+    ['public.unrelated_table', 'conversations_pkey'],
+  ]
+
+  const nameOnlyMatches = catalog.filter(([, name]) => expected.some(([, expectedName]) => name === expectedName))
+  const relationScopedMatches = catalog.filter(([table, name]) =>
+    expected.some(([expectedTable, expectedName]) => table === expectedTable && name === expectedName))
+
+  assert.equal(nameOnlyMatches.length, 7)
+  assert.equal(relationScopedMatches.length, 5)
+  assert.match(validation, /on con\.conrelid=expected\.table_oid\s+and con\.conname=expected\.constraint_name/i)
+  assert.doesNotMatch(validation, /from pg_constraint\s+where conname in\s*\(\s*'conversations_pkey'/i)
+})
+
 test('rollback fails closed after any UUID/root data and never cascades', () => {
   assert.match(rollback, /M2C4_ROLLBACK_REFUSED_UUID_DATA_EXISTS/i)
   assert.match(rollback, /exists \(select 1 from public\.companion_instances\)/i)

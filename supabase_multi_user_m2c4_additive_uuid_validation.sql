@@ -75,11 +75,18 @@ where table_schema='public' and (
 union all
 select 'legacy primary and Summary unique keys remain',
        count(*)=5
-from pg_constraint
-where conname in (
-  'conversations_pkey','messages_pkey','memories_pkey','user_state_pkey',
-  'conversation_summary_conversation_id_key'
-)
+       and bool_and(con.contype=expected.constraint_type)
+       and bool_and(pg_get_constraintdef(con.oid,true)=expected.constraint_definition)
+from (values
+  ('public.conversations'::regclass, 'conversations_pkey', 'p'::"char", 'PRIMARY KEY (conversation_id)'),
+  ('public.messages'::regclass, 'messages_pkey', 'p'::"char", 'PRIMARY KEY (id)'),
+  ('public.memories'::regclass, 'memories_pkey', 'p'::"char", 'PRIMARY KEY (id)'),
+  ('public.user_state'::regclass, 'user_state_pkey', 'p'::"char", 'PRIMARY KEY (user_id)'),
+  ('public.conversation_summary'::regclass, 'conversation_summary_conversation_id_key', 'u'::"char", 'UNIQUE (conversation_id)')
+) as expected(table_oid,constraint_name,constraint_type,constraint_definition)
+join pg_constraint con
+  on con.conrelid=expected.table_oid
+ and con.conname=expected.constraint_name
 union all
 select 'Core RLS remains disabled',
        count(*) filter (where not c.relrowsecurity and not c.relforcerowsecurity)=5
