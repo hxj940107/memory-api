@@ -157,7 +157,23 @@ Default rollback window: at least ten minutes after apply, covering two backgrou
 
 After rollback, rerun the captured baseline ACL query, require a bidirectional canonical set diff of zero, and repeat the same Private App/worker/Memory canaries. Because this checkpoint has no data mutation, no data restore is expected. Backup/PITR remains an operational gate, not the primary ACL rollback mechanism.
 
-## 8. Apply readiness
+## 8. Canonical recovery preparation
+
+Production currently has the approved effective baseline but four redundant explicit `service_role EXECUTE` entries left by the first forward/rollback attempt. The prepared recovery package is deliberately separate from M2C.3:
+
+- `supabase_multi_user_m2c3_canonical_recovery.sql` verifies all four functions still expose EXECUTE through `PUBLIC`, all four explicit service entries exist, effective service access remains true, and `12 / 80 / 140 / 24 / 48` matches before removing only those explicit entries.
+- `supabase_multi_user_m2c3_canonical_recovery_validation.sql` is read-only and verifies canonical absence, inherited/effective access, and the complete baseline after recovery.
+- `supabase_multi_user_m2c3_canonical_recovery_rollback.sql` is a compensating package that restores only the four explicit entries if recovery validation fails. It does not invoke either M2C.3 package.
+
+Expected transition:
+
+- Before: four `PUBLIC EXECUTE` entries plus four redundant explicit `service_role EXECUTE` entries; service effective access is true.
+- After: the same four `PUBLIC EXECUTE` entries, zero explicit service entries, and unchanged service effective access through `PUBLIC`.
+- Canonical proof: normalized post-recovery ACL compared bidirectionally with the pre-apply snapshot must produce zero rows.
+
+This preparation does not authorize Production execution. Recovery apply requires a fresh read-only preflight, exact file/hash review, timestamped rollback window, and separate user approval. M2C.3 forward and M2C.4 remain prohibited during recovery.
+
+## 9. Apply readiness
 
 The change package is technically prepared and locally checked. Production execution remains blocked until:
 
