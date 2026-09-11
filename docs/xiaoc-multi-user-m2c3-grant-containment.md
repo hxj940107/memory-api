@@ -183,3 +183,95 @@ The change package is technically prepared and locally checked. Production execu
 - the user separately authorizes running the forward SQL against Production.
 
 Final state: **PACKAGE READY; PRODUCTION APPLY STOP.**
+
+## 10. Canonical baseline re-establishment preparation
+
+The original `941`-row pre-M2C.3 CSV could not be recovered from the local
+workspace, user profile, browser-accessible download state, or the surviving
+Supabase SQL Editor tabs. That historical artifact is therefore **LOST**. The
+successful recovery validation and the previously identified four-row delta
+remain valid operational evidence, but they do not prove file-level historical
+equality and must never be described as such.
+
+The current, validated-safe Production ACL state will become a new versioned
+baseline only after a separately authorized read-only capture. The capture must
+use one frozen query and produce a baseline bundle; a row count by itself is not
+an identity check.
+
+### 10.1 Frozen canonical projection
+
+The capture query must emit the raw catalog rows plus these canonical columns:
+
+`(object_type, schema_name, object_name, owner, grantor, grantee, privilege, grantable)`
+
+Before comparison, discard `captured_at`, database/session metadata, display
+columns, and CSV row ordering. Normalize `PUBLIC` consistently, preserve exact
+function identity including argument types, preserve case-sensitive identifiers,
+encode nulls unambiguously, remove only byte-identical duplicate tuples, sort by
+all eight columns using bytewise/C collation semantics, and serialize with UTF-8
+and LF line endings.
+
+The frozen query text itself is part of the evidence. Record its SHA-256 and do
+not compare snapshots captured by different query versions without an explicit
+query-version compatibility review.
+
+### 10.2 Baseline bundle
+
+Use a timestamped capture id such as
+`m2c3-canonical-v1-YYYYMMDDTHHMMSSZ`. Store the working copy under the ignored
+local artifact directory:
+
+- `tmp/multi-user/m2c3/baselines/<capture-id>/acl-raw.csv`
+- `tmp/multi-user/m2c3/baselines/<capture-id>/acl-canonical.csv`
+- `tmp/multi-user/m2c3/baselines/<capture-id>/validation.json`
+- `tmp/multi-user/m2c3/baselines/<capture-id>/manifest.sha256`
+- `tmp/multi-user/m2c3/baselines/<capture-id>/README.txt`
+
+Copy the complete bundle, without modification, to a repo-external location
+such as:
+
+`C:/Users/Administrator/Documents/XiaoC-Audit/m2c3/baselines/<capture-id>/`
+
+The external copy is the recovery copy; the ignored `tmp` copy is the local
+working artifact. The manifest must cover the raw CSV, canonical CSV, validation
+record, README, and the exact frozen query file. Record capture time, Production
+project ref, operator, query version/hash, raw row count, canonical tuple count,
+and every file SHA-256. Do not include application rows or private content.
+
+### 10.3 Capture gates
+
+A new baseline is accepted only when all of the following pass in the same
+read-only capture window:
+
+- canonical recovery validation is `8/8 true`;
+- explicit `service_role EXECUTE` on the four recovery targets is `0`;
+- `PUBLIC EXECUTE` and effective `service_role EXECUTE` on those targets are
+  both `4`;
+- the function/Core/high-risk/default-ACL/sequence baseline is exactly
+  `12 / 80 / 140 / 24 / 48`;
+- critical `service_role` table, sequence, worker RPC, and Memory Engine RPC
+  checks pass;
+- raw CSV parses without malformed rows and its recorded row count matches the
+  export;
+- regeneration of the canonical CSV from the raw CSV is deterministic and
+  produces the same SHA-256 twice;
+- local and repo-external bundle manifests match byte-for-byte.
+
+The new row count is recorded as observed; it is not required to be `941`, and
+must not be backdated or presented as the lost historical snapshot.
+
+### 10.4 Forward and rollback comparisons
+
+Before any future M2C.3 forward attempt, recapture the current canonical CSV
+with the same frozen query and require bidirectional set equality with the new
+baseline: `baseline EXCEPT current = 0` and
+`current EXCEPT baseline = 0`. Abort on any difference.
+
+After forward, compare against the same baseline and require that the complete
+bidirectional delta equals the reviewed M2C.3 allowlist exactly. After rollback,
+recapture again and require both directions to be zero. Compare tuple sets and
+SHA-256 artifacts; matching row counts alone never pass the gate.
+
+This section prepares only the evidence procedure. It does not authorize a
+Production query, M2C.3 forward, rollback, M2C.4, deployment, or any permission
+mutation.
