@@ -24,6 +24,12 @@ const guards = [
   "xiaoc_memory_guard_item_immutable",
   "xiaoc_memory_guard_operation_transition",
 ]
+const inheritedServiceFunctions = [
+  "check_pending_moments_for_xiaoc",
+  "xiaoc_memory_guard_append_only",
+  "xiaoc_memory_guard_embedding_transition",
+  "xiaoc_memory_guard_import_run",
+]
 
 test("M2C.3 is an atomic ACL-only migration with drift detection", () => {
   const executableSql = forward.replace(/^\s*--.*$/gm, "")
@@ -51,6 +57,19 @@ test("M2C.3 removes the exposed Moment RPC and direct trigger-function execution
   }
 })
 
+test("M2C.3 distinguishes inherited and explicit service EXECUTE", () => {
+  assert.match(forward, /v_canonical_service_function_grants = 0/)
+  assert.match(forward, /v_canonical_service_function_grants = 1/)
+  assert.match(validation, /canonical writer service grant is explicit/)
+  assert.match(validation, /canonical inherited guard service grants stay non-explicit/)
+  for (const functionName of inheritedServiceFunctions) {
+    assert.match(
+      rollback,
+      new RegExp(`revoke execute on function public\\.${functionName}\\(\\) from service_role`, "i"),
+    )
+  }
+})
+
 test("M2C.3 denies ordinary roles on RLS-off Core and all public sequences", () => {
   for (const table of coreTables) {
     assert.match(forward, new RegExp(`public\\.${table}`))
@@ -62,6 +81,32 @@ test("M2C.3 denies ordinary roles on RLS-off Core and all public sequences", () 
     assert.match(rollback, new RegExp(`public\\.${sequence}`))
   }
   assert.match(forward, /revoke all privileges on sequence[\s\S]*from anon, authenticated/i)
+})
+
+test("synthetic canonical ACL forward then rollback is an exact set round trip", () => {
+  const canonicalBefore = new Set([
+    ...inheritedServiceFunctions.map((name) => `${name}:PUBLIC:EXECUTE`),
+    ...inheritedServiceFunctions.flatMap((name) => [
+      `${name}:anon:EXECUTE`,
+      `${name}:authenticated:EXECUTE`,
+    ]),
+  ])
+  const afterForward = new Set(canonicalBefore)
+  for (const name of inheritedServiceFunctions) {
+    afterForward.delete(`${name}:PUBLIC:EXECUTE`)
+    afterForward.delete(`${name}:anon:EXECUTE`)
+    afterForward.delete(`${name}:authenticated:EXECUTE`)
+  }
+  afterForward.add("check_pending_moments_for_xiaoc:service_role:EXECUTE")
+
+  const afterRollback = new Set(afterForward)
+  for (const name of inheritedServiceFunctions) {
+    afterRollback.add(`${name}:PUBLIC:EXECUTE`)
+    afterRollback.add(`${name}:anon:EXECUTE`)
+    afterRollback.add(`${name}:authenticated:EXECUTE`)
+    afterRollback.delete(`${name}:service_role:EXECUTE`)
+  }
+  assert.deepEqual([...afterRollback].sort(), [...canonicalBefore].sort())
 })
 
 test("PostgreSQL 17 MAINTAIN is baselined, denied, validated, and reversible", () => {
@@ -101,6 +146,7 @@ test("rollback restores every privilege class changed by forward", () => {
   assert.match(rollback, /grant all privileges on table[\s\S]*to anon, authenticated, service_role/i)
   assert.match(rollback, /grant all privileges on sequence[\s\S]*to anon, authenticated, service_role/i)
   assert.match(rollback, /alter default privileges[\s\S]*grant execute on functions to anon, authenticated, service_role/i)
+  assert.match(rollback, /M2C3_ROLLBACK_NOT_CANONICAL/)
   assert.doesNotMatch(rollback, /\b(?:create|alter|drop)\s+table\b/i)
   assert.doesNotMatch(rollback, /\bcreate\s+policy\b/i)
 })

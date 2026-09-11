@@ -1,14 +1,16 @@
 # XiaoC Multi-user M2C.3 — Grant Containment Preparation
 
-> Status: PREPARED, NOT APPLIED
+> Status: SAFE RECOVERY PACKAGE REVISION; NOT AUTHORIZED FOR RE-APPLY
 >
 > Basis: M2A Production catalog, M2B isolation design, M2C plan, M2C.1 caller/function review, and M2C.2 rollback rehearsal.
 >
-> This package has not been executed against Production. It does not change tenant schema, owner data, RLS policies, application code, Storage policies, Ombre, deployment, or git history.
+> This revised package has not been executed against Production. The earlier package was applied and rolled back as recorded below. This revision does not change tenant schema, owner data, RLS policies, application code, Storage policies, Ombre, deployment, or git history.
 
 ## 1. Outcome
 
 M2C.3 is a single transactional ACL-only containment package. It closes privileges that are dangerous independently of tenant UUID/RLS work while preserving the current `service_role` compatibility lane.
+
+The first Production apply was rolled back because UI-driven validation could not be completed inside the declared window. Read-only investigation confirmed that effective privileges returned to the approved baseline, but the original rollback left four redundant explicit `service_role EXECUTE` ACL entries. Those functions had received the same effective access through `PUBLIC` before M2C.3. This revision fixes the rollback representation and makes canonical ACL shape part of preflight, validation, rehearsal, and rollback postflight.
 
 Files:
 
@@ -78,10 +80,20 @@ These are deliberately outside M2C.3:
 
 All forward ACL statements are idempotent. More importantly, the transaction preflight counts the exact refreshed Production baseline across exposed functions, five Core tables, high-risk table privileges, eight sequences, and future default ACLs. The PostgreSQL 17 baseline is `80` Core privilege instances, `140` high-risk table privilege instances, and `24` relevant default-ACL privilege instances; the earlier `70`/`104`/`22` counts omitted `MAINTAIN`.
 
+Effective privilege checks alone are insufficient for rollback fidelity. PostgreSQL roles automatically inherit grants made to `PUBLIC`, while `aclexplode` distinguishes that inherited path from an explicit role ACL. The canonical pre-apply state has no explicit `service_role EXECUTE` entry on:
+
+- `check_pending_moments_for_xiaoc()`
+- `xiaoc_memory_guard_append_only()`
+- `xiaoc_memory_guard_embedding_transition()`
+- `xiaoc_memory_guard_import_run()`
+
+The canonical contained state has exactly one such entry, on `check_pending_moments_for_xiaoc()`. Forward preflight now rejects any other representation. Rollback restores `PUBLIC` first, removes those four explicit entries, then verifies `2 / 10 / 80 / 140 / 24 / 48` and zero redundant explicit entries before commit.
+
 - Exact baseline: proceed.
 - Exact desired state: safe repeat; statements remain no-ops.
 - Any mixed count: abort with `M2C3_PARTIAL_OR_DRIFTED_ACL_STATE` before changing privileges.
 - Any expected object missing or required service EXECUTE absent: abort.
+- Effective counts that match but canonical explicit grants that do not match: abort.
 - The whole package uses one transaction and an advisory transaction lock. A SQL error rolls back all ACL changes.
 
 `IF NOT EXISTS` is not used as a substitute for ACL reconciliation.
@@ -124,11 +136,13 @@ Risk is a previously undiscovered direct anon/authenticated client. Repository a
 5. Observe at least two five-minute background cycles and the intervening Moment cycles.
 6. Compare the post-apply ACL catalog against the package allowlist; any unrelated difference triggers rollback.
 
+Canonical comparison removes volatile capture columns, projects each entry as `(object_type, schema_name, object_name, owner, grantor, grantee, privilege, grantable)`, and performs `pre EXCEPT post` plus `post EXCEPT pre`. After forward, only the documented containment allowlist may remain. After rollback, both directions must return zero rows; matching row counts alone are not sufficient.
+
 The validation SQL is explicitly read-only and ends with `ROLLBACK`.
 
 ## 7. Rollback plan
 
-The rollback file restores the exact privilege classes recorded in M2A/M2C.1 for every changed object and restores the prior `postgres` default ACL grants. It does not change data or schema.
+The rollback file restores the exact privilege classes recorded in M2A/M2C.1 for every changed object and restores the prior `postgres` default ACL grants. It restores `PUBLIC`-inherited function access without manufacturing explicit `service_role` entries, then runs an in-transaction effective-and-canonical postflight before commit. It does not change data or schema.
 
 Rollback immediately if:
 
@@ -141,7 +155,7 @@ Rollback immediately if:
 
 Default rollback window: at least ten minutes after apply, covering two background-worker cycles. The Production change record must replace this relative window with an exact timestamp and named operator before execution.
 
-After rollback, rerun the captured baseline ACL query and the same Private App/worker/Memory canaries. Because this checkpoint has no data mutation, no data restore is expected. Backup/PITR remains an operational gate, not the primary ACL rollback mechanism.
+After rollback, rerun the captured baseline ACL query, require a bidirectional canonical set diff of zero, and repeat the same Private App/worker/Memory canaries. Because this checkpoint has no data mutation, no data restore is expected. Backup/PITR remains an operational gate, not the primary ACL rollback mechanism.
 
 ## 8. Apply readiness
 

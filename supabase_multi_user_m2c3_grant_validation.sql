@@ -95,6 +95,29 @@ select 'Memory Engine callable RPCs remain service-only',
 union all
 select 'worker RPCs retain service execute',
        has_function_privilege('service_role','public.claim_moment_check(text,text,text,text,integer)','EXECUTE')
-       and has_function_privilege('service_role','public.cleanup_xiaoc_observability_audits(integer)','EXECUTE'), null;
+       and has_function_privilege('service_role','public.cleanup_xiaoc_observability_audits(integer)','EXECUTE'), null
+union all
+select 'canonical writer service grant is explicit',
+       exists (
+         select 1 from pg_proc p
+         cross join lateral aclexplode(coalesce(p.proacl, acldefault('f',p.proowner))) x
+         join pg_roles grantee on grantee.oid=x.grantee
+         where p.oid='public.check_pending_moments_for_xiaoc()'::regprocedure
+           and grantee.rolname='service_role' and x.privilege_type='EXECUTE'
+       ), null
+union all
+select 'canonical inherited guard service grants stay non-explicit',
+       not exists (
+         select 1
+         from unnest(array[
+           'public.xiaoc_memory_guard_append_only()',
+           'public.xiaoc_memory_guard_embedding_transition()',
+           'public.xiaoc_memory_guard_import_run()'
+         ]) function_name
+         join pg_proc p on p.oid=function_name::regprocedure
+         cross join lateral aclexplode(coalesce(p.proacl, acldefault('f',p.proowner))) x
+         join pg_roles grantee on grantee.oid=x.grantee
+         where grantee.rolname='service_role' and x.privilege_type='EXECUTE'
+       ), null;
 
 rollback;

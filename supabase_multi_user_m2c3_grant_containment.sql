@@ -17,6 +17,7 @@ declare
   v_high_risk_grants integer;
   v_sequence_grants integer;
   v_default_acl_grants integer;
+  v_canonical_service_function_grants integer;
   v_before boolean;
   v_after boolean;
 begin
@@ -136,25 +137,46 @@ begin
     and (
       (grantee.rolname in ('anon', 'authenticated') and d.defaclobjtype in ('r', 'S', 'f'))
       or (x.grantee = 0 and d.defaclobjtype = 'f')
-    );
+       );
+
+  -- These four service_role grants were inherited through PUBLIC in the
+  -- canonical M2A baseline.  Do not mistake equivalent effective access for
+  -- an identical ACL representation.
+  select count(*) into v_canonical_service_function_grants
+  from unnest(array[
+    'public.check_pending_moments_for_xiaoc()',
+    'public.xiaoc_memory_guard_append_only()',
+    'public.xiaoc_memory_guard_embedding_transition()',
+    'public.xiaoc_memory_guard_import_run()'
+  ]) as function_name
+  join pg_proc p on p.oid = function_name::regprocedure
+  cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
+  join pg_roles grantee on grantee.oid = x.grantee
+  where grantee.rolname = 'service_role'
+    and x.privilege_type = 'EXECUTE';
 
   v_before := v_check_grants = 2
     and v_guard_grants = 10
     and v_core_grants = 80
     and v_high_risk_grants = 140
     and v_sequence_grants = 48
-    and v_default_acl_grants = 24;
 
+    and v_default_acl_grants = 24
+    and v_canonical_service_function_grants = 0;
   v_after := v_check_grants = 0
     and v_guard_grants = 0
     and v_core_grants = 0
     and v_high_risk_grants = 0
     and v_sequence_grants = 0
-    and v_default_acl_grants = 0;
+    and v_default_acl_grants = 0
+    -- Forward deliberately makes only the writer's service lane explicit.
+    and v_canonical_service_function_grants = 1
+    and has_function_privilege('service_role', 'public.check_pending_moments_for_xiaoc()', 'EXECUTE');
 
   if not v_before and not v_after then
-    raise exception 'M2C3_PARTIAL_OR_DRIFTED_ACL_STATE: check=%, guards=%, core=%, high_risk=%, sequences=%, defaults=%',
-      v_check_grants, v_guard_grants, v_core_grants, v_high_risk_grants, v_sequence_grants, v_default_acl_grants;
+    raise exception 'M2C3_PARTIAL_OR_DRIFTED_ACL_STATE: check=%, guards=%, core=%, high_risk=%, sequences=%, defaults=%, canonical_service_functions=%',
+      v_check_grants, v_guard_grants, v_core_grants, v_high_risk_grants, v_sequence_grants, v_default_acl_grants,
+      v_canonical_service_function_grants;
   end if;
 
   if not has_function_privilege('service_role', 'public.check_pending_moments_for_xiaoc()', 'EXECUTE') then
