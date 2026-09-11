@@ -31,6 +31,12 @@ test('snapshot covers public tables, sequences, functions, and default ACLs', ()
   assert.match(normalized, /d\.defaclobjtype in \('r', 's', 'f'\)/);
 });
 
+test('internal char catalog codes are cast before text concatenation', () => {
+  assert.match(normalized, /'default_privilege_' \|\| d\.defaclobjtype::text/);
+  assert.match(normalized, /owner_role\.rolname \|\| ':' \|\| d\.defaclobjtype::text/);
+  assert.doesNotMatch(normalized, /\|\| d\.defaclobjtype\)(?!::text)/);
+});
+
 test('function overload identity is stable', () => {
   assert.match(normalized, /pg_catalog\.pg_get_function_identity_arguments\(p\.oid\)/);
 });

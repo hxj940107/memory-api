@@ -58,9 +58,9 @@ with acl_rows as (
   union all
 
   select
-    ('default_privilege_' || d.defaclobjtype)::text as object_type,
+    ('default_privilege_' || d.defaclobjtype::text)::text as object_type,
     n.nspname::text as schema_name,
-    (owner_role.rolname || ':' || d.defaclobjtype)::text as object_name,
+    (owner_role.rolname || ':' || d.defaclobjtype::text)::text as object_name,
     owner_role.rolname::text as owner,
     grantor_role.rolname::text as grantor,
     coalesce(grantee_role.rolname, 'PUBLIC')::text as grantee,
