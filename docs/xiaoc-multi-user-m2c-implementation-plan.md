@@ -180,6 +180,14 @@ This is the **minimum first schema batch**. It contains the collision-critical C
 
 ### M2C.5 — First private account root and Core backfill/quarantine
 
+**Status: COMPLETE — Production committed 2026-09-12 10:24:31 +08:00.** The
+verified Auth UUID `17aa1bd0-931d-40a0-b0d6-ef75c641c7b3` is the first active
+companion root. The frozen 3,966-row `user` manifest was backfilled exactly;
+3,329 `small_c`/`test`/Summary-orphan rows remain quarantined and unbound.
+Validation passed 12/12, recovery was not used, and writers/workers were
+restored healthy. The M2C.4 standalone rollback window is permanently closed.
+M2C.6 remains not started.
+
 - **Scope:** under separate approval, create the verified first Auth account and its `companion_instances` row, freeze the approved mapping-registry version, backfill only approved Core cohorts into UUID bridge columns, and register/quarantine unresolved Core rows.
 - **Prerequisites:** M2C.4 stable; user approved account binding and cohort mapping; writes/workers affecting Core can be paused or captured; manifest and backup ready.
 - **Files/schema involved:** future backfill/manifest/rollback artifacts; Auth account/root and UUID bridge columns on five Core tables.

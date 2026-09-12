@@ -115,7 +115,7 @@ Refresh this baseline whenever code changes. As of this snapshot:
 
 ## Planned Product Phase
 
-- **NOT STARTED** — Multi-user is the planned next-stage direction. Until that phase is explicitly designed and started, the current production product, runtime assumptions, and security model remain single-user.
+- **IN PROGRESS / M2C.5 COMPLETE** — Multi-user database isolation has completed Production grant containment, the additive UUID foundation, and the first private companion binding. The verified private Auth account owns the exact 3,966-row legacy `user` manifest; 3,329 excluded Core rows remain quarantined and unbound. M2C.6 is not started, and the current application runtime remains on its private legacy identity lane.
 
 ## Current Priorities
 
@@ -131,7 +131,7 @@ Refresh this baseline whenever code changes. As of this snapshot:
 
 - Keep XiaoC Memory Engine at 1% Shadow until its review gate is satisfied; Ombre remains authoritative and cutover requires separate approval.
 - Resume Voice Call at Checkpoint C only when the paused Phase 0 work is explicitly restarted.
-- Define the Multi-user phase before implementation; do not infer account, organization, billing, or public-SaaS requirements from the roadmap label alone.
+- Reassess M2C.6+ scope before any further implementation; continue only Engine identity/data-isolation work and keep Hosted-SaaS operations deferred.
 - Observe production Token/Cost after cache warm-up and compare with the offline estimate.
 - Continue Moments event-time/publish-time and historical-material perspective checks.
 - Decide whether permanent bundled diary samples should remain a lasting product feature; until then, preserve them.
