@@ -25,6 +25,8 @@ close unknowns and decisions
 
 No checkpoint combines database ownership migration with API trusted identity, Storage object migration, Ombre authority/cutover, Private App account UX/local-state migration, or Public App creation.
 
+Public XiaoC v1 is now bounded to **Own Stack**, with user-funded infrastructure and model/API keys. M2C.5 remains unchanged and binds the first private companion account. After M2C.5 reconciliation, M2C.6+ receives an explicit scope review: continue checkpoint work required for XiaoC Engine correctness, trusted identity, and tenant data isolation; defer payment, subscription, pooled-credit, subsidy, abuse-control, and other work required only for a Hosted SaaS. This review must not be used to weaken isolation or to create the separate Public App repo.
+
 The first executable checkpoint is **M2C.1**, a read-only and decision-closing checkpoint with no Production writes.
 
 ## 2. P0 gates before any schema implementation
@@ -197,6 +199,8 @@ This is the **minimum first schema batch**. It contains the collision-critical C
 - **Rollback:** drop new composite constraints/indexes only; UUID bridge and legacy path remain.
 - **Validation:** synthetic cross-tenant link rejection; existing approved rows validate; Summary uniqueness/upsert model rehearsed; concurrent Core initialization model; Production catalog diff.
 - **Stop condition:** any included row violates ownership; constraint validation impacts availability; application conflict targets would change prematurely.
+
+Before authorizing this checkpoint, apply the post-M2C.5 product-boundary review. Core ownership integrity and cross-tenant collision prevention remain Engine/data-isolation concerns and are not Hosted-only features; any newly proposed SaaS operations must be separated and deferred.
 
 ### M2C.7 — Remaining-domain additive batches
 

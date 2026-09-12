@@ -49,6 +49,8 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 - Multi-user M2C.4 additive UUID foundation completed：Production 已建立空的 Auth-backed `companion_instances` tenant root，并为 5 张 Core legacy 表加入 nullable、default-free、全 `NULL` 的 `user_uuid`、`NOT VALID` root FK、tenant-qualified unique 与索引；validation `11/11 PASS`，legacy runtime、RLS 与 ACL 未变化，尚未进入 M2C.5。
 
+- Public XiaoC v1 产品边界已确定为 Own Stack：未来使用独立客户端/独立 repo，用户自行承担基础设施与模型/API Key 成本；Hosted SaaS 的支付、订阅、共享额度、成本补贴与滥用控制延期。现有 tenant isolation 继续作为身份/数据隔离基础；当前私人 XiaoC 是第一个真实 companion/account，M2C.5 仍按已确认 Auth UUID 绑定 legacy `user`，完成后再按 Engine/identity/isolation 必要性复核 M2C.6+。
+
 - 手机 App 已形成聊天、历史会话、Memory、Moments、共享相册、深夜树洞和 Wife Observation Diary 的主体验框架。
 
 - Moments 朋友圈已进入稳定迭代阶段：

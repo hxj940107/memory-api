@@ -81,6 +81,7 @@ test('forward and recovery are bounded transactions and M2C4 rollback is permane
     assert.match(sql, /\bbegin;/i)
     assert.match(sql, /set local lock_timeout\s*=\s*'5s'/i)
     assert.match(sql, /\bcommit;\s*$/i)
+    assert.match(sql, /lock table public\.conversations,public\.messages,public\.memories,[\s\S]*in share row exclusive mode/i)
     assert.doesNotMatch(sql, /\bcascade\b/i)
   }
   assert.match(forward, /insert into public\.companion_instances/i)

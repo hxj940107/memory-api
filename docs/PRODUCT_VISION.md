@@ -6,7 +6,7 @@ XiaoC 不是一个普通的 AI 聊天工具，也不是一个效率助手。
 
 XiaoC 是一个私人 AI 伴侣（Private AI Companion）。
 
-它只属于一个用户。当前项目是私人项目，不开源，不商业化，不需要考虑多用户切换。
+当前私人 XiaoC 只属于一个用户，继续保持私人、不开源且不提供多账号切换。
 
 它的核心目标不是帮助用户完成更多任务，而是成为一个能够长期陪伴用户、理解用户、记住用户，并随着时间成长的 AI 伴侣。
 
@@ -246,7 +246,18 @@ XiaoC 应该像一个私人空间。
 
 当前不需要视觉 Avatar，重点是交流体验。
 
-## 11. AI 模型架构
+## 11. 未来 Public XiaoC 产品边界
+
+Public XiaoC 是未来的独立客户端，并使用独立 repository。v1 采用 **Own Stack**，不是 Hosted / 托管 SaaS：
+
+- 用户自行提供并承担基础设施和模型/API Key 成本；
+- v1 不建设支付、订阅、共享模型额度、成本补贴或 Hosted 服务滥用控制；
+- 当前私人 mobile XiaoC 继续作为第一个真实 companion/account；
+- 已有 tenant identity 和数据隔离工作继续保留。它既保护每段 companion 关系，也为未来可能重新评估 Hosted 模式保留扩展路径。
+
+本决定不授权创建 Public App 或开始 Hosted 实现。M2C.5 完成第一个私人账号绑定后，必须重新审视 M2C.6+：继续 XiaoC Engine、可信身份和数据隔离本身需要的工作；延期仅由 Hosted SaaS 运营需求产生的工作。
+
+## 12. AI 模型架构
 
 当前主要使用 Claude Sonnet 4.6。
 
@@ -277,7 +288,7 @@ AI Layer 需要支持：
 
 但是成本优化不能牺牲 XiaoC 的人格连续性、关系记忆和陪伴体验。
 
-## 12. 项目定位
+## 13. 项目定位
 
 XiaoC 当前是私人项目（Private Project）。
 
@@ -291,7 +302,7 @@ XiaoC 当前是私人项目（Private Project）。
 
 未来扩展方向可以之后再考虑。
 
-## 13. 给 AI 开发工具的说明
+## 14. 给 AI 开发工具的说明
 
 在进行任何代码修改前，请先理解：
 

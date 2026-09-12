@@ -5,6 +5,8 @@ begin;
 set local lock_timeout='5s';
 set local statement_timeout='60s';
 select pg_advisory_xact_lock(hashtextextended('xiaoc:multi-user:m2c5:first-root-backfill',0));
+lock table public.conversations,public.messages,public.memories,
+  public.conversation_summary,public.user_state in share row exclusive mode;
 
 do $m2c5_recovery_guard$
 declare v_run uuid:=current_setting('xiaoc.m2c5.run_id')::uuid;

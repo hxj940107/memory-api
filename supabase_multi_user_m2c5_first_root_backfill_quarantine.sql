@@ -16,6 +16,12 @@ set local statement_timeout = '60s';
 
 select pg_advisory_xact_lock(hashtextextended('xiaoc:multi-user:m2c5:first-root-backfill', 0));
 
+-- Human pause/drain removes expected writers; these locks make the invariant
+-- database-enforced for the transaction and fail within five seconds if a
+-- writer was missed.
+lock table public.conversations,public.messages,public.memories,
+  public.conversation_summary,public.user_state in share row exclusive mode;
+
 create temporary table m2c5_config on commit drop as
 select current_setting('xiaoc.m2c5.run_id', true)::uuid as run_id,
        current_setting('xiaoc.m2c5.target_user_uuid', true)::uuid as target_user_id,

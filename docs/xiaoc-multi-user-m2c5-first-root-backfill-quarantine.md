@@ -43,6 +43,11 @@ null Core legacy owners or cross-owner `user` messages; counts/digests match;
 Core writers/workers are paused or drained; and an independent logical recovery
 artifact exists because Free Plan has no backup/PITR.
 
+Apply and recovery additionally take `SHARE ROW EXCLUSIVE` locks on all five
+Core tables after the advisory lock. The five-second lock timeout makes a
+missed writer fail the transaction instead of permitting owner drift between
+manifest capture, update, and reconciliation.
+
 ## Cohort and quarantine contract
 
 - `user`: `private-current`, approved target only after explicit UUID binding.

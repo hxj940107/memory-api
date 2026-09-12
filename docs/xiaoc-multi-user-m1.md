@@ -19,7 +19,11 @@ This is a backend tenancy rule, not a requirement to turn the existing `mobile/X
 - `mobile/XiaoC` remains the existing private XiaoC App. It will bind only to the first real Supabase Auth UUID and does not need public registration or account-switching UI.
 - The backend in this repository is progressively upgraded into the shared multi-tenant backend used by private XiaoC and the future Public App.
 - The future Public App is a separate client in a separate repository. It owns public registration, sign-in, recovery, logout, account lifecycle, branding, release credentials, and public-product UX.
+- Public XiaoC v1 uses an **Own Stack** model. Users provide and pay for their own infrastructure and model/API keys; v1 is not a Hosted/managed SaaS.
+- Hosted-only payments, subscriptions, shared model allowances, cost subsidies, and abuse-control systems are deferred. Their absence does not weaken the tenant identity or data-isolation contract.
 - Shared backend capability does not make private prompts, Relationship state, seed content, client configuration, or release credentials shared product assets.
+
+The current private mobile XiaoC is the first real companion/account. M2C.5 continues to bind legacy `user_id='user'` to the explicitly approved Auth UUID `17aa1bd0-931d-40a0-b0d6-ef75c641c7b3`. After that checkpoint, M2C.6+ must be re-reviewed: retain work required for XiaoC Engine identity and tenant-safe data; defer work justified only by operating a Hosted SaaS. This review does not authorize creating the Public App repository.
 
 Multi-user foundation may be built while Ombre remains authoritative for the legacy private user. New multi-user accounts must not enter Ombre until Ombre is proven tenant-safe or replaced. There must be no multi-user production launch while the current global Ombre PIN/admin paths remain reachable for multiple accounts.
 

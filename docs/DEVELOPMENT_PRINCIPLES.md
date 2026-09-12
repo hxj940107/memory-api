@@ -2,9 +2,9 @@
 
 ## 1. 产品方向
 
-XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通聊天工具、效率助手或公开 SaaS 产品。
+XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通聊天工具或效率助手。当前 mobile 产品继续保持私人、单账号。
 
-当前生产项目仍只服务一个用户。Multi-user 已列为计划中的下一阶段方向，但尚未开始；在专项架构与迁移边界明确前，不提前实现用户切换、团队协作、组织管理或公开商业化能力。
+当前生产项目仍只服务一个用户。Tenant foundation 只通过明确批准的 Multi-user checkpoints 推进，不因此把私人 App 变成公开多账号产品。
 
 ## 2. 最高原则
 
@@ -63,7 +63,15 @@ XiaoC 目前只属于一个用户。
 - 组织或团队权限
 - 商业化计费
 
-Multi-user 后续会作为独立阶段设计。当前代码仍应保持边界清晰、避免堵死扩展，但不得把“计划中”误当成已经启动或授权顺手泛化。
+Multi-user 只按其专项 checkpoint 推进。当前代码应保持边界清晰，但不得把数据库隔离当作顺手加入账号切换、组织或 Public 产品行为的授权。
+
+## 5.1 Public XiaoC v1 交付边界
+
+未来 Public App 仍是独立客户端和独立 repository。v1 采用 Own Stack：用户自行提供并承担基础设施和模型/API Key 成本。
+
+v1 不建设 Hosted-only 的支付、订阅、共享模型额度、成本补贴或滥用控制。Tenant identity 和 isolation 不因此废弃：它们仍是 companion 数据的正确安全边界，并为未来可能的 Hosted 模式保留扩展点。
+
+当前私人 XiaoC 是第一个真实 companion/account。M2C.5 可将已批准的 legacy owner 绑定到已验证 Auth UUID。M2C.5 后逐项复核 M2C.6+：继续 Engine、可信身份和数据隔离需要的工作；延期仅为 Hosted SaaS 运营服务的工作。
 
 ## 6. 手机端优先
 
