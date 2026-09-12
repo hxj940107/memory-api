@@ -1,6 +1,6 @@
 # XiaoC Current Status
 
-> Canonical snapshot: 2026-09-10 (Asia/Shanghai). This is a current fact and release-gate snapshot, not a changelog.
+> Canonical snapshot: 2026-09-12 (Asia/Shanghai). This is a current fact and release-gate snapshot, not a changelog.
 
 ## Status Legend
 
@@ -12,11 +12,13 @@
 
 ## Release Snapshot
 
-- **PRODUCTION** — XiaoC is a private, single-user, mobile-first AI companion. The Expo iOS app is primary; the web app is a historical prototype.
+- **PRODUCTION** — XiaoC Private is the existing private, single-user, mobile-first AI companion. The Expo iOS app is primary.
+- **NOT STARTED** — Public App is the new independent Own Stack product direction, but no Public client/repository exists yet. Each user will bring their own Supabase, Vercel, OpenRouter, and other enabled-service accounts/keys. Root `public/` is the Legacy Web Prototype, not Public App.
+- **FOUNDATION** — Shared Backend currently means reusable backend code and deployment contracts, not one hosted Production shared by all Own Stack users. Identity, tenant, persona, Memory, credentials, billing, and business state must remain isolated from XiaoC Private and from every other installation.
 - **PRODUCTION** — Vercel remains at the Hobby hard limit of `12/12` Serverless Functions.
-- **PENDING VERIFICATION** — The latest confirmed TestFlight binary is Production **Build 10**, created at **2026-09-05 15:20 Asia/Shanghai**. Do not assume Build 11 exists.
-- **PENDING VERIFICATION** — The next Production Build must embed EAS production `EXPO_PUBLIC_XIAOC_APP_TOKEN`, then pass real-device startup, chat, voice, and API checks.
-- **PENDING VERIFICATION** — Strict private API auth must remain disabled until that token-bearing binary is installed and verified.
+- **BUILD IN PROGRESS / PENDING VERIFICATION** — A new XiaoC Private EAS Production build containing Private Supabase Auth enrollment/JWT support has been started. Its build number and TestFlight availability must be confirmed from EAS; it is not Public App.
+- **PENDING VERIFICATION** — After installation, verify startup, existing unlock, Private Auth enrollment, JWT refresh, chat, recording/playback, legacy compatibility, and API access on the real iPhone.
+- **DO NOT CUT OVER YET** — Server trusted-identity rollout and App-token fallback removal must wait for the new binary and JWT Shadow checks. Core UUID dual-write remains OFF.
 
 ## Memory / Context
 
@@ -84,11 +86,12 @@
 
 - **COMPLETE** — Root Splash release does not wait for network, storage, authentication, cloud preferences, or audio initialization.
 - **COMPLETE** — Welcome reads local account/password first with recoverable error handling. Cloud preferences synchronize in the background and cannot keep `unlockReady` pending.
-- **CONFIGURED / PENDING VERIFICATION** — Vercel Production has a new `XIAOC_APP_TOKEN`; EAS production has the matching `EXPO_PUBLIC_XIAOC_APP_TOKEN`; the last configuration verification reported `MATCH` without exposing either value.
+- **LOCAL COMPLETE / NOT DEPLOYED** — M3B.1 adds one shared server-side Supabase JWT resolver, fixed Private UUID verification, active companion lookup, privacy-safe identity Shadow, and fail-closed handling across all 12 API routes.
+- **LOCAL COMPLETE / BUILD PENDING** — Mobile adds a Private-only one-time enrollment UI, Supabase session persistence/refresh in SecureStore, and Bearer access tokens on API requests. It does not add Public registration or account switching.
+- **CONFIGURED / PENDING VERIFICATION** — EAS Production contains the Supabase project URL, public anon/publishable key, enrollment flag, and the existing Sensitive Private App token. No service-role key or Auth session credential is embedded.
 - **CONFIGURED** — `CRON_SECRET` exists and remains separate from private App authentication.
-- **NOT YET ENABLED** — `XIAOC_APP_AUTH_ENABLED` is intentionally not `true`. Build 10 was not confirmed to contain the new client token, so enabling strict auth now could cut off the installed App.
-- **PENDING VERIFICATION** — After validating the next token-bearing Production Build, enable `XIAOC_APP_AUTH_ENABLED=true`, redeploy, then verify unauthenticated private API requests return `401`, App requests succeed, and Cron continues to run.
-- **SECURITY NOTE** — The embedded token protects this privately distributed API from casual unauthenticated access; it is not device attestation. Rotate both sides and rebuild if exposed.
+- **NOT DEPLOYED / NOT ENABLED** — Verified JWT identity is not yet the confirmed Production API authority. If a temporary App-token fallback is needed for the old binary, it may only fixed-bind to the approved Private UUID and must record usage; anonymous compatibility must not become the target state.
+- **SECURITY NOTE** — Client `user_id` is legacy compatibility only; client `user_uuid` must never be authoritative. A presented but invalid JWT must never silently fall back.
 
 ## Token / Cost
 
@@ -103,7 +106,7 @@
 
 Refresh this baseline whenever code changes. As of this snapshot:
 
-- Full Node tests: `265/265` passing.
+- Full Node tests: `485/485` passing on the current M3B.1 working tree.
 - Mobile TypeScript: `0 errors` with `npx tsc --noEmit`.
 - `git diff --check`: passing.
 - Vercel API Functions: `12/12`.
@@ -113,19 +116,20 @@ Refresh this baseline whenever code changes. As of this snapshot:
 - **PRODUCTION / HEALTHY** — Treehole execution and `xiaoc_background_check` run audits are active with privacy-safe, append-only records and 60-day retention.
 - **PRODUCTION / HEALTHY** — Audit writes are failure-isolated; `service_role` has direct `SELECT`/`INSERT` only, while expired-row deletion is restricted to the cleanup RPC.
 
-## Planned Product Phase
+## Product / Identity Phase
 
-- **IN PROGRESS / M2C.5 COMPLETE** — Multi-user database isolation has completed Production grant containment, the additive UUID foundation, and the first private companion binding. The verified private Auth account owns the exact 3,966-row legacy `user` manifest; 3,329 excluded Core rows remain quarantined and unbound. M2C.6 is not started, and the current application runtime remains on its private legacy identity lane.
+- **M2C.5 COMPLETE** — Database isolation has completed Production grant containment, additive UUID foundation, and the first Private companion binding. The verified Auth account owns the exact 3,966-row legacy `user` manifest; 3,329 excluded Core rows remain quarantined and unbound.
+- **M3B.1 IN PROGRESS** — The current checkpoint is the XiaoC Private trusted identity bridge and JWT Shadow rollout. M2C.6 enforcement, Core UUID dual-write, final RLS, and Public App implementation have not started.
 
 ## Current Priorities
 
 ### Release blockers / required sequence
 
-1. Create the next EAS Production Build using the `production` environment; do not assume its number before EAS creates it.
-2. Install through TestFlight and verify startup, unlock, chat, recording/playback, and API access on a real device.
-3. Confirm that binary contains the configured production client token without printing it.
-4. Enable Vercel Production `XIAOC_APP_AUTH_ENABLED=true` and redeploy.
-5. Verify: no-token private API returns `401`; the App still accesses private APIs; Cron remains authorized and operational.
+1. Let the current EAS Production build finish and record its actual build number; do not assume it succeeded or reached TestFlight.
+2. Submit/install through TestFlight and verify startup, unlock, Private Supabase enrollment, session refresh, chat, voice, and existing Private data.
+3. Deploy the server trusted-identity bridge only with the approved fixed-binding App-token fallback needed to protect the old binary.
+4. Verify real-device JWT Shadow, companion status, legacy alias agreement, and Cron/worker health without enabling Core UUID dual-write.
+5. Remove fallback and require trusted identity only after the JWT path is stable; M2C.6 remains a separate later checkpoint.
 
 ### Follow-up, not release blockers
 

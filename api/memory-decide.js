@@ -1,8 +1,8 @@
 import { judgeMemory } from "../lib/memoryJudge.js"
-import { requirePrivateAppRequest } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
 
   try {
 

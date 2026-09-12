@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { judgeMemory } from "../lib/memoryJudge.js"
-import { requirePrivateAppRequest } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -8,7 +8,7 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
 
   if (req.method !== "POST") {
     return res.status(405).end()

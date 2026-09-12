@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import Constants from 'expo-constants';
+import { getPrivateAccessToken } from "../lib/supabaseAuth";
 
 export const API_BASE_URL = "https://memory-api-beta.vercel.app";
 export const APP_USER_ID = "user";
@@ -69,8 +70,12 @@ export async function apiJson<T>(
 
   try {
     const headers = new Headers(fetchOptions.headers);
+    const accessToken = await getPrivateAccessToken();
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
     const privateAppToken = await getPrivateAppToken();
-    if (privateAppToken) headers.set("X-XiaoC-App-Token", privateAppToken);
+    if (privateAppToken) {
+      headers.set("X-XiaoC-App-Token", privateAppToken);
+    }
 
     response = await fetch(apiUrl(path, query), {
       ...fetchOptions,

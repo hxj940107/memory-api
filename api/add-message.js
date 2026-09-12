@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { requirePrivateAppRequest } from '../lib/privateAppAuth.js'
+import { requireRequestIdentity } from '../lib/requestIdentity.js'
 import { GENERATED_FILES_BUCKET } from '../lib/generatedFiles.js'
 import { normalizeMessageVoiceAsset } from '../lib/messageVoice.js'
 
@@ -9,7 +9,7 @@ const supabase = createClient(
 )
 
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
 
   try {
 

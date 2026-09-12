@@ -110,6 +110,9 @@ test('ordinary build config stays unchanged; PoC identity is separate and gated'
 test('PoC build refuses ordinary production API access before reading credentials', () => {
   const api = load('../config/api', {
     'expo-constants': { default: { expoConfig: { extra: { voicePoc: true } } } },
+    '../lib/supabaseAuth': {
+      getPrivateAccessToken() { assert.fail('must not read a production auth session'); },
+    },
     'expo-secure-store': {
       getItemAsync() { assert.fail('must not read a production token'); },
       setItemAsync() { assert.fail('must not persist a production token'); },

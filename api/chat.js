@@ -2,8 +2,8 @@ import { createClient } from "@supabase/supabase-js"
 import { waitUntil } from "@vercel/functions"
 import {
   privateAppInternalHeaders,
-  requirePrivateAppRequest,
 } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 import {
   isInvalidMomentText,
   isMomentTechnicalDiscussion,
@@ -3046,7 +3046,7 @@ async function maybeUpdateBoundSharedContext({
 // Main Handler
 // --------------------
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })

@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-import { requirePrivateAppRequest } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 import {
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   INACTIVITY_REACH_OUT_MODES,
@@ -177,7 +177,7 @@ async function uploadPreferenceImage(userId, kind, imageBase64, imageMimeType) {
 }
 
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
 
   try {
 

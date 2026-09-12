@@ -4,7 +4,7 @@
 
 XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通聊天工具或效率助手。当前 mobile 产品继续保持私人、单账号。
 
-当前生产项目仍只服务一个用户。Tenant foundation 只通过明确批准的 Multi-user checkpoints 推进，不因此把私人 App 变成公开多账号产品。
+当前 Production 仍只服务 XiaoC Private 的一个真实账号。Tenant foundation 已推进至 M2C.5，后续仍只通过明确批准的 checkpoints 推进；这不因此把 Private App 变成公开多账号产品。
 
 ## 2. 最高原则
 
@@ -23,7 +23,7 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通聊天工具�
 
 当前阶段优先做手机 App。
 
-Web 端可以保留为历史原型，但不是开发重点。
+仓库 `public/` 可以作为 Legacy Web Prototype 保留，但不是开发重点，也不是新的 Public App。
 
 优先级顺序：
 
@@ -67,9 +67,15 @@ Multi-user 只按其专项 checkpoint 推进。当前代码应保持边界清晰
 
 ## 5.1 Public XiaoC v1 交付边界
 
-未来 Public App 仍是独立客户端和独立 repository。v1 采用 Own Stack：用户自行提供并承担基础设施和模型/API Key 成本。
+Public App 是当前主要的新产品方向，但仍必须是独立客户端和独立 repository。v1 采用 Own Stack：每位用户自行拥有、配置并承担自己的 Supabase、Vercel、OpenRouter，以及实际启用功能依赖的其他外部服务账号、Key、配额和费用。
+
+固定命名：`XiaoC Private` 指现有私人客户端；`Public App` 指新的独立产品；`Shared Backend` 指可复用基础设施；`public/` 只称为 `Legacy Web Prototype`。
+
+Shared Backend 在 Own Stack v1 中主要意味着共享后端代码、schema contract、migration、配置规范和维护路径，不意味着把 Public 用户接入 XiaoC Private 的 Supabase/Vercel/OpenRouter Production 资源。任何 Public 配置都不得默认或回退到 Private 的项目、密钥、额度或数据。
 
 v1 不建设 Hosted-only 的支付、订阅、共享模型额度、成本补贴或滥用控制。Tenant identity 和 isolation 不因此废弃：它们仍是 companion 数据的正确安全边界，并为未来可能的 Hosted 模式保留扩展点。
+
+早期内测优先面向具备自行配置 stack 能力的用户。实施和诊断流程应透明、可验证、可恢复，以便获得具体有效的技术反馈；但不能因此降低密钥安全、数据隔离或升级兼容要求。
 
 当前私人 XiaoC 是第一个真实 companion/account。M2C.5 可将已批准的 legacy owner 绑定到已验证 Auth UUID。M2C.5 后逐项复核 M2C.6+：继续 Engine、可信身份和数据隔离需要的工作；延期仅为 Hosted SaaS 运营服务的工作。
 
