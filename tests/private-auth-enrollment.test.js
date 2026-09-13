@@ -103,6 +103,80 @@ test("near-expiry access token is refreshed before an API request uses it", asyn
   assert.equal(refreshes, 1)
 })
 
+test("concurrent near-expiry token requests share one refresh and one access token", async () => {
+  let refreshes = 0
+  let releaseRefresh
+  const refreshGate = new Promise(resolve => { releaseRefresh = resolve })
+  const client = {
+    auth: {
+      async getSession() {
+        return { data: { session: session({ access_token: "old", expires_at: 1 }) }, error: null }
+      },
+      async refreshSession() {
+        refreshes += 1
+        await refreshGate
+        return { data: { session: session({ access_token: "shared-fresh" }) }, error: null }
+      },
+      async signOut() {},
+    },
+  }
+  const { api } = loadAuth(client)
+  const firstTen = Array.from({ length: 10 }, () => api.getPrivateAccessToken())
+  await new Promise(resolve => setImmediate(resolve))
+  const nextTen = Array.from({ length: 10 }, () => api.getPrivateAccessToken())
+  assert.equal(refreshes, 1)
+  releaseRefresh()
+  assert.deepEqual(await Promise.all([...firstTen, ...nextTen]), Array(20).fill("shared-fresh"))
+  assert.equal(refreshes, 1)
+})
+
+test("refresh failure is shared, clears single-flight state, and permits a later retry", async () => {
+  let refreshes = 0
+  let fail = true
+  const client = {
+    auth: {
+      async getSession() {
+        return { data: { session: session({ access_token: "old", expires_at: 1 }) }, error: null }
+      },
+      async refreshSession() {
+        refreshes += 1
+        await new Promise(resolve => setImmediate(resolve))
+        return fail
+          ? { data: { session: null }, error: new Error("temporary") }
+          : { data: { session: session({ access_token: "recovered" }) }, error: null }
+      },
+      async signOut() {},
+    },
+  }
+  const { api } = loadAuth(client)
+  const failures = await Promise.allSettled(
+    Array.from({ length: 20 }, () => api.getPrivateAccessToken()),
+  )
+  assert.equal(refreshes, 1)
+  assert.ok(failures.every(result => result.status === "rejected"))
+  assert.equal(new Set(failures.map(result => result.reason.message)).size, 1)
+
+  fail = false
+  assert.equal(await api.getPrivateAccessToken(), "recovered")
+  assert.equal(refreshes, 2)
+})
+
+test("fresh access tokens never trigger an explicit refresh", async () => {
+  let refreshes = 0
+  const client = {
+    auth: {
+      async getSession() {
+        return { data: { session: session({ access_token: "still-fresh" }) }, error: null }
+      },
+      async refreshSession() { refreshes += 1; assert.fail("fresh token must not refresh") },
+      async signOut() {},
+    },
+  }
+  const { api } = loadAuth(client)
+  assert.equal(await api.getPrivateAccessToken(), "still-fresh")
+  assert.equal(refreshes, 0)
+})
+
 test("session loss is explicit and does not invent an identity", async () => {
   const client = {
     auth: {

@@ -4,6 +4,9 @@ import { createClient, type Session, type SupportedStorage } from "@supabase/sup
 export const PRIVATE_AUTH_USER_UUID = "17aa1bd0-931d-40a0-b0d6-ef75c641c7b3";
 const STORAGE_PREFIX = "xiaoc.supabase.auth.";
 const CHUNK_SIZE = 1800;
+const ACCESS_TOKEN_FRESHNESS_MS = 60_000;
+
+let refreshSessionInFlight: Promise<Session> | null = null;
 
 const secureStorage: SupportedStorage = {
   async getItem(key) {
@@ -92,11 +95,22 @@ export async function enrollPrivateAuthAccount(email: string, password: string) 
   return { userId: session!.user.id };
 }
 
-export async function refreshPrivateAuthSession() {
-  const client = requireAuthClient();
-  const { data, error } = await client.auth.refreshSession();
-  if (error || !data.session) throw new Error("Unable to refresh XiaoC Auth session");
-  return requirePrivateSession(data.session);
+export function refreshPrivateAuthSession(): Promise<Session> {
+  if (refreshSessionInFlight) return refreshSessionInFlight;
+
+  const refresh = (async () => {
+    const client = requireAuthClient();
+    const { data, error } = await client.auth.refreshSession();
+    if (error || !data.session) throw new Error("Unable to refresh XiaoC Auth session");
+    const session = await requirePrivateSession(data.session);
+    if (!session) throw new Error("Unable to refresh XiaoC Auth session");
+    return session;
+  })();
+
+  refreshSessionInFlight = refresh.finally(() => {
+    refreshSessionInFlight = null;
+  });
+  return refreshSessionInFlight;
 }
 
 export async function clearPrivateAuthSession() {
@@ -110,7 +124,7 @@ export async function getPrivateAccessToken() {
   if (error) throw new Error("Unable to restore XiaoC Auth session");
   let session = await requirePrivateSession(data.session);
   if (!session) return null;
-  if (!session.expires_at || session.expires_at * 1000 <= Date.now() + 60_000) {
+  if (!session.expires_at || session.expires_at * 1000 <= Date.now() + ACCESS_TOKEN_FRESHNESS_MS) {
     session = await refreshPrivateAuthSession();
   }
   if (!session) throw new Error("Unable to refresh XiaoC Auth session");

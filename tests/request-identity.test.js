@@ -4,6 +4,7 @@ import test from "node:test"
 
 import {
   PRIVATE_AUTH_USER_UUID,
+  requireRequestIdentity,
   resolveRequestIdentity,
 } from "../lib/requestIdentity.js"
 
@@ -44,7 +45,7 @@ function clients({
       auth: {
         async getUser() {
           return authError
-            ? { data: { user: null }, error: new Error(authError) }
+            ? { data: { user: null }, error: typeof authError === "string" ? new Error(authError) : authError }
             : { data: { user: { id: authUserId } }, error: null }
         },
       },
@@ -139,8 +140,78 @@ test("issuer and audience must match the configured Supabase project", async () 
 test("invalid signature result from Supabase Auth fails closed", async () => {
   await assert.rejects(
     resolveRequestIdentity(request(tokenFor()), { env, ...clients({ authError: "bad signature" }) }),
-    { code: "invalid_access_token" },
+    { code: "invalid_access_token", status: 401, retryable: false },
   )
+})
+
+test("provider network, timeout, rate-limit and 5xx failures are transient", async () => {
+  const failures = [
+    Object.assign(new Error("fetch failed"), { name: "AuthRetryableFetchError" }),
+    Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }),
+    Object.assign(new Error("rate limited"), { status: 429 }),
+    Object.assign(new Error("service unavailable"), { status: 503 }),
+  ]
+  const expectedClasses = ["network", "timeout", "rate_limited", "provider_5xx"]
+  for (let index = 0; index < failures.length; index += 1) {
+    await assert.rejects(
+      resolveRequestIdentity(request(tokenFor()), { env, ...clients({ authError: failures[index] }) }),
+      {
+        code: "auth_provider_unavailable",
+        status: 503,
+        retryable: true,
+        providerFailureClass: expectedClasses[index],
+      },
+    )
+  }
+})
+
+test("unknown verification errors remain invalid and fail closed", async () => {
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), {
+      env,
+      ...clients({ authError: Object.assign(new Error("unknown"), { status: 418 }) }),
+    }),
+    { code: "invalid_access_token", status: 401, retryable: false },
+  )
+})
+
+test("Bearer provider failure never falls back to a valid app token", async () => {
+  const fallbackEnv = {
+    ...env,
+    PRIVATE_IDENTITY_APP_TOKEN_FALLBACK_ENABLED: "true",
+    XIAOC_APP_TOKEN: "a".repeat(48),
+  }
+  const req = request(tokenFor())
+  req.headers["x-xiaoc-app-token"] = fallbackEnv.XIAOC_APP_TOKEN
+  await assert.rejects(
+    resolveRequestIdentity(req, {
+      env: fallbackEnv,
+      ...clients({ authError: Object.assign(new Error("unavailable"), { status: 503 }) }),
+    }),
+    { code: "auth_provider_unavailable", status: 503, retryable: true },
+  )
+})
+
+test("HTTP auth failures expose only privacy-safe classification metadata", async () => {
+  let responseStatus = null
+  let responseBody = null
+  const res = {
+    status(value) { responseStatus = value; return this },
+    json(value) { responseBody = value },
+  }
+  const identity = await requireRequestIdentity(request(tokenFor()), res, {
+    env,
+    ...clients({ authError: Object.assign(new Error("unavailable"), { status: 503 }) }),
+  })
+  assert.equal(identity, null)
+  assert.equal(responseStatus, 503)
+  assert.deepEqual(responseBody, {
+    error: "auth_provider_unavailable",
+    code: "auth_provider_unavailable",
+    retryable: true,
+    providerFailureClass: "provider_5xx",
+  })
+  assert.doesNotMatch(JSON.stringify(responseBody), /Bearer|signature|access-token/)
 })
 
 test("wrong private subject fails closed", async () => {
