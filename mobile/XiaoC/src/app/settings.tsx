@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 
 import { API_BASE_URL, APP_USER_ID, apiJson } from "../config/api";
+import { PrivateAuthEnrollment } from "../components/PrivateAuthEnrollment";
 import {
   AccountSettings,
   DEFAULT_ACCOUNT_NAME,
@@ -671,6 +672,8 @@ export default function SettingsScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <Text style={styles.backText}>‹</Text>
         </Pressable>
+
+        <PrivateAuthEnrollment />
 
         <SectionCard
           title="🤖 模型"
