@@ -45,13 +45,33 @@ test("server-to-server requests forward the private token", () => {
   assert.match(chat, /\.\.\.privateAppInternalHeaders\(\)/)
 })
 
-test("all public API functions enforce the shared gate", () => {
+test("server-to-server Preview requests add Vercel protection bypass without replacing app auth", () => {
+  const previewBypass = "preview-protection-bypass-secret"
+  assert.deepEqual(privateAppInternalHeaders({
+    VERCEL_ENV: "preview",
+    XIAOC_APP_TOKEN: token,
+    PRIVATE_PREVIEW_VERCEL_PROTECTION_BYPASS_SECRET: previewBypass,
+  }), {
+    "x-xiaoc-app-token": token,
+    "x-vercel-protection-bypass": previewBypass,
+  })
+
+  assert.deepEqual(privateAppInternalHeaders({
+    VERCEL_ENV: "production",
+    XIAOC_APP_TOKEN: token,
+    PRIVATE_PREVIEW_VERCEL_PROTECTION_BYPASS_SECRET: previewBypass,
+  }), {
+    "x-xiaoc-app-token": token,
+  })
+})
+
+test("legacy private-app gate is no longer the public API authority", () => {
   const apiFiles = fs.readdirSync("api").filter((name) => name.endsWith(".js"))
   assert.equal(apiFiles.length, 12)
   for (const name of apiFiles) {
     const source = fs.readFileSync(`api/${name}`, "utf8")
-    assert.match(source, /requirePrivateAppRequest/, `${name} imports auth gate`)
-    assert.match(source, /if \(!requirePrivateAppRequest\(req, res\)\) return/, `${name} invokes auth gate`)
+    assert.doesNotMatch(source, /requirePrivateAppRequest/, `${name} does not use legacy auth authority`)
+    assert.match(source, /requireRequestIdentity/, `${name} imports trusted identity resolver`)
   }
 })
 

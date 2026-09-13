@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-import { requirePrivateAppRequest } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -142,7 +142,7 @@ async function getMessageContext({ user_id, conversation_id, target_id }) {
 }
 
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
 
   try {
 

@@ -5,6 +5,7 @@ import test from "node:test"
 process.env.SUPABASE_URL ||= "https://example.supabase.co"
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key"
 process.env.OPENROUTER_API_KEY ||= "test-openrouter-key"
+process.env.CRON_SECRET ||= "test-cron-secret-long-enough"
 
 const { default: userStateHandler } = await import("../api/user-state.js")
 
@@ -43,6 +44,7 @@ test("OpenRouter credits response includes current-key monthly usage", async () 
     const response = createResponse()
     await userStateHandler({
       method: "GET",
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
       query: { user_id: "user", action: "openrouter-credits" },
     }, response)
 
@@ -88,6 +90,7 @@ test("credits remain available when current-key usage is unavailable", async () 
     const response = createResponse()
     await userStateHandler({
       method: "GET",
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
       query: { user_id: "user", action: "openrouter-credits" },
     }, response)
 

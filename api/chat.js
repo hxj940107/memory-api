@@ -2,8 +2,8 @@ import { createClient } from "@supabase/supabase-js"
 import { waitUntil } from "@vercel/functions"
 import {
   privateAppInternalHeaders,
-  requirePrivateAppRequest,
 } from "../lib/privateAppAuth.js"
+import { requireRequestIdentity } from "../lib/requestIdentity.js"
 import {
   isInvalidMomentText,
   isMomentTechnicalDiscussion,
@@ -96,7 +96,7 @@ import {
   planProactiveAttentionWakeup,
 } from "../lib/proactiveAttentionScheduler.js"
 import { parseActiveContextJudgeOutput } from "../lib/activeContextJudgeOutput.js"
-import { getSavedMessageId } from "../lib/messagePersistence.js"
+import { requireSavedMessageId } from "../lib/messagePersistence.js"
 import {
   buildProactiveJudgeTimeAuthority,
   normalizeProactiveEventWindow,
@@ -808,15 +808,12 @@ async function saveMessage(user_id, role, content, conversation_id, metadata = {
   })
 
   const data = await res.json().catch(() => null)
-  if (!res.ok) {
-    throw new Error(data?.error || `Unable to save ${role} message: ${res.status}`)
-  }
-
-  const messageId = getSavedMessageId(data)
-  if (!messageId) {
-    throw new Error(`Saved ${role} message response is missing a string id`)
-  }
-  return messageId
+  return requireSavedMessageId({
+    ok: res.ok,
+    status: res.status,
+    payload: data,
+    role,
+  })
 }
 
 async function sendNormalChatPush({
@@ -986,7 +983,12 @@ async function saveUserMessage(
   })
 
   const data = await res.json().catch(() => null)
-  return data?.data?.[0]?.id || null
+  return requireSavedMessageId({
+    ok: res.ok,
+    status: res.status,
+    payload: data,
+    role: "user",
+  })
 }
 
 async function findExistingClientTurn(user_id, conversation_id, clientMessageId) {
@@ -3046,7 +3048,7 @@ async function maybeUpdateBoundSharedContext({
 // Main Handler
 // --------------------
 export default async function handler(req, res) {
-  if (!requirePrivateAppRequest(req, res)) return
+  if (!await requireRequestIdentity(req, res)) return
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })
@@ -4052,6 +4054,13 @@ return res.status(200).json({
 
   } catch (e) {
     console.error(e)
+    if (e?.code === "message_persistence_failed") {
+      return res.status(503).json({
+        error: "Message could not be saved",
+        code: "message_persistence_failed",
+        retryable: true,
+      })
+    }
     return res.status(500).json({ error: e.message })
   }
 }
