@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildXiaoCMemoryQueryPlan } from "../lib/xiaocMemoryQueryPlan.js"
+import {
+  buildXiaoCMemoryQueryPlan,
+  XIAOC_MEMORY_LEXICAL_MAX_TERM_CODEPOINTS,
+  XIAOC_MEMORY_LEXICAL_MAX_TERMS,
+} from "../lib/xiaocMemoryQueryPlan.js"
 import { retrieveXiaoCMemoriesOffline } from "../lib/xiaocMemoryRanking.js"
 import { createSyntheticEvaluationRepository, SYNTHETIC_EMBEDDING_IDENTITY } from "../scripts/xiaoc-memory-engine-eval.js"
 
@@ -46,6 +50,40 @@ test("grounding remains query metadata and cannot alter authority", () => {
   assert.equal(Object.hasOwn(plan, "provenance_status"), false)
   assert.equal(Object.hasOwn(plan, "authority_tier"), false)
   assert.equal(Object.hasOwn(plan, "claim_key"), false)
+})
+
+test("v2 planner enforces zero, one, twelve, thirteen and larger term bounds", () => {
+  assert.equal(buildXiaoCMemoryQueryPlan("").lexical_terms.length, 0)
+  assert.equal(buildXiaoCMemoryQueryPlan("!!!").lexical_terms.length, 0)
+  assert.equal(buildXiaoCMemoryQueryPlan("alpha").lexical_terms.length, 1)
+  for (const size of [12, 13, 21]) {
+    const plan = buildXiaoCMemoryQueryPlan(Array.from({ length: size }, (_, index) => `term${index}`).join(" "))
+    assert.equal(plan.version, "xiaoc-query-plan-v2")
+    assert.equal(plan.lexical_terms.length, Math.min(size, XIAOC_MEMORY_LEXICAL_MAX_TERMS))
+    assert.deepEqual(plan.lexical_terms, Array.from({ length: Math.min(size, 12) }, (_, index) => `term${index}`))
+  }
+})
+
+test("planner removes duplicates, empty/generic tokens and overlong Unicode terms", () => {
+  assert.deepEqual(buildXiaoCMemoryQueryPlan("alpha alpha 我 你").lexical_terms, ["alpha"])
+  const overlong = "界".repeat(XIAOC_MEMORY_LEXICAL_MAX_TERM_CODEPOINTS + 1)
+  const plan = buildXiaoCMemoryQueryPlan(overlong)
+  assert.deepEqual(plan.lexical_terms, [])
+  assert.equal(plan.should_retrieve, false)
+})
+
+test("CJK-only and mixed CJK/ASCII preserve extraction order", () => {
+  assert.deepEqual(buildXiaoCMemoryQueryPlan("海岛旅行").lexical_terms, ["海岛旅行"])
+  assert.deepEqual(buildXiaoCMemoryQueryPlan("ProjectX 海岛旅行").lexical_terms, ["projectx", "海岛旅行"])
+})
+
+test("payload terms outrank grounding anchors and entity terms rebuild from the bounded list", () => {
+  const payload = Array.from({ length: 11 }, (_, index) => `payload${index}`).join(" ")
+  const plan = buildXiaoCMemoryQueryPlan(payload, { grounding: { strength: "STRONG", anchors: ["anchor1", "anchor2"] } })
+  assert.deepEqual(plan.lexical_terms.slice(0, 11), Array.from({ length: 11 }, (_, index) => `payload${index}`))
+  assert.equal(plan.lexical_terms[11], "anchor1")
+  assert.equal(plan.lexical_terms.includes("anchor2"), false)
+  assert.deepEqual(plan.entity_like_terms, plan.lexical_terms)
 })
 
 function fixtureCase(overrides = {}) {

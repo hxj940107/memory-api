@@ -67,6 +67,33 @@ test("deterministic sampling selects safely without random state", async () => {
   assert.equal(repo.calls.some(([name]) => name === "semantic"), false)
 })
 
+test("durable audit can record an eligible unsampled denominator without DB retrieval", async () => {
+  const writes = []
+  const client = { from: () => ({ insert: async row => { writes.push(row); return { error: null } } }) }
+  const repo = repository()
+  const result = await runXiaoCMemoryShadowRead({
+    env: { XIAOC_MEMORY_SHADOW_READ_ENABLED: "true", XIAOC_MEMORY_SHADOW_SAMPLE_RATE: "0", XIAOC_MEMORY_OBSERVATION_AUDIT_ENABLED: "true" },
+    client, repository: repo, trustedUserId: USER, requestedUserId: USER, message: "海岛", correlationId: "unsampled", logger: logger(),
+  })
+  assert.equal(result.skipped_reason, "NOT_SAMPLED")
+  assert.equal(result.eligible_opportunity, true)
+  assert.equal(repo.calls.length, 0)
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].sampled, false)
+  assert.equal(writes[0].attempted, false)
+})
+
+test("durable audit failure cannot change a successful Shadow result", async () => {
+  const result = await runXiaoCMemoryShadowRead({
+    env: { ...enabled, XIAOC_MEMORY_OBSERVATION_AUDIT_ENABLED: "true" },
+    client: { from: () => ({ insert: async () => { throw new Error("audit unavailable") } }) },
+    repository: repository(), trustedUserId: USER, requestedUserId: USER, message: "海岛",
+    correlationId: "audit-failure", now: () => NOW, logger: logger(),
+  })
+  assert.equal(result.attempted, true)
+  assert.equal(result.error_code, null)
+})
+
 test("missing or mismatched trusted user scope fails closed", async () => {
   for (const scope of [{ trustedUserId: "", requestedUserId: USER }, { trustedUserId: USER, requestedUserId: "other" }]) {
     const repo = repository()

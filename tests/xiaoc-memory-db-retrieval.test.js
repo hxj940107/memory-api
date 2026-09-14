@@ -43,6 +43,9 @@ test("adapter enforces local hard limits before RPC", async () => {
   const client = clientFor()
   await assert.rejects(() => makeRepository(client).listLexicalCandidates({ userId: "user", lexicalTerms: ["x"], limit: 33 }), /LEXICAL_LIMIT_INVALID/)
   await assert.rejects(() => makeRepository(client).listRelations({ userId: "user", memoryIds: Array.from({ length: 33 }, (_, index) => `id-${index}`) }), /CANDIDATE_IDS_INVALID/)
+  await assert.rejects(() => makeRepository(client).listLexicalCandidates({ userId: "user", lexicalTerms: [], limit: 24 }), /LEXICAL_TERMS_INVALID/)
+  await assert.rejects(() => makeRepository(client).listLexicalCandidates({ userId: "user", lexicalTerms: Array.from({ length: 13 }, (_, index) => `t${index}`), limit: 24 }), /LEXICAL_TERMS_INVALID/)
+  await assert.rejects(() => makeRepository(client).listLexicalCandidates({ userId: "user", lexicalTerms: ["界".repeat(129)], limit: 24 }), /LEXICAL_TERMS_INVALID/)
   assert.equal(client.calls.length, 0)
 })
 

@@ -43,6 +43,7 @@ import { judgeMemory } from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
+import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
 import {
   buildProactivePushMessage,
   sendExpoPushMessage,
@@ -3910,8 +3911,9 @@ console.log("======================================\n")
                 category: judgeResult.category || null,
               })
 
+              let episodic = null
               try {
-                const episodic = await saveEpisodicObservation({
+                episodic = await saveEpisodicObservation({
                   userId: user_id,
                   content: judgeResult.content,
                   category: judgeResult.category,
@@ -3941,6 +3943,19 @@ console.log("======================================\n")
                 }
               } catch (consolidationError) {
                 console.error("stable memory consolidation failed:", consolidationError)
+              }
+              if (episodic?.id) {
+                await runXiaoCMemoryNativeCapture({
+                  client: supabase,
+                  trustedUserId: user_id,
+                  requestedUserId: user_id,
+                  currentMessageId: userMessageId,
+                  sourceMessageId: judgeResult.provenance?.source_message_id,
+                  currentConversationId: cid,
+                  sourceConversationId: cid,
+                  currentMessage: message,
+                  judgeResult,
+                })
               }
             }
           } catch (err) {
