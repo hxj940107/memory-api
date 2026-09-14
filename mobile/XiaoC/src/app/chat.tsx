@@ -38,6 +38,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as Haptics from "expo-haptics";
 import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
 import { audioSessionCoordinator } from "../lib/audioSessionCoordinator";
+import { classifyChatDeliveryFailure } from "../lib/chatDeliveryError";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -2086,10 +2087,9 @@ export default function ChatScreen() {
     } catch (error) {
       console.log("CHAT ERROR:", error);
 
-      const isTimeout =
-        error instanceof Error && error.message === "Request timeout";
+      const failure = classifyChatDeliveryFailure(error);
 
-      if (isTimeout) {
+      if (failure.outcomeUnknown) {
         setMessages((prev) =>
           prev.map((item) =>
             item.id === messageToSend.id
@@ -2097,22 +2097,14 @@ export default function ChatScreen() {
               : item,
           ),
         );
-        setDeliveryNotice("连接有点慢，回复可能仍在处理中，不用重复发送。");
+        setDeliveryNotice(failure.notice);
         [1500, 5000, 15_000, 30_000].forEach((delay) => {
           setTimeout(refreshIfCloudHistoryChanged, delay);
         });
       } else {
         pendingReplyClientIdRef.current = null;
         setIsTyping(false);
-        const responseStatus =
-          typeof error === "object" && error && "status" in error
-            ? Number(error.status)
-            : null;
-        setDeliveryNotice(
-          responseStatus
-            ? "这次回复没有完成，可以稍后重试。"
-            : "网络似乎断开了，这条消息还没送达。",
-        );
+        setDeliveryNotice(failure.notice);
         setMessages((prev) =>
           prev.map((item) =>
             item.id === messageToSend.id ? { ...item, status: "failed" } : item,

@@ -249,8 +249,14 @@ test("chat rendering uses stable ids for messages and split bubbles", () => {
   assert.doesNotMatch(source, /id: createLocalMessageId\(\),\s*\n\s*cloudId: item\.id/)
   assert.match(source, /const clientMessageId = messageToSend\.clientId \|\| messageToSend\.id/)
   assert.match(source, /client_message_id: clientMessageId/)
-  assert.match(source, /回复可能仍在处理中，不用重复发送/)
+  assert.match(source, /classifyChatDeliveryFailure\(error\)/)
   assert.match(source, /replyToClientMessageId === pendingReplyClientId/)
+
+  const deliveryCatchStart = source.indexOf("} catch (error) {", source.indexOf("const sendMessage"))
+  const deliveryCatchEnd = source.indexOf("} finally {", deliveryCatchStart)
+  const deliveryCatch = source.slice(deliveryCatchStart, deliveryCatchEnd)
+  assert.ok(deliveryCatchStart >= 0 && deliveryCatchEnd > deliveryCatchStart)
+  assert.doesNotMatch(deliveryCatch, /postJson<ChatResponse>|sendMessage\(/)
 })
 
 test("chat persists the client message identity before calling the model", () => {

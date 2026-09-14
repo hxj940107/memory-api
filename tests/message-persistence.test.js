@@ -29,6 +29,15 @@ test("failed or malformed user persistence stops before model execution", () => 
     () => requireSavedMessageId({
       ok: false,
       status: 500,
+      payload: { error: "temporary database failure" },
+      role: "user",
+    }),
+    /temporary database failure/,
+  )
+  assert.throws(
+    () => requireSavedMessageId({
+      ok: false,
+      status: 500,
       payload: {
         error: "Message could not be saved",
         code: "message_persistence_failed",
@@ -85,4 +94,5 @@ test("chat requires a persisted user message id before loading history or callin
   assert.ok(modelCall > userSave)
   assert.doesNotMatch(saveUserSource, /return data\?\.data\?\.\[0\]\?\.id \|\| null/)
   assert.match(source, /e\?\.code === "message_persistence_failed"/)
+  assert.match(source, /code: "message_persistence_failed"/)
 })

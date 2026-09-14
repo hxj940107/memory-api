@@ -70,6 +70,9 @@ export async function apiJson<T>(
 
   try {
     const headers = new Headers(fetchOptions.headers);
+    if (!headers.has("Cache-Control")) {
+      headers.set("Cache-Control", "no-cache");
+    }
     const accessToken = await getPrivateAccessToken();
     if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
     const privateAppToken = await getPrivateAppToken();
@@ -79,6 +82,7 @@ export async function apiJson<T>(
 
     response = await fetch(apiUrl(path, query), {
       ...fetchOptions,
+      cache: fetchOptions.cache ?? "no-store",
       headers,
       signal: controller.signal,
     });
@@ -101,7 +105,20 @@ export async function apiJson<T>(
         ? String(data.error)
         : "Request failed";
 
-    throw Object.assign(new Error(message), { status: response.status });
+    const code =
+      data && typeof data === "object" && "code" in data
+        ? String(data.code)
+        : null;
+    const retryable =
+      data && typeof data === "object" && "retryable" in data
+        ? data.retryable === true
+        : undefined;
+
+    throw Object.assign(new Error(message), {
+      status: response.status,
+      code,
+      retryable,
+    });
   }
 
   return data as T;
