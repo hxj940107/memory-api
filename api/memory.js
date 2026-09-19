@@ -111,6 +111,11 @@ import {
   parseWeatherMessageDecision,
   planWeatherShadowChecks,
 } from "../lib/weatherShadow.js"
+import {
+  assertOmbreAuthority,
+  getMemoryAuthorityMode,
+  isOwnedFreshEmptyMode,
+} from "../lib/memoryAuthority.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -122,6 +127,7 @@ const systemPrompt = fs.readFileSync(
 )
 
 function getMemoryUrl(pathname) {
+  assertOmbreAuthority(getMemoryAuthorityMode(process.env))
   return new URL(pathname, AI_ENDPOINTS.memoryBaseUrl).toString()
 }
 
@@ -4885,6 +4891,8 @@ async function handleSharedContextRequest(req, res, userId) {
 export default async function handler(req, res) {
   if (!await requireRequestIdentity(req, res)) return
   try {
+    const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
+    const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
 
     const user_id =
       req.method === "GET"
@@ -5111,6 +5119,13 @@ export default async function handler(req, res) {
         })
       }
 
+      if (ownedFreshEmpty) {
+        return res.status(409).json({
+          error: "Historical Ombre Memory actions are not available in owned_fresh_empty mode",
+          code: "OMBRE_NOT_APPLICABLE",
+        })
+      }
+
       if (action === "pin") {
         const result = await postXiaoCMemoryAction("/xiaoc/memory/pin", {
           bucket_id,
@@ -5157,6 +5172,14 @@ export default async function handler(req, res) {
 
       if (category && !WE_MEMORY_CATEGORIES.includes(category)) {
         return res.status(400).json({ error: "unsupported memory category" })
+      }
+
+      if (ownedFreshEmpty) {
+        return res.status(200).json(
+          category
+            ? buildWeMemoryCategoryResponse([], category, "owned-fresh-empty")
+            : buildWeMemoryResponse([], "owned-fresh-empty")
+        )
       }
 
       try {

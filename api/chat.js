@@ -45,6 +45,11 @@ import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVo
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
 import {
+  assertOmbreAuthority,
+  getMemoryAuthorityMode,
+  isOwnedFreshEmptyMode,
+} from "../lib/memoryAuthority.js"
+import {
   buildProactivePushMessage,
   sendExpoPushMessage,
 } from "../lib/pushNotifications.js"
@@ -1184,7 +1189,8 @@ function buildMemorySearchQuery(history, message) {
   )
 }
 
-function memoryUrl(pathname, query = {}) {
+function memoryUrl(pathname, query = {}, authorityMode = getMemoryAuthorityMode()) {
+  assertOmbreAuthority(authorityMode)
   const url = new URL(pathname, AI_ENDPOINTS.memoryBaseUrl)
 
   Object.entries(query).forEach(([key, value]) => {
@@ -1203,6 +1209,7 @@ async function getMemorySmart(
   history = [],
   options = {}
 ) {
+  assertOmbreAuthority(options.authorityMode ?? getMemoryAuthorityMode())
   console.log("CONVERSATION ID:", conversation_id);
   console.log("CACHE KEYS:", [...memorySearchCache.keys()]);
 
@@ -1485,7 +1492,8 @@ function clearUserMemoryCache(user_id) {
   console.log("PIN MEMORY CACHE CLEARED:", user_id)
 }
 
-async function saveLongTermMemory(user_id, content) {
+async function saveLongTermMemory(user_id, content, authorityMode = getMemoryAuthorityMode()) {
+  assertOmbreAuthority(authorityMode)
   const holdRes = await fetch(
     `${AI_ENDPOINTS.memoryBaseUrl}${AI_ENDPOINTS.memoryHoldPath}`,
     {
@@ -3051,6 +3059,8 @@ async function maybeUpdateBoundSharedContext({
 export default async function handler(req, res) {
   if (!await requireRequestIdentity(req, res)) return
   try {
+    const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
+    const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })
     }
@@ -3254,6 +3264,7 @@ const coreMemorySnapshot = await ensureCoreMemorySnapshot({
   conversationId: cid,
   readSnapshot: readCoreMemorySnapshot,
   initializeSnapshot: initializeCoreMemorySnapshot,
+  authorityMode: memoryAuthorityMode,
 })
 
 const attributionCorrectionContext = isAttributionCorrection(message)
@@ -3317,27 +3328,30 @@ try {
 let dynamicMemory = []
 const memoryContextBudget = createMemoryContextBudget(dynamicContextBudget.memory)
 try {
-  const dynamicMemoryExclusions = await getDynamicMemoryExclusions(
-    coreMemorySnapshot.sourceBucketIds
-  )
-  const memoryResult = await getMemorySmart(
-    user_id,
-    message,
-    cid,
-    history,
-    {
-      includePinned: false,
-      recentTexts: history.map(item => item.content),
-      activeTexts: activeConversationContext.items
-        .map(item => `${item.topic} ${item.context}`)
-        .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
-      summaryTexts: summaryMemory ? [summaryMemory] : [],
-      coreTexts: [coreMemorySnapshot.snapshot],
-      memoryBudget: memoryContextBudget,
-      ...dynamicMemoryExclusions,
-    }
-  )
-  dynamicMemory = memoryResult.dynamicMemory
+  if (!ownedFreshEmpty) {
+    const dynamicMemoryExclusions = await getDynamicMemoryExclusions(
+      coreMemorySnapshot.sourceBucketIds
+    )
+    const memoryResult = await getMemorySmart(
+      user_id,
+      message,
+      cid,
+      history,
+      {
+        authorityMode: memoryAuthorityMode,
+        includePinned: false,
+        recentTexts: history.map(item => item.content),
+        activeTexts: activeConversationContext.items
+          .map(item => `${item.topic} ${item.context}`)
+          .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
+        summaryTexts: summaryMemory ? [summaryMemory] : [],
+        coreTexts: [coreMemorySnapshot.snapshot],
+        memoryBudget: memoryContextBudget,
+        ...dynamicMemoryExclusions,
+      }
+    )
+    dynamicMemory = memoryResult.dynamicMemory
+  }
   waitUntil(runXiaoCMemoryShadowRead({
     client: supabase,
     env: process.env,
@@ -3895,72 +3909,73 @@ console.log("======================================\n")
             }
 
         if (judgeResult.save) {
-          try {
-            const saved = await saveLongTermMemory(
-              user_id,
-              judgeResult.content
-            )
+          if (!ownedFreshEmpty) {
+            try {
+              const saved = await saveLongTermMemory(
+                user_id,
+                judgeResult.content,
+                memoryAuthorityMode
+              )
 
-            if (saved) {
-              clearUserMemoryCache(user_id)
-              clearConversationMemorySearchCache(cid)
-              console.log("MEMORY SAVED:", {
-                userMessageId,
-                conversationId: cid,
-                contentLength: judgeResult.content.length,
-                category: judgeResult.category || null,
-              })
-
-              let episodic = null
-              try {
-                episodic = await saveEpisodicObservation({
-                  userId: user_id,
-                  content: judgeResult.content,
-                  category: judgeResult.category,
-                  provenance: judgeResult.provenance,
-                  sourceConversationId: cid,
+              if (saved) {
+                clearUserMemoryCache(user_id)
+                clearConversationMemorySearchCache(cid)
+                console.log("MEMORY SAVED:", {
+                  userMessageId,
+                  conversationId: cid,
+                  contentLength: judgeResult.content.length,
+                  category: judgeResult.category || null,
                 })
 
-                if (episodic?.id) {
-                  await consolidateStableMemory({
-                    supabase,
+                let episodic = null
+                try {
+                  episodic = await saveEpisodicObservation({
                     userId: user_id,
-                    newMemoryId: episodic.id,
-                    callSmallModel: async prompt => {
-                      const result = await callLLM(
-                        [{ role: "user", content: prompt }],
-                        AI_MODELS.memoryJudge,
-                        { max_tokens: 420, temperature: 0 }
-                      )
-                      console.log("AI TASK USAGE:", {
-                        request_purpose: "stable_memory_consolidation",
-                        model: AI_MODELS.memoryJudge,
-                        ...buildPromptCacheUsageLog(result.usage),
-                      })
-                      return result
-                    },
+                    content: judgeResult.content,
+                    category: judgeResult.category,
+                    provenance: judgeResult.provenance,
+                    sourceConversationId: cid,
                   })
+
+                  if (episodic?.id) {
+                    await consolidateStableMemory({
+                      supabase,
+                      userId: user_id,
+                      newMemoryId: episodic.id,
+                      callSmallModel: async prompt => {
+                        const result = await callLLM(
+                          [{ role: "user", content: prompt }],
+                          AI_MODELS.memoryJudge,
+                          { max_tokens: 420, temperature: 0 }
+                        )
+                        console.log("AI TASK USAGE:", {
+                          request_purpose: "stable_memory_consolidation",
+                          model: AI_MODELS.memoryJudge,
+                          ...buildPromptCacheUsageLog(result.usage),
+                        })
+                        return result
+                      },
+                    })
+                  }
+                } catch (consolidationError) {
+                  console.error("stable memory consolidation failed:", consolidationError)
                 }
-              } catch (consolidationError) {
-                console.error("stable memory consolidation failed:", consolidationError)
               }
-              if (episodic?.id) {
-                await runXiaoCMemoryNativeCapture({
-                  client: supabase,
-                  trustedUserId: user_id,
-                  requestedUserId: user_id,
-                  currentMessageId: userMessageId,
-                  sourceMessageId: judgeResult.provenance?.source_message_id,
-                  currentConversationId: cid,
-                  sourceConversationId: cid,
-                  currentMessage: message,
-                  judgeResult,
-                })
-              }
+            } catch (err) {
+              console.error("hold-hook failed:", err)
             }
-          } catch (err) {
-            console.error("hold-hook failed:", err)
           }
+          await runXiaoCMemoryNativeCapture({
+            client: supabase,
+            trustedUserId: user_id,
+            requestedUserId: user_id,
+            currentMessageId: userMessageId,
+            sourceMessageId: judgeResult.provenance?.source_message_id,
+            currentConversationId: cid,
+            sourceConversationId: cid,
+            currentMessage: message,
+            judgeResult,
+          })
         } else if (judgeResult.reason) {
           console.warn("MEMORY SKIPPED:", {
             userMessageId,
