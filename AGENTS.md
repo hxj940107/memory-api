@@ -1,6 +1,12 @@
-# XiaoC 项目开发说明
+# XiaoC / Public 项目开发说明
 
-XiaoC 是私人、单用户 AI 伴侣项目。
+项目当前分为三条明确边界：
+
+- **XiaoC Private**：现有私人、单用户 AI 伴侣及其 iOS 客户端，当前只有项目所有者使用。
+- **Public App**：当前主要的新产品方向；未来使用独立客户端、独立 repository，v1 为 Own Stack，不是把 XiaoC Private 改造成公开版本。
+- **Shared Backend**：Private 与 Public 可复用的后端基础设施；身份、tenant、人格、记忆和业务数据必须保持严格隔离。
+
+仓库根目录的 `public/` 仅为 **Legacy Web Prototype**，不是 Public App，也不得作为 Public App 的实现入口。
 
 修改代码前，必须先阅读：
 
@@ -11,7 +17,7 @@ XiaoC 是私人、单用户 AI 伴侣项目。
 
 XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工具，也不是效率助手。
 
-当前生产项目只为一个用户设计。Multi-user 是计划中的下一阶段方向，但尚未开始；在专项设计启动前，不要提前实现用户切换、团队、组织、公开 SaaS、商业化或计费能力。
+当前 Production 仍只服务 XiaoC Private 的一个真实账号。数据库身份/tenant foundation 已推进至 M2C.5；这不等于 Public App 已实现，也不授权在当前 Private 客户端中加入用户切换、团队、组织、Hosted SaaS、商业化或计费能力。
 
 ## 最高原则
 
@@ -29,7 +35,7 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 ## 当前开发重点
 
 - 手机 App 优先。
-- Web 当前只是历史原型，不作为开发重点。
+- `public/` Web 当前只是 Legacy Web Prototype，不作为开发重点，也不代表 Public App。
 - 先稳定，再复杂。
 - 先小步迭代，再考虑大重构。
 - 聊天、历史、记忆、移动端体验是第一优先级。
@@ -41,17 +47,13 @@ XiaoC 是私人 AI 伴侣（Private AI Companion），不是普通 AI 聊天工�
 
 - Treehole / Background Worker Observability 已在 Production 验证 HEALTHY：审计记录 privacy-safe、append-only、60 天保留，写入失败不影响业务链路。
 
-- Voice Call Phase 0 Checkpoint A/B 已 PASS，目前 PAUSED；下一步是 Checkpoint C（STT），未授权继续实现后续模型链路。
+- Voice 必须区分两条链路：主聊天 Groq STT 与 MiniMax TTS 已进入现有产品链路；独立 realtime Voice Call 仍只完成 Phase 0 Checkpoint A/B media PoC，目前 PAUSED，Call Checkpoint C（STT）未开始。
 
-- Multi-user 是计划中的下一阶段方向，状态为 NOT STARTED；当前生产与开发约束仍按单用户执行，直到专项方案明确启动。
+- Multi-user/tenant foundation 已完成 M2C.3 Production grant containment、M2C.4 additive UUID foundation 和 M2C.5 first companion binding。首个真实 Auth-backed companion 已绑定 legacy `user` cohort；M2C.6 未开始，最终 RLS、UUID authoritative runtime 与 Core UUID dual-write 均未启用。
 
-- Multi-user M2C.3 Production grant containment completed：危险的普通角色 table / sequence / function grants 与默认权限已按批准 allowlist 收紧，Production validation `13/13 PASS`，`service_role` 私人链路保持可用；尚未进入 M2C.4。
+- M3B.1 Private Trusted Identity Bridge 当前处于 rollout：本地工作树已实现 verified Supabase JWT resolver、Private iPhone enrollment/session persistence 和 12 个 API route identity Shadow；EAS Production 环境已准备，新 iOS build 正在构建/待真机验证。Server 尚未 rollout，Core UUID dual-write 保持 OFF。
 
-- Multi-user M2C.4 additive UUID foundation completed：Production 已建立空的 Auth-backed `companion_instances` tenant root，并为 5 张 Core legacy 表加入 nullable、default-free、全 `NULL` 的 `user_uuid`、`NOT VALID` root FK、tenant-qualified unique 与索引；validation `11/11 PASS`，legacy runtime、RLS 与 ACL 未变化，尚未进入 M2C.5。
-
-- Multi-user M2C.5 Production first companion binding completed：已将批准的 legacy `user` cohort 精确绑定到首个 Auth-backed companion root，未开始 M2C.6。
-
-- Public XiaoC v1 产品边界已确定为 Own Stack：未来使用独立客户端/独立 repo，用户自行承担基础设施与模型/API Key 成本；Hosted SaaS 的支付、订阅、共享额度、成本补贴与滥用控制延期。现有 tenant isolation 继续作为身份/数据隔离基础；当前私人 XiaoC 是第一个真实 companion/account，M2C.5 仍按已确认 Auth UUID 绑定 legacy `user`，完成后再按 Engine/identity/isolation 必要性复核 M2C.6+。
+- Public App v1 已确定为 Own Stack：使用独立客户端/独立 repo，每位用户连接并承担自己的 Supabase、Vercel、OpenRouter 及其他外部服务账号、配额和 Key。不得把 Private Production 的账号、项目、密钥、模型额度或数据提供给 Public 用户。Hosted SaaS 的支付、订阅、共享额度、成本补贴与滥用控制延期；Public App 客户端当前尚未创建。
 
 - 手机 App 已形成聊天、历史会话、Memory、Moments、共享相册、深夜树洞和 Wife Observation Diary 的主体验框架。
 

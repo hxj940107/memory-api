@@ -246,16 +246,28 @@ XiaoC 应该像一个私人空间。
 
 当前不需要视觉 Avatar，重点是交流体验。
 
-## 11. 未来 Public XiaoC 产品边界
+## 11. Public App 产品边界与命名
 
-Public XiaoC 是未来的独立客户端，并使用独立 repository。v1 采用 **Own Stack**，不是 Hosted / 托管 SaaS：
+项目名称固定区分为：
 
-- 用户自行提供并承担基础设施和模型/API Key 成本；
+- **XiaoC Private**：当前已有的私人单用户产品；
+- **Public App**：当前主要的新产品方向，是未来独立客户端和独立 repository；
+- **Shared Backend**：两者可复用的后端基础设施，但不共享人格、记忆或用户业务状态。
+
+仓库中的 `public/` 目录只称为 **Legacy Web Prototype**。它不是 Public App，Public App 也不会在该目录上继续演化。
+
+Public App v1 采用 **Own Stack**，不是 Hosted / 托管 SaaS：
+
+- 每位用户使用并管理自己的 Supabase project、Vercel project、OpenRouter account/API Key，以及功能实际依赖的其他第三方账号和 Key；
+- 用户自己的数据、Auth、Storage、模型调用、配额、账单和外部服务生命周期都留在自己的 stack 中；XiaoC Private 的 Production 项目、账号、Key、额度和数据不得提供给 Public 用户；
+- “Shared Backend”在 v1 首先表示共享、可维护的后端代码和部署契约，不表示所有用户连接同一个由项目方托管的 Production backend；
 - v1 不建设支付、订阅、共享模型额度、成本补贴或 Hosted 服务滥用控制；
 - 当前私人 mobile XiaoC 继续作为第一个真实 companion/account；
 - 已有 tenant identity 和数据隔离工作继续保留。它既保护每段 companion 关系，也为未来可能重新评估 Hosted 模式保留扩展路径。
 
-本决定不授权创建 Public App 或开始 Hosted 实现。M2C.5 完成第一个私人账号绑定后，必须重新审视 M2C.6+：继续 XiaoC Engine、可信身份和数据隔离本身需要的工作；延期仅由 Hosted SaaS 运营需求产生的工作。
+Own Stack 优先的原因不是降低产品标准，而是缩小早期责任边界：项目方暂不承担用户基础设施费用、模型用量、共享密钥保管、计费结算和 Hosted 滥用风险。第一阶段内测面向能够自行配置技术服务的用户；这类用户更能完成部署诊断、理解实验边界，并提供具体、可复现的技术与产品反馈。
+
+当前仓库尚未创建 Public App 客户端。M2C.5 已完成第一个私人账号绑定；后续只继续 XiaoC Engine、可信身份、数据隔离及 Own Stack 安全部署本身需要的共享基础，延期仅由 Hosted SaaS 运营需求产生的工作。Public App 的实现必须在独立 repo 中启动，不得通过改造 XiaoC Private 或复用 `public/` Legacy Web Prototype 来完成。
 
 ## 12. AI 模型架构
 
