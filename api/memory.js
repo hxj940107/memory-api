@@ -43,7 +43,24 @@ import {
   parseInactivityGeneration,
   validateInactivityGeneration,
 } from "../lib/inactivityGeneration.js"
-import { isInvalidMomentText } from "../lib/momentPublishing.js"
+import {
+  getMomentCandidateAdmission,
+  isInvalidMomentText,
+  parseMomentCandidate,
+} from "../lib/momentPublishing.js"
+import {
+  MOMENT_MATERIAL_FETCH_LIMIT,
+  MOMENT_MATERIAL_RETENTION_HOURS,
+  assignMomentMaterialAliases,
+  buildAlbumMomentMaterials,
+  formatMomentMaterialsForPrompt,
+  resolveMomentMaterial,
+  selectRetainedMomentMaterials,
+} from "../lib/momentMaterials.js"
+import {
+  buildAutonomousMomentPrompt,
+  getNextAutonomousMomentTime,
+} from "../lib/momentAutonomous.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { validateTreeholeSourceEvidence } from "../lib/treeholeProvenance.js"
 import { signGeneratedAttachmentDownload } from "../lib/generatedFiles.js"
@@ -4217,14 +4234,8 @@ function isMomentCandidateTimeConsistent(candidate, publishTime = new Date()) {
   const requiresDelayedVoice = eventLocalDate !== publishLocalDate || ageMs > 3 * 60 * 60 * 1000
   const stalePerspectivePattern = /(刚刚|这会儿|此刻|现在才|刚结束|刚回到|今晚正在|待会儿|等会儿|一会儿|明天)/
 
-  if (requiresDelayedVoice) {
-    if (candidate.share_mode !== "delayed") {
-      return { valid: false, reason: "过去事件被标记为即时记录" }
-    }
-
-    if (stalePerspectivePattern.test(candidate.text || "")) {
-      return { valid: false, reason: "延迟分享仍使用事件发生时的相对时态" }
-    }
+  if (requiresDelayedVoice && stalePerspectivePattern.test(candidate.text || "")) {
+    return { valid: false, reason: "历史素材正文包含与发布时间冲突的当前时间表达" }
   }
 
   if (candidate.share_mode === "immediate" && stalePerspectivePattern.test(candidate.text || "") && ageMs > 90 * 60 * 1000) {
@@ -4243,6 +4254,348 @@ function getDeferredMomentCandidateTime(date) {
 
   target.setUTCMinutes(target.getUTCMinutes() + Math.floor(Math.random() * 61))
   return target.toISOString()
+}
+
+function formatAutonomousMomentEnvironment(now = new Date()) {
+  const local = getMomentLocalTime(now)
+  return `当前时间=${local.date} ${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")} Asia/Shanghai`
+}
+
+function formatRecentAutonomousMomentThemes(moments = []) {
+  if (!moments.length) return "暂无"
+  return moments.map(item => {
+    const local = getMomentLocalTime(item.created_at)
+    return `- ${local.date}：${trimText(item.text, 100)}`
+  }).join("\n")
+}
+
+function getAutonomousMomentPublishAfter(now = new Date()) {
+  const delay = CONTEXT_BUDGET.momentCandidateMinDelayMinutes + Math.floor(
+    Math.random() * (
+      CONTEXT_BUDGET.momentCandidateMaxDelayMinutes
+      - CONTEXT_BUDGET.momentCandidateMinDelayMinutes
+      + 1
+    )
+  )
+  const target = new Date(now.getTime() + delay * 60 * 1000)
+  return isMomentQuietHours(target) ? getNextMomentMorning(target) : target.toISOString()
+}
+
+async function updateAutonomousMomentState(userId, state, {
+  now,
+  lastPublishedAt,
+  outcome,
+  declined,
+}) {
+  const nextConsiderAt = getNextAutonomousMomentTime({
+    now,
+    lastPublishedAt,
+    consecutiveDeclines: declined
+      ? Number(state.consecutive_declines || 0) + 1
+      : 0,
+  })
+  const { error } = await supabase
+    .from("moment_autonomous_state")
+    .update({
+      next_consider_at: nextConsiderAt,
+      last_considered_at: now.toISOString(),
+      last_outcome: outcome,
+      consecutive_declines: declined
+        ? Number(state.consecutive_declines || 0) + 1
+        : 0,
+      updated_at: now.toISOString(),
+    })
+    .eq("user_id", userId)
+
+  if (error) throw error
+  return nextConsiderAt
+}
+
+async function insertAutonomousMomentCandidate({ userId, candidate, material, imageMaterial, now }) {
+  const { data: pending, error: pendingError } = await supabase
+    .from("moment_candidates")
+    .select("id,text,priority,created_at")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .gt("expires_at", now.toISOString())
+    .order("priority", { ascending: false })
+    .order("created_at", { ascending: false })
+
+  if (pendingError) throw pendingError
+  if (isMomentCandidateDuplicate(candidate.text, pending || [])) {
+    return { created: false, reason: "duplicate_pending" }
+  }
+  if ((pending?.length || 0) >= CONTEXT_BUDGET.momentCandidateMaxPending) {
+    return { created: false, reason: "pending_pool_full" }
+  }
+
+  const imageKey = imageMaterial
+    ? JSON.stringify({
+        albumAssetId: imageMaterial.albumAssetId,
+        aspectRatio: imageMaterial.aspectRatio,
+      })
+    : null
+  const eventTime = material?.observedAt || candidate.eventTime || now.toISOString()
+  const sourceConversationId = material?.conversationId || null
+  const sourceMessageId = material?.sourceMessageId || null
+  const { data, error } = await supabase
+    .from("moment_candidates")
+    .insert({
+      user_id: userId,
+      text: candidate.text,
+      image_key: imageKey,
+      priority: candidate.priority,
+      share_mode: candidate.shareMode || "delayed",
+      event_time: eventTime,
+      publish_after: getAutonomousMomentPublishAfter(now),
+      expires_at: new Date(
+        now.getTime() + CONTEXT_BUDGET.momentCandidateExpiresHours * 60 * 60 * 1000
+      ).toISOString(),
+      source_conversation_id: sourceConversationId,
+      source_message_id: sourceMessageId,
+      consideration_mode: "autonomous",
+      source_type: material?.sourceType || "xiaoc_thought",
+      source_ref: material?.sourceRef || "thought",
+      narrative_permission: candidate.narrativePermission,
+    })
+    .select("id")
+    .single()
+
+  if (error) throw error
+  return { created: Boolean(data?.id), candidateId: data?.id || null, reason: "candidate_created" }
+}
+
+async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserId) {
+  const now = new Date()
+  const { data: state, error: stateError } = await supabase
+    .from("moment_autonomous_state")
+    .select("user_id,next_consider_at,last_considered_at,last_outcome,consecutive_declines")
+    .eq("user_id", userId)
+    .maybeSingle()
+
+  if (stateError?.code === "42P01") {
+    return { checked: 0, model_calls: 0, tableMissing: true }
+  }
+  if (stateError) throw stateError
+
+  if (!state) {
+    const { error: insertError } = await supabase
+      .from("moment_autonomous_state")
+      .insert({
+        user_id: userId,
+        next_consider_at: getNextAutonomousMomentTime({ now, initial: true }),
+      })
+    if (insertError && insertError.code !== "23505") throw insertError
+    return { checked: 0, model_calls: 0, initialized: true }
+  }
+
+  if (new Date(state.next_consider_at).getTime() > now.getTime()) {
+    return { checked: 0, model_calls: 0, reason: "not_due" }
+  }
+
+  if (isMomentQuietHours(now)) {
+    const nextConsiderAt = getNextMomentMorning(now)
+    const { error } = await supabase
+      .from("moment_autonomous_state")
+      .update({ next_consider_at: nextConsiderAt, updated_at: now.toISOString() })
+      .eq("user_id", userId)
+    if (error) throw error
+    return { checked: 0, model_calls: 0, reason: "quiet_hours" }
+  }
+
+  const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+  const materialSince = new Date(
+    now.getTime() - MOMENT_MATERIAL_RETENTION_HOURS * 60 * 60 * 1000
+  ).toISOString()
+  const [recentResult, dailyResult, pendingResult, messageResult, albumResult] = await Promise.all([
+    supabase
+      .from("moment_entries")
+      .select("id,text,created_at")
+      .eq("user_id", userId)
+      .eq("author", "小C")
+      .order("created_at", { ascending: false })
+      .limit(CONTEXT_BUDGET.momentRecentEntries),
+    supabase
+      .from("moment_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("author", "小C")
+      .gte("created_at", since24h),
+    supabase
+      .from("moment_candidates")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .gt("expires_at", now.toISOString()),
+    supabase
+      .from("messages")
+      .select("id,conversation_id,role,content,created_at,metadata")
+      .eq("user_id", userId)
+      .eq("role", "user")
+      .gte("created_at", materialSince)
+      .order("created_at", { ascending: false })
+      .limit(MOMENT_MATERIAL_FETCH_LIMIT),
+    supabase
+      .from("album_assets")
+      .select("id,description,category,categories,time_periods,weather,relations,aspect_ratio,last_used_at,created_at")
+      .eq("user_id", userId)
+      .eq("access_scope", "shared")
+      .eq("enabled", true)
+      .is("archived_at", null)
+      .order("last_used_at", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: false })
+      .limit(8),
+  ])
+
+  for (const result of [recentResult, dailyResult, pendingResult, messageResult]) {
+    if (result.error) throw result.error
+  }
+  if (albumResult.error?.code !== "42P01" && albumResult.error) throw albumResult.error
+
+  const recentMoments = recentResult.data || []
+  const lastPublishedAt = recentMoments[0]?.created_at || null
+  if ((dailyResult.count || 0) >= CONTEXT_BUDGET.momentMaxPer24Hours) {
+    const nextConsiderAt = getNextAutonomousMomentTime({ now, lastPublishedAt })
+    const { error } = await supabase.from("moment_autonomous_state").update({
+      next_consider_at: nextConsiderAt,
+      last_outcome: "daily_cap",
+      updated_at: now.toISOString(),
+    }).eq("user_id", userId)
+    if (error) throw error
+    return { checked: 0, model_calls: 0, reason: "daily_cap" }
+  }
+  if ((pendingResult.count || 0) >= CONTEXT_BUDGET.momentCandidateMaxPending) {
+    const nextConsiderAt = getNextAutonomousMomentTime({ now, lastPublishedAt })
+    const { error } = await supabase.from("moment_autonomous_state").update({
+      next_consider_at: nextConsiderAt,
+      last_outcome: "pending_pool_full",
+      updated_at: now.toISOString(),
+    }).eq("user_id", userId)
+    if (error) throw error
+    return { checked: 0, model_calls: 0, reason: "pending_pool_full" }
+  }
+
+  const materials = assignMomentMaterialAliases([
+    ...selectRetainedMomentMaterials(messageResult.data || [], { now, maxMaterials: 8 }),
+    ...buildAlbumMomentMaterials(albumResult.data || [], { maxMaterials: 6 }),
+  ])
+  const prompt = buildAutonomousMomentPrompt({
+    environment: formatAutonomousMomentEnvironment(now),
+    recentMoments: formatRecentAutonomousMomentThemes(recentMoments),
+    materials: formatMomentMaterialsForPrompt(materials),
+  })
+
+  let candidate
+  try {
+    const raw = await callSmallLLM(prompt, {
+      requestPurpose: "moment_autonomous_candidate",
+      max_tokens: 420,
+      temperature: 0.35,
+    })
+    candidate = parseMomentCandidate(raw)
+  } catch (error) {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "failed",
+      declined: false,
+    })
+    throw error
+  }
+
+  const admission = getMomentCandidateAdmission(candidate)
+  if (candidate.parseFailed || !admission.admitted || !candidate.text) {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: candidate.parseFailed ? "parse_failed" : admission.reason,
+      declined: !candidate.parseFailed,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: admission.reason }
+  }
+
+  const material = candidate.sourceMessageId === "thought"
+    ? null
+    : resolveMomentMaterial(materials, candidate.sourceMessageId)
+  if (!material && candidate.materialScope !== "xiaoc_thought") {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "invalid_source_provenance",
+      declined: false,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: "invalid_source_provenance" }
+  }
+  if (material && candidate.narrativePermission !== material.narrativePermission) {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "narrative_permission_mismatch",
+      declined: false,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: "narrative_permission_mismatch" }
+  }
+  if (!material && candidate.narrativePermission !== "xiaoc_independent") {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "thought_permission_mismatch",
+      declined: false,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: "thought_permission_mismatch" }
+  }
+  const expectedScope = !material
+    ? "xiaoc_thought"
+    : material.sourceType === "album_asset" && material.narrativePermission === "xiaoc_independent"
+      ? "xiaoc_independent"
+      : "shared_life"
+  if (candidate.materialScope !== expectedScope) {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "material_scope_mismatch",
+      declined: false,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: "material_scope_mismatch" }
+  }
+
+  const imageMaterial = candidate.image
+    ? resolveMomentMaterial(materials, candidate.image)
+    : null
+  if (
+    candidate.image
+    && (
+      imageMaterial?.sourceType !== "album_asset"
+      || candidate.sourceMessageId === "thought"
+      || candidate.image !== candidate.sourceMessageId
+    )
+  ) {
+    candidate.image = null
+  }
+  if (isInvalidMomentText(candidate.text) || isMomentCandidateDuplicate(candidate.text, recentMoments)) {
+    await updateAutonomousMomentState(userId, state, {
+      now,
+      lastPublishedAt,
+      outcome: "invalid_or_duplicate",
+      declined: false,
+    })
+    return { checked: 1, model_calls: 1, candidate_created: false, reason: "invalid_or_duplicate" }
+  }
+
+  const saveResult = await insertAutonomousMomentCandidate({
+    userId,
+    candidate,
+    material,
+    imageMaterial: candidate.image ? imageMaterial : null,
+    now,
+  })
+  await updateAutonomousMomentState(userId, state, {
+    now,
+    lastPublishedAt,
+    outcome: saveResult.reason,
+    declined: false,
+  })
+  return { checked: 1, model_calls: 1, candidate_created: saveResult.created, reason: saveResult.reason }
 }
 
 async function checkPendingMomentCandidates() {
@@ -4465,6 +4818,10 @@ async function checkPendingMomentCandidates() {
           likes: 0,
           source_conversation_id: candidate.source_conversation_id,
           source_message_id: candidate.source_message_id,
+          consideration_mode: candidate.consideration_mode,
+          source_type: candidate.source_type,
+          source_ref: candidate.source_ref,
+          narrative_permission: candidate.narrative_permission,
         })
         .select("id")
         .single()
@@ -5071,7 +5428,8 @@ export default async function handler(req, res) {
           checkPendingProactiveTasks(),
           checkPendingMomentCandidates(),
         ])
-        result = { proactive, momentCandidates }
+        const autonomousMoment = await checkAutonomousMomentConsideration()
+        result = { proactive, momentCandidates, autonomousMoment }
       } catch (error) {
         workerError = error
       }

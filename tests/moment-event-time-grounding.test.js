@@ -93,13 +93,26 @@ test("Moment prompt and audit log expose source and normalized times", () => {
   assert.match(source, /fallbackApplied: eventTimeGrounding\.corrected/)
 })
 
-test("worker time consistency protection remains unchanged", () => {
+test("worker rejects factual time conflicts without rejecting neutral historical material", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
 
   assert.match(source, /if \(eventMs > publishMs \+ 30 \* 60 \* 1000\)/)
   assert.match(source, /ageMs > 3 \* 60 \* 60 \* 1000/)
-  assert.match(source, /过去事件被标记为即时记录/)
+  assert.match(source, /历史素材正文包含与发布时间冲突的当前时间表达/)
+  assert.doesNotMatch(source, /过去事件被标记为即时记录/)
   assert.doesNotMatch(source, /Object\.assign\(candidate, publishNormalization\.candidate\)/)
+})
+
+test("historical material stays eligible when its expression is time-neutral", () => {
+  const result = normalizeMomentCandidateForPublish({
+    text: "风吹过来的时候，路边很安静。",
+    shareMode: "immediate",
+    eventTime: "2026-08-24T13:00:00+08:00",
+  }, "2026-08-25T21:00:00+08:00")
+
+  assert.equal(result.materialIsHistorical, true)
+  assert.equal(result.hasCurrentTimeClaim, false)
+  assert.equal(result.requiresDelayedVoice, false)
 })
 
 test("automatic Moment generation stays low-frequency but publication limits do not erase material", () => {

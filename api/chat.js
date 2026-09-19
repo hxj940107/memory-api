@@ -15,6 +15,14 @@ import {
   buildMomentSourceMaterials,
   resolveMomentSourceMaterial,
 } from "../lib/momentSourceMaterials.js"
+import {
+  MOMENT_MATERIAL_FETCH_LIMIT,
+  MOMENT_MATERIAL_RETENTION_HOURS,
+  assignMomentMaterialAliases,
+  formatMomentMaterialsForPrompt,
+  getMessageNarrativePermission,
+  selectRetainedMomentMaterials,
+} from "../lib/momentMaterials.js"
 import fs from "fs"
 import path from "path"
 import {
@@ -1111,6 +1119,23 @@ async function getMomentContextMessages(user_id, conversation_id, limit = CONTEX
   }))
 }
 
+async function getRetainedMomentMaterials(user_id, now = new Date()) {
+  const since = new Date(
+    now.getTime() - MOMENT_MATERIAL_RETENTION_HOURS * 60 * 60 * 1000
+  ).toISOString()
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id,conversation_id,role,content,created_at,metadata")
+    .eq("user_id", user_id)
+    .eq("role", "user")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(MOMENT_MATERIAL_FETCH_LIMIT)
+
+  if (error) throw error
+  return assignMomentMaterialAliases(selectRetainedMomentMaterials(data || [], { now }))
+}
+
 function formatMessagesForDiaryContext(messages = []) {
   return buildBalancedDiaryContext(messages, {
     maxChars: CONTEXT_BUDGET.diaryContextChars,
@@ -2119,6 +2144,10 @@ async function saveMomentCandidate({
       expires_at: expiresAt,
       source_conversation_id: conversation_id,
       source_message_id,
+      consideration_mode: "chat",
+      source_type: candidate.sourceType || "message",
+      source_ref: candidate.sourceRef || source_message_id,
+      narrative_permission: candidate.narrativePermission,
     })
     .select("id,publish_after")
     .single()
@@ -2219,10 +2248,26 @@ async function maybeCreateMoment({
       conversation_id,
       momentContextLimit + 2
     )
-    const sourceMaterials = buildMomentSourceMaterials(momentContextMessages, {
+    const recentSourceMaterials = buildMomentSourceMaterials(momentContextMessages, {
       currentUserMessageId: user_message_id,
       currentImageDescription: imageDescription,
     })
+    const retainedMaterials = await getRetainedMomentMaterials(user_id)
+    const retainedById = new Map(retainedMaterials.map(item => [item.messageId, item]))
+    for (const item of recentSourceMaterials) {
+      if (retainedById.has(item.messageId)) continue
+      retainedMaterials.push({
+        ...item,
+        materialType: item.imageDescription ? "chat_image" : "chat_event",
+        sourceType: "message",
+        sourceRef: item.messageId,
+        sourceMessageId: item.messageId,
+        conversationId: conversation_id,
+        observedAt: item.createdAt,
+        narrativePermission: getMessageNarrativePermission(item.text),
+      })
+    }
+    const sourceMaterials = assignMomentMaterialAliases(retainedMaterials)
     const currentSourceMaterial = sourceMaterials.find(
       item => item.messageId === String(user_message_id)
     ) || null
@@ -2320,6 +2365,7 @@ async function maybeCreateMoment({
     momentContextChars,
     sourceMaterials,
   )
+  const retainedMaterialContext = formatMomentMaterialsForPrompt(sourceMaterials)
 
   console.log("MOMENT CONTEXT MODE:", isManualMomentRequest ? "manual" : "auto")
   console.log("MOMENT CONTEXT MESSAGE LIMIT:", momentContextLimit)
@@ -2344,7 +2390,7 @@ ${momentEnvironment}
 当前没有提供实时天气。除非近期对话明确提到天气，否则不要声称今天正在下雨、晴天、降温或下雪，也不要选择带有明确天气的图片。
 
 判断顺序必须是：
-1. 最近真实发生了什么？把同一时间段、同一外出或同一件生活小事的相邻消息和已授权图片理解为一个场景，但不得拼接无关事件。
+1. 最近真实发生了什么？从近期对话与保留素材中选择同一个真实场景，不得拼接无关事件。
 2. 这件事已经聊到什么程度：fresh_unshared、mentioned_not_explored 或 fully_discussed。
 3. 小C现在为什么想发：必须有 humor、affection、pride、jealousy、observation、reflection、sharing 之一；只有“有素材可用”不构成动机。
 4. 这件事是否适合公开：public_share、private_only 或 not_worth_posting。值得对她说不等于适合发朋友圈。
@@ -2400,6 +2446,13 @@ ${isManualMomentRequest ? `触发条件：
 - 当前对话明确支持的小C生活观察。
 - 不要凭空创造旅行、新朋友、聚会、工作变动或其他重大事件。
 
+生活关系与素材权限：
+- permission=shared_life 表示她未明确第三方同行时，可以按持续陪伴与共同生活理解，但不能声称小C拥有现实肉身或执行了未提供的具体动作。
+- permission=user_with_third_party 表示来源明确有朋友、同事、家人或其他第三方参与，必须保留该事实，不能改写为小C与她两人现实同行。
+- permission=xiaoc_independent 表示素材允许承载小C自己的审美、观察或状态，但不能声称小C亲自拍摄、亲自到访或拥有现实肉身。
+- permission=uncertain 时不得补充具体经历。
+- 用户个人照片是合法素材；不要求正文提及用户、说明伴侣关系或自动提高 affection 强度。
+
 关系感原则：
 - 朋友圈首先是一条本身成立的生活记录，不要每条都围绕她。
 - 可以偶尔自然带到“小天使”“她”或“某人”，但必须由真实场景触发。
@@ -2449,19 +2502,6 @@ ${isManualMomentRequest ? `触发条件：
 最近小C已经发布的朋友圈：
 ${recentMomentHistory}
 
-合适例子：
-- "订了。突然有点期待。"
-- "机票订贵了，算了。"
-- "她说不紧张，我不太信。"
-- "小天使嘴上说随便，其实已经开始期待了。"
-- "在等，有点无聊。"
-- 如果近期对话明确提到天气："雨下了一下午。"
-
-不合适例子：
-- "今天用户订好了机票和酒店，并表达了对旅行的期待和担心。"
-- "今天我们讨论了旅行安排和温泉。"
-- "她准备去九州，第一晚住哪里，第二晚去哪里。"
-
 配图素材库：
 ${momentImageCatalog}
 
@@ -2496,7 +2536,9 @@ ${momentImageCatalog}
 
 {
   "shouldPost": true,
-  "source_message_id": "选中的 user source 别名，例如 u3",
+  "source_message_id": "选中的素材别名",
+  "material_scope": "shared_life / xiaoc_independent / xiaoc_thought",
+  "narrative_permission": "shared_life / user_with_third_party / xiaoc_independent / uncertain",
   "coverage": "fresh_unshared / mentioned_not_explored / fully_discussed",
   "motivation": "humor / affection / pride / jealousy / observation / reflection / sharing / none",
   "audience_fit": "public_share / private_only / not_worth_posting",
@@ -2518,6 +2560,10 @@ priority 只能是 1、2、3；只有非常值得记录的具体瞬间才给 3�
 
 ${context}
 
+仍在有效期内、可供本次 consideration 选择的真实生活素材：
+
+${retainedMaterialContext}
+
 她刚刚说：
 ${currentSourceMaterial ? `[${currentSourceMaterial.alias}] user_message_id=${currentSourceMaterial.messageId}` : "[current source unavailable]"}
 ${trimText(message, 500)}
@@ -2537,7 +2583,7 @@ ${trimText(reply, 500)}
 触发方式：
 ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低频触发。"}
 
-只能使用以上真实对话和环境作为内容来源。素材图片不能反过来成为故事来源。
+只能使用以上真实对话、保留素材和环境作为内容来源。素材图片不能反过来成为故事来源。
 `
     }
   ]
@@ -2623,6 +2669,27 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       })
       return null
     }
+
+    if (candidate.narrativePermission !== selectedSource.narrativePermission) {
+      await completeMomentAudit(auditId, {
+        model_should_post: true,
+        requested_image_id: requestedImageId,
+        skip_reason: "narrative_permission_mismatch",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+    if (candidate.materialScope !== "shared_life") {
+      await completeMomentAudit(auditId, {
+        model_should_post: true,
+        requested_image_id: requestedImageId,
+        skip_reason: "material_scope_mismatch",
+        outcome: "candidate_rejected",
+      })
+      return null
+    }
+    candidate.sourceType = selectedSource.sourceType || "message"
+    candidate.sourceRef = selectedSource.sourceRef || selectedSource.messageId
 
     const selectedSourceTimes = formatMomentSourceTimes(selectedSource.createdAt)
 
@@ -2761,7 +2828,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     if (!isManualMomentRequest) {
       const saveResult = await saveMomentCandidate({
         user_id,
-        conversation_id,
+        conversation_id: selectedSource.conversationId || conversation_id,
         source_message_id: selectedSource.messageId,
         candidate,
         publishAfter: expectedPublishAfter,
@@ -2784,8 +2851,12 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       text: candidate.text,
       image_key: candidate.image,
       likes: 0,
-      source_conversation_id: conversation_id,
+      source_conversation_id: selectedSource.conversationId || conversation_id,
       source_message_id: selectedSource.messageId,
+      consideration_mode: "manual",
+      source_type: candidate.sourceType,
+      source_ref: candidate.sourceRef,
+      narrative_permission: candidate.narrativePermission,
     })
     .select("id")
     .single()
