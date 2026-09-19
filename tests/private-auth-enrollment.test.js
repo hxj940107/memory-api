@@ -7,7 +7,7 @@ import { createRequire } from "node:module"
 const require = createRequire(import.meta.url)
 const ts = require("../mobile/XiaoC/node_modules/typescript")
 const sourcePath = path.resolve("mobile/XiaoC/src/lib/supabaseAuth.ts")
-const targetUserId = "17aa1bd0-931d-40a0-b0d6-ef75c641c7b3"
+const targetUserId = "94000000-0000-4000-8000-000000000001"
 
 function session(overrides = {}) {
   return {
@@ -21,15 +21,21 @@ function session(overrides = {}) {
   }
 }
 
-function loadAuth(client) {
+function loadAuth(client, options = {}) {
+  const owner = Object.prototype.hasOwnProperty.call(options, "owner")
+    ? options.owner
+    : targetUserId
   const previous = {
     url: process.env.EXPO_PUBLIC_SUPABASE_URL,
     key: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     enrollment: process.env.EXPO_PUBLIC_PRIVATE_AUTH_ENROLLMENT_ENABLED,
+    owner: process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID,
   }
   process.env.EXPO_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co"
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = "public-anon-key"
   process.env.EXPO_PUBLIC_PRIVATE_AUTH_ENROLLMENT_ENABLED = "true"
+  if (owner === undefined) delete process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID
+  else process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID = owner
   const output = ts.transpileModule(fs.readFileSync(sourcePath, "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText
@@ -49,6 +55,8 @@ function loadAuth(client) {
   process.env.EXPO_PUBLIC_SUPABASE_URL = previous.url
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = previous.key
   process.env.EXPO_PUBLIC_PRIVATE_AUTH_ENROLLMENT_ENABLED = previous.enrollment
+  if (previous.owner === undefined) delete process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID
+  else process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID = previous.owner
   return { api: module.exports, secureValues }
 }
 
@@ -82,6 +90,39 @@ test("wrong account is removed locally and fails closed", async () => {
   const { api } = loadAuth(client)
   await assert.rejects(api.enrollPrivateAuthAccount("x@example.com", "secret"), /Unexpected XiaoC Auth account/)
   assert.deepEqual(signOutOptions, { scope: "local" })
+})
+
+test("missing and malformed mobile owner configuration fail explicitly", async () => {
+  const client = {
+    auth: {
+      async signInWithPassword() { return { data: { session: session() }, error: null } },
+      async signOut() {},
+    },
+  }
+  const missing = loadAuth(client, { owner: undefined }).api
+  await assert.rejects(
+    missing.enrollPrivateAuthAccount("x@example.com", "secret"),
+    /owner is not configured/i,
+  )
+  const malformed = loadAuth(client, { owner: "not-a-uuid" }).api
+  await assert.rejects(
+    malformed.enrollPrivateAuthAccount("x@example.com", "secret"),
+    /owner configuration is invalid/i,
+  )
+})
+
+test("a staging build can configure a different expected owner", async () => {
+  const stagingOwner = "95000000-0000-4000-8000-000000000002"
+  const client = {
+    auth: {
+      async signInWithPassword() {
+        return { data: { session: session({ user: { id: stagingOwner } }) }, error: null }
+      },
+      async signOut() { assert.fail("configured staging owner must remain enrolled") },
+    },
+  }
+  const { api } = loadAuth(client, { owner: stagingOwner })
+  assert.equal((await api.enrollPrivateAuthAccount("x@example.com", "secret")).userId, stagingOwner)
 })
 
 test("near-expiry access token is refreshed before an API request uses it", async () => {
@@ -226,4 +267,6 @@ test("session persistence uses chunked SecureStore and enrollment remains privat
   assert.doesNotMatch(authSource + enrollmentSource, /signUp|账号切换|注册/)
   assert.match(enrollmentSource, /secureTextEntry/)
   assert.match(enrollmentSource, /setPassword\(""\)/)
+  assert.match(authSource, /EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID/)
+  assert.doesNotMatch(authSource, /17aa1bd0-931d-40a0-b0d6-ef75c641c7b3/i)
 })

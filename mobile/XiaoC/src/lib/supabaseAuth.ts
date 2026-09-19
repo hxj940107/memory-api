@@ -1,10 +1,10 @@
 import * as SecureStore from "expo-secure-store";
 import { createClient, type Session, type SupportedStorage } from "@supabase/supabase-js";
 
-export const PRIVATE_AUTH_USER_UUID = "17aa1bd0-931d-40a0-b0d6-ef75c641c7b3";
 const STORAGE_PREFIX = "xiaoc.supabase.auth.";
 const CHUNK_SIZE = 1800;
 const ACCESS_TOKEN_FRESHNESS_MS = 60_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 let refreshSessionInFlight: Promise<Session> | null = null;
 
@@ -44,6 +44,19 @@ const secureStorage: SupportedStorage = {
 
 const supabaseUrl = String(process.env.EXPO_PUBLIC_SUPABASE_URL || "").trim();
 const supabaseAnonKey = String(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "").trim();
+const configuredPrivateAuthUserUuid = String(
+  process.env.EXPO_PUBLIC_XIAOC_PRIVATE_AUTH_USER_UUID || "",
+).trim().toLowerCase();
+
+function requireConfiguredPrivateAuthUserUuid() {
+  if (!configuredPrivateAuthUserUuid) {
+    throw new Error("Private Auth owner is not configured in this build");
+  }
+  if (!UUID_PATTERN.test(configuredPrivateAuthUserUuid)) {
+    throw new Error("Private Auth owner configuration is invalid");
+  }
+  return configuredPrivateAuthUserUuid;
+}
 
 export const supabaseAuth = supabaseUrl && supabaseAnonKey
   ? createClient(supabaseUrl, supabaseAnonKey, {
@@ -68,7 +81,7 @@ function requireAuthClient() {
 
 async function requirePrivateSession(session: Session | null): Promise<Session | null> {
   if (!session) return null;
-  if (session.user.id !== PRIVATE_AUTH_USER_UUID) {
+  if (session.user.id !== requireConfiguredPrivateAuthUserUuid()) {
     await requireAuthClient().auth.signOut({ scope: "local" });
     throw new Error("Unexpected XiaoC Auth account");
   }

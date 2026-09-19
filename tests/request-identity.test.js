@@ -3,20 +3,22 @@ import fs from "node:fs"
 import test from "node:test"
 
 import {
-  PRIVATE_AUTH_USER_UUID,
   requireRequestIdentity,
   resolveRequestIdentity,
 } from "../lib/requestIdentity.js"
 
 const url = "https://project-ref.supabase.co"
+const expectedOwnerUuid = "94000000-0000-4000-8000-000000000001"
+const alternateOwnerUuid = "95000000-0000-4000-8000-000000000002"
 const env = {
   SUPABASE_URL: url,
   SUPABASE_SERVICE_ROLE_KEY: "service-key",
+  XIAOC_PRIVATE_AUTH_USER_UUID: expectedOwnerUuid,
 }
 
 function tokenFor(overrides = {}) {
   const claims = {
-    sub: PRIVATE_AUTH_USER_UUID,
+    sub: expectedOwnerUuid,
     iss: `${url}/auth/v1`,
     aud: "authenticated",
     exp: Math.floor(Date.now() / 1000) + 3600,
@@ -35,9 +37,10 @@ function request(token, body = { user_id: "user" }) {
 }
 
 function clients({
-  authUserId = PRIVATE_AUTH_USER_UUID,
+  authUserId = expectedOwnerUuid,
   authError = null,
   companion = "active",
+  companionRecord,
   companionError = null,
 } = {}) {
   return {
@@ -60,8 +63,8 @@ function clients({
             return companion === "missing"
               ? { data: null, error: null }
               : {
-                  data: {
-                    user_id: PRIVATE_AUTH_USER_UUID,
+                  data: companionRecord || {
+                    user_id: expectedOwnerUuid,
                     lifecycle_status: companion,
                   },
                   error: null,
@@ -77,7 +80,7 @@ test("valid verified JWT resolves the fixed private companion identity", async (
   const identity = await resolveRequestIdentity(request(tokenFor()), { env, ...clients() })
   assert.deepEqual(identity, {
     actorType: "authenticated_user",
-    authUserId: PRIVATE_AUTH_USER_UUID,
+    authUserId: expectedOwnerUuid,
     legacyUserId: "user",
     identitySource: "verified_supabase_jwt",
     companionStatus: "active",
@@ -236,6 +239,74 @@ test("inactive and missing companions fail closed", async () => {
   )
 })
 
+test("missing canonical lifecycle and stale status-only mocks fail closed", async () => {
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), {
+      env,
+      ...clients({ companionRecord: { user_id: expectedOwnerUuid } }),
+    }),
+    { code: "companion_inactive" },
+  )
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), {
+      env,
+      ...clients({ companionRecord: { user_id: expectedOwnerUuid, status: "active" } }),
+    }),
+    { code: "companion_inactive" },
+  )
+})
+
+test("companion binding UUID mismatch fails closed", async () => {
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), {
+      env,
+      ...clients({ companionRecord: { user_id: alternateOwnerUuid, lifecycle_status: "active" } }),
+    }),
+    { code: "companion_owner_mismatch" },
+  )
+})
+
+test("owner configuration is required and must be a UUID", async () => {
+  const { XIAOC_PRIVATE_AUTH_USER_UUID: _missing, ...missingOwnerEnv } = env
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), { env: missingOwnerEnv, ...clients() }),
+    { code: "private_owner_not_configured", status: 503 },
+  )
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor()), {
+      env: { ...env, XIAOC_PRIVATE_AUTH_USER_UUID: "not-a-uuid" },
+      ...clients(),
+    }),
+    { code: "private_owner_config_invalid", status: 503 },
+  )
+})
+
+test("configured staging owner can differ while project and subject must still match", async () => {
+  const stagingUrl = "https://staging-ref.supabase.co"
+  const stagingEnv = {
+    ...env,
+    SUPABASE_URL: stagingUrl,
+    XIAOC_PRIVATE_AUTH_USER_UUID: alternateOwnerUuid,
+  }
+  const stagingToken = tokenFor({ sub: alternateOwnerUuid, iss: `${stagingUrl}/auth/v1` })
+  const identity = await resolveRequestIdentity(request(stagingToken), {
+    env: stagingEnv,
+    ...clients({
+      authUserId: alternateOwnerUuid,
+      companionRecord: { user_id: alternateOwnerUuid, lifecycle_status: "active" },
+    }),
+  })
+  assert.equal(identity.authUserId, alternateOwnerUuid)
+
+  await assert.rejects(
+    resolveRequestIdentity(request(tokenFor({ sub: alternateOwnerUuid })), {
+      env,
+      ...clients({ authUserId: alternateOwnerUuid }),
+    }),
+    { code: "private_account_mismatch" },
+  )
+})
+
 test("companion lookup database errors fail closed", async () => {
   await assert.rejects(
     resolveRequestIdentity(request(tokenFor()), {
@@ -260,7 +331,7 @@ test("forged legacy owner and any supplied UUID are rejected", async () => {
     { code: "legacy_user_id_mismatch" },
   )
   await assert.rejects(
-    resolveRequestIdentity(request(tokenFor(), { user_id: "user", user_uuid: PRIVATE_AUTH_USER_UUID }), {
+    resolveRequestIdentity(request(tokenFor(), { user_id: "user", user_uuid: expectedOwnerUuid }), {
       env,
       ...clients(),
     }),
@@ -282,7 +353,7 @@ test("JWT verification failure never falls back to a valid app token", async () 
   )
 })
 
-test("explicit app-token fallback maps only to the fixed server identity", async () => {
+test("explicit app-token fallback maps only to the configured server identity", async () => {
   const fallbackEnv = {
     ...env,
     PRIVATE_IDENTITY_APP_TOKEN_FALLBACK_ENABLED: "true",
@@ -291,7 +362,7 @@ test("explicit app-token fallback maps only to the fixed server identity", async
   const req = request(null)
   req.headers["x-xiaoc-app-token"] = fallbackEnv.XIAOC_APP_TOKEN
   const identity = await resolveRequestIdentity(req, { env: fallbackEnv, ...clients() })
-  assert.equal(identity.authUserId, PRIVATE_AUTH_USER_UUID)
+  assert.equal(identity.authUserId, expectedOwnerUuid)
   assert.equal(identity.legacyUserId, "user")
   assert.equal(identity.identitySource, "private_app_fixed_binding_fallback")
 })
@@ -355,6 +426,12 @@ test("all 12 API Functions use the shared async identity resolver", () => {
     assert.match(source, /requireRequestIdentity/)
     assert.match(source, /if \(!await requireRequestIdentity\(req, res\)\) return/)
   }
+})
+
+test("server identity source contains no historical Production owner UUID fallback", () => {
+  const resolver = fs.readFileSync("lib/requestIdentity.js", "utf8")
+  assert.match(resolver, /XIAOC_PRIVATE_AUTH_USER_UUID/)
+  assert.doesNotMatch(resolver, /17aa1bd0-931d-40a0-b0d6-ef75c641c7b3/i)
 })
 
 test("server package preserves legacy runtime ownership and internal fallback callers", () => {
