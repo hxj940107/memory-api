@@ -3442,6 +3442,18 @@ try {
     correlationId: userMessageId || `${cid}:memory-shadow`,
     ombreResults: dynamicMemory,
     activeItems: activeConversationContext.items,
+    ownedOnly: ownedFreshEmpty,
+    memoryBudget: memoryContextBudget,
+    promptContext: {
+      coreTexts: [coreMemorySnapshot.snapshot],
+      recentTexts: history.map(item => item.content),
+      activeTexts: activeConversationContext.items
+        .map(item => `${item.topic} ${item.context}`)
+        .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
+      summaryTexts: summaryMemory ? [summaryMemory] : [],
+      currentMessage: message,
+      currentConversationId: cid,
+    },
   }).catch(() => null))
 } catch (err) {
   console.error("dynamic memory exclusion load failed; injection skipped:", err)
