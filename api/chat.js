@@ -55,8 +55,11 @@ import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
 import {
   assertOmbreAuthority,
   getMemoryAuthorityMode,
+  isOwnedAuthoritativeMode,
   isOwnedFreshEmptyMode,
+  MEMORY_AUTHORITY_MODE,
 } from "../lib/memoryAuthority.js"
+import { retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
 import {
   buildProactivePushMessage,
   sendExpoPushMessage,
@@ -3141,6 +3144,7 @@ export default async function handler(req, res) {
     const selfCallHeaders = authenticatedSelfCallHeaders(req)
     const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
     const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
+    const ownedAuthoritative = isOwnedAuthoritativeMode(memoryAuthorityMode)
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })
     }
@@ -3409,7 +3413,7 @@ try {
 let dynamicMemory = []
 const memoryContextBudget = createMemoryContextBudget(dynamicContextBudget.memory)
 try {
-  if (!ownedFreshEmpty) {
+  if (memoryAuthorityMode === MEMORY_AUTHORITY_MODE.OMBRE_AUTHORITATIVE) {
     const dynamicMemoryExclusions = await getDynamicMemoryExclusions(
       coreMemorySnapshot.sourceBucketIds
     )
@@ -3432,8 +3436,28 @@ try {
       }
     )
     dynamicMemory = memoryResult.dynamicMemory
+  } else if (ownedAuthoritative) {
+    const ownedMemoryResult = await retrieveOwnedMemoryPromptCandidatesShadow({
+      client: supabase,
+      userId: user_id,
+      query: message,
+      context: {
+        coreTexts: [coreMemorySnapshot.snapshot],
+        recentTexts: history.map(item => item.content),
+        activeTexts: activeConversationContext.items
+          .map(item => `${item.topic} ${item.context}`)
+          .concat(sharedContextPrompt ? [sharedContextPrompt] : []),
+        summaryTexts: summaryMemory ? [summaryMemory] : [],
+        currentMessage: message,
+        currentConversationId: cid,
+      },
+      memoryBudget: memoryContextBudget,
+      shadowOnly: false,
+    })
+    dynamicMemory = ownedMemoryResult.promptReadyCandidates.map(item => item.content)
+    console.log("OWNED MEMORY RETRIEVAL:", ownedMemoryResult.telemetry)
   }
-  waitUntil(runXiaoCMemoryShadowRead({
+  if (!ownedAuthoritative) waitUntil(runXiaoCMemoryShadowRead({
     client: supabase,
     env: process.env,
     trustedUserId: APP_USER.defaultUserId,
@@ -3460,7 +3484,7 @@ try {
 }
 
 const stableMemorySelection = selectStableMemoryContext({
-  candidates: await getStableMemories(user_id),
+  candidates: ownedAuthoritative ? [] : await getStableMemories(user_id),
   context: {
     coreTexts: [coreMemorySnapshot.snapshot],
     recentTexts: history.map(item => item.content),
@@ -4003,7 +4027,7 @@ console.log("======================================\n")
             }
 
         if (judgeResult.save) {
-          if (!ownedFreshEmpty) {
+          if (memoryAuthorityMode === MEMORY_AUTHORITY_MODE.OMBRE_AUTHORITATIVE) {
             try {
               const saved = await saveLongTermMemory(
                 user_id,

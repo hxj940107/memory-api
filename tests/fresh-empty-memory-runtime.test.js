@@ -114,10 +114,10 @@ test("chat and Memory API isolate every Ombre surface while preserving non-injec
   const memory = fs.readFileSync("api/memory.js", "utf8")
 
   assert.match(chat, /const ownedFreshEmpty = isOwnedFreshEmptyMode\(memoryAuthorityMode\)/)
-  assert.match(chat, /if \(!ownedFreshEmpty\) \{[\s\S]*getDynamicMemoryExclusions[\s\S]*getMemorySmart/)
-  assert.match(chat, /if \(!ownedFreshEmpty\) \{[\s\S]*saveLongTermMemory/)
-  assert.match(chat, /waitUntil\(runXiaoCMemoryShadowRead\(/)
-  assert.doesNotMatch(chat, /dynamicMemory\s*=\s*(?:owned|xiaoc)/i)
+  assert.match(chat, /if \(memoryAuthorityMode === MEMORY_AUTHORITY_MODE\.OMBRE_AUTHORITATIVE\) \{[\s\S]*getDynamicMemoryExclusions[\s\S]*getMemorySmart/)
+  assert.match(chat, /if \(memoryAuthorityMode === MEMORY_AUTHORITY_MODE\.OMBRE_AUTHORITATIVE\) \{[\s\S]*saveLongTermMemory/)
+  assert.match(chat, /if \(!ownedAuthoritative\) waitUntil\(runXiaoCMemoryShadowRead\(/)
+  assert.match(chat, /ownedOnly: ownedFreshEmpty/)
 
   assert.match(memory, /assertOmbreAuthority\(getMemoryAuthorityMode\(process\.env\)\)/)
   assert.match(memory, /xiaoc-owned/)

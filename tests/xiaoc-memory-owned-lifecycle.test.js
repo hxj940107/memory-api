@@ -172,7 +172,7 @@ test("clear is owner/native/active scoped and its resulting deleted rows are not
 
 test("Memory API keeps Ombre authority unchanged and enables lifecycle only in fresh-owned mode", () => {
   const api = fs.readFileSync("api/memory.js", "utf8")
-  assert.match(api, /if \(ownedFreshEmpty\) \{[\s\S]*mutateOwnedMemories/)
+  assert.match(api, /if \(ownedMemoryAuthority\) \{[\s\S]*mutateOwnedMemories/)
   assert.match(api, /userId: req\.identity\.legacyUserId/)
   assert.match(api, /listOwnedMemories/)
   assert.match(api, /postXiaoCMemoryAction\("\/xiaoc\/memory\/pin"/)

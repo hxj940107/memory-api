@@ -155,14 +155,14 @@ test("RPC and audit failures cannot escape into chat", async () => {
   assert.deepEqual(result, { attempted: true, outcome: "failure", error_code: "08006" })
 })
 
-test("chat integration is authority-independent and adds no prompt, gateway, model or mobile coupling", async () => {
+test("native capture remains authority-independent while Ombre persistence is explicitly scoped", async () => {
   const chat = await readFile(new URL("../api/chat.js", import.meta.url), "utf8")
   const ombre = chat.indexOf("const saved = await saveLongTermMemory")
   const legacy = chat.indexOf("episodic = await saveEpisodicObservation", ombre)
   const native = chat.indexOf("await runXiaoCMemoryNativeCapture")
   assert.ok(ombre >= 0 && legacy > ombre && native > legacy)
   assert.equal((chat.match(/runXiaoCMemoryNativeCapture/g) || []).length, 2)
-  assert.match(chat, /if \(!ownedFreshEmpty\) \{[\s\S]*saveLongTermMemory/)
+  assert.match(chat, /if \(memoryAuthorityMode === MEMORY_AUTHORITY_MODE\.OMBRE_AUTHORITATIVE\) \{[\s\S]*saveLongTermMemory/)
   const helper = await readFile(new URL("../lib/xiaocMemoryNativeCapture.js", import.meta.url), "utf8")
   assert.equal(/callLLM|memoryContextGateway|saveLongTermMemory/.test(helper), false)
 })

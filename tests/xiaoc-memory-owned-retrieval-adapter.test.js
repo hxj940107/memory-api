@@ -96,15 +96,15 @@ test("canonical content stays internal and never enters Shadow telemetry or diag
   assert.doesNotMatch(JSON.stringify(result.diagnostics), new RegExp(secret))
 })
 
-test("runtime wiring is owned-only Shadow and never joins the real prompt", () => {
+test("Phase 3 Shadow wiring remains non-injecting beside the explicit authoritative path", () => {
   const chat = fs.readFileSync("api/chat.js", "utf8")
   const shadow = fs.readFileSync("lib/xiaocMemoryShadowRead.js", "utf8")
   assert.match(chat, /ownedOnly: ownedFreshEmpty/)
   assert.match(chat, /waitUntil\(runXiaoCMemoryShadowRead/)
-  assert.doesNotMatch(chat, /dynamicMemory\s*=\s*.*promptReady/i)
+  assert.match(chat, /else if \(ownedAuthoritative\)[\s\S]*shadowOnly: false/)
   assert.match(shadow, /prompt_readiness: taskResult\.ownedPromptReadiness/)
   assert.doesNotMatch(shadow, /promptReadyCandidates[\s\S]*logger/)
-  assert.doesNotMatch(chat, /owned_authoritative/)
+  assert.match(chat, /if \(!ownedAuthoritative\) waitUntil\(runXiaoCMemoryShadowRead/)
 })
 
 test("owned runtime emits aggregate prompt-readiness only and no canonical content", async () => {

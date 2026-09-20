@@ -135,7 +135,7 @@ import {
 import {
   assertOmbreAuthority,
   getMemoryAuthorityMode,
-  isOwnedFreshEmptyMode,
+  isOwnedMemoryAuthorityMode,
 } from "../lib/memoryAuthority.js"
 
 const supabase = createClient(
@@ -5253,7 +5253,7 @@ export default async function handler(req, res) {
   if (!await requireRequestIdentity(req, res)) return
   try {
     const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
-    const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
+    const ownedMemoryAuthority = isOwnedMemoryAuthorityMode(memoryAuthorityMode)
 
     const user_id =
       req.method === "GET"
@@ -5475,7 +5475,7 @@ export default async function handler(req, res) {
       const action = req.body.action
       const bucket_id = req.body.bucket_id
 
-      if (ownedFreshEmpty) {
+      if (ownedMemoryAuthority) {
         if (["archive", "delete"].includes(action) && !bucket_id) {
           return res.status(400).json({ error: "bucket_id required", code: "OWNED_MEMORY_ID_REQUIRED" })
         }
@@ -5497,7 +5497,7 @@ export default async function handler(req, res) {
           }
         }
         return res.status(409).json({
-          error: "Historical Ombre Memory actions are not available in owned_fresh_empty mode",
+          error: "Historical Ombre Memory actions are not available in owned memory authority modes",
           code: "OMBRE_NOT_APPLICABLE",
         })
       }
@@ -5556,7 +5556,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "unsupported memory category" })
       }
 
-      if (ownedFreshEmpty) {
+      if (ownedMemoryAuthority) {
         try {
           const memories = await listOwnedMemories({
             client: supabase,
