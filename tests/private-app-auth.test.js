@@ -3,6 +3,7 @@ import fs from "node:fs"
 import test from "node:test"
 
 import {
+  authenticatedSelfCallHeaders,
   authorizePrivateAppRequest,
   privateAppInternalHeaders,
 } from "../lib/privateAppAuth.js"
@@ -37,12 +38,18 @@ test("Vercel cron remains authorized independently", () => {
   }, env).mode, "vercel_cron")
 })
 
-test("server-to-server requests forward the private token", () => {
+test("legacy server-to-server requests preserve private-token compatibility", () => {
   assert.deepEqual(privateAppInternalHeaders({ XIAOC_APP_TOKEN: token }), {
     "x-xiaoc-app-token": token,
   })
+  assert.deepEqual(authenticatedSelfCallHeaders({
+    headers: {},
+    identity: { actorType: "legacy_private_app" },
+  }, { XIAOC_APP_TOKEN: token }), {
+    "x-xiaoc-app-token": token,
+  })
   const chat = fs.readFileSync("api/chat.js", "utf8")
-  assert.match(chat, /\.\.\.privateAppInternalHeaders\(\)/)
+  assert.match(chat, /authenticatedSelfCallHeaders\(req\)/)
 })
 
 test("server-to-server Preview requests add Vercel protection bypass without replacing app auth", () => {

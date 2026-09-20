@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import { waitUntil } from "@vercel/functions"
 import {
-  privateAppInternalHeaders,
+  authenticatedSelfCallHeaders,
 } from "../lib/privateAppAuth.js"
 import { requireRequestIdentity } from "../lib/requestIdentity.js"
 import {
@@ -805,12 +805,19 @@ async function enqueueInactivityReachOutTask({
 // --------------------
 // Save Message
 // --------------------
-async function saveMessage(user_id, role, content, conversation_id, metadata = {}) {
+async function saveMessage(
+  user_id,
+  role,
+  content,
+  conversation_id,
+  metadata = {},
+  selfCallHeaders = {},
+) {
   const res = await fetch(`${process.env.BASE_URL}/api/add-message`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...privateAppInternalHeaders(),
+      ...selfCallHeaders,
     },
     body: JSON.stringify({
       user_id,
@@ -958,7 +965,8 @@ async function saveUserMessage(
   imageUrls = [],
   imageKinds = [],
   fileInfo = null,
-  userVoice = null
+  userVoice = null,
+  selfCallHeaders = {},
 ) {
   const metadata = {}
 
@@ -985,7 +993,7 @@ async function saveUserMessage(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...privateAppInternalHeaders(),
+      ...selfCallHeaders,
     },
     body: JSON.stringify({
       user_id,
@@ -3130,6 +3138,7 @@ async function maybeUpdateBoundSharedContext({
 export default async function handler(req, res) {
   if (!await requireRequestIdentity(req, res)) return
   try {
+    const selfCallHeaders = authenticatedSelfCallHeaders(req)
     const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
     const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
     if (req.method !== "POST") {
@@ -3226,7 +3235,8 @@ const userMessageId = await saveUserMessage(
         fileSize
       }
     : null,
-  userVoice
+  userVoice,
+  selfCallHeaders,
 )
 // 2. history
 const historyCandidates = await getRecentMessages(
@@ -3821,7 +3831,8 @@ console.log("======================================\n")
           injected: Boolean(sharedContextPrompt),
         }),
         llmUsage: mainChatUsage,
-      }
+      },
+      selfCallHeaders,
     )
 
     waitUntil(sendNormalChatPush({
@@ -3899,7 +3910,7 @@ console.log("======================================\n")
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                ...privateAppInternalHeaders(),
+                ...selfCallHeaders,
               },
               body: JSON.stringify({
                 conversation_id: cid,

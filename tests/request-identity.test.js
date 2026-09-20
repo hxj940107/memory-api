@@ -437,8 +437,10 @@ test("server identity source contains no historical Production owner UUID fallba
 test("server package preserves legacy runtime ownership and internal fallback callers", () => {
   const chat = fs.readFileSync("api/chat.js", "utf8")
   const memory = fs.readFileSync("api/memory.js", "utf8")
+  const privateAppAuth = fs.readFileSync("lib/privateAppAuth.js", "utf8")
   assert.match(chat, /user_id = APP_USER\.defaultUserId/)
-  assert.match(chat, /\.\.\.privateAppInternalHeaders\(\)/)
+  assert.match(chat, /authenticatedSelfCallHeaders\(req\)/)
+  assert.match(privateAppAuth, /return privateAppInternalHeaders\(env\)/)
   assert.match(memory, /task\.user_id/)
   assert.doesNotMatch(memory, /req\.identity\.authUserId\s*=/)
 })
