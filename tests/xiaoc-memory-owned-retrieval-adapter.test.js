@@ -49,14 +49,18 @@ test("owned adapter is lexical-only, normal-current, thresholded, and Top-K <= 3
   assert.equal(repo.calls[0][1].limit, 24)
 })
 
-test("non-owned, archived, deleted, and irrelevant rows never become prompt-ready", async () => {
+test("only native verified and explicitly eligible legacy rows become prompt-ready", async () => {
   const rows = [
     memory("active", "她喜欢蓝色石头"),
     memory("archive", "她喜欢蓝色石头", { lifecycle_status: "archived" }),
     memory("deleted", "她喜欢蓝色石头", { lifecycle_status: "deleted" }),
-    memory("legacy", "她喜欢蓝色石头", {
+    memory("legacy-approved", "她喜欢蓝色玻璃石头", {
       origin_system: "ombre_legacy", provenance_status: "legacy_unverified",
       authority_tier: "legacy_limited", retrieval_tier: "low_authority",
+    }),
+    memory("legacy-shadow", "她喜欢蓝色矿石", {
+      origin_system: "ombre_legacy", provenance_status: "legacy_unverified",
+      authority_tier: "none", retrieval_tier: "shadow_only",
     }),
     memory("irrelevant", "她养过一只小狗"),
   ]
@@ -65,6 +69,12 @@ test("non-owned, archived, deleted, and irrelevant rows never become prompt-read
     context: {}, maxChars: 1000,
   })
   assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["active"])
+  const legacyOnly = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository(rows.filter(item => item.id.startsWith("legacy"))),
+    userId: "user", query: "蓝色玻璃石头", retrievalTime: NOW, context: {}, maxChars: 1000,
+  })
+  assert.deepEqual(legacyOnly.promptReadyCandidates.map(item => item.memoryId), ["legacy-approved"])
+  assert.equal(legacyOnly.promptReadyCandidates[0]?.source, "xiaoc_owned_legacy_limited")
 })
 
 test("Context Gateway dedupe and shared remaining budget are reused without consuming production budget", async () => {
