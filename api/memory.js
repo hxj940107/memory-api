@@ -3,6 +3,10 @@ import fs from "fs"
 import path from "path"
 import { requireRequestIdentity } from '../lib/requestIdentity.js'
 import {
+  listOwnedMemories,
+  mutateOwnedMemories,
+} from '../lib/xiaocMemoryOwnedLifecycle.js'
+import {
   AI_ENDPOINTS,
   AI_MODELS,
   APP_USER,
@@ -5471,16 +5475,36 @@ export default async function handler(req, res) {
       const action = req.body.action
       const bucket_id = req.body.bucket_id
 
-      if (!bucket_id) {
-        return res.status(400).json({
-          error: "bucket_id required",
-        })
-      }
-
       if (ownedFreshEmpty) {
+        if (["archive", "delete"].includes(action) && !bucket_id) {
+          return res.status(400).json({ error: "bucket_id required", code: "OWNED_MEMORY_ID_REQUIRED" })
+        }
+        if (["archive", "delete", "clear"].includes(action)) {
+          try {
+            const result = await mutateOwnedMemories({
+              client: supabase,
+              userId: req.identity.legacyUserId,
+              action,
+              memoryId: bucket_id,
+              idempotencyKey: req.body.idempotency_key
+                || (bucket_id ? `owned-lifecycle:${action}:${bucket_id}` : null),
+            })
+            return res.status(200).json({ source: "xiaoc-owned", ...result })
+          } catch (error) {
+            const code = String(error?.message || error?.code || "OWNED_MEMORY_ACTION_FAILED")
+            const status = code.includes("NOT_FOUND") ? 404 : code.includes("REQUIRED") ? 400 : 409
+            return res.status(status).json({ error: code, code })
+          }
+        }
         return res.status(409).json({
           error: "Historical Ombre Memory actions are not available in owned_fresh_empty mode",
           code: "OMBRE_NOT_APPLICABLE",
+        })
+      }
+
+      if (!bucket_id) {
+        return res.status(400).json({
+          error: "bucket_id required",
         })
       }
 
@@ -5533,11 +5557,23 @@ export default async function handler(req, res) {
       }
 
       if (ownedFreshEmpty) {
-        return res.status(200).json(
-          category
-            ? buildWeMemoryCategoryResponse([], category, "owned-fresh-empty")
-            : buildWeMemoryResponse([], "owned-fresh-empty")
-        )
+        try {
+          const memories = await listOwnedMemories({
+            client: supabase,
+            userId: req.identity.legacyUserId,
+            lifecycleStatus: req.query.lifecycle_status,
+            limit: req.query.limit,
+          })
+          return res.status(200).json(
+            category
+              ? buildWeMemoryCategoryResponse(memories, category, "xiaoc-owned")
+              : buildWeMemoryResponse(memories, "xiaoc-owned")
+          )
+        } catch (error) {
+          const code = String(error?.message || error?.code || "OWNED_MEMORY_LIST_FAILED")
+          const status = code.includes("INVALID") ? 400 : 500
+          return res.status(status).json({ error: code, code })
+        }
       }
 
       try {

@@ -120,7 +120,8 @@ test("chat and Memory API isolate every Ombre surface while preserving non-injec
   assert.doesNotMatch(chat, /dynamicMemory\s*=\s*(?:owned|xiaoc)/i)
 
   assert.match(memory, /assertOmbreAuthority\(getMemoryAuthorityMode\(process\.env\)\)/)
-  assert.match(memory, /owned-fresh-empty/)
+  assert.match(memory, /xiaoc-owned/)
+  assert.match(memory, /listOwnedMemories/)
   assert.match(memory, /code:\s*"OMBRE_NOT_APPLICABLE"/)
 })
 
