@@ -20,6 +20,8 @@ type WeMemory = {
   type?: string;
   importance?: number;
   pinned?: boolean;
+  pinAvailable?: boolean;
+  editAvailable?: boolean;
   score?: number;
   createdAt?: string;
   lastActiveAt?: string;
@@ -34,6 +36,8 @@ type WeCategory = {
 
 type WeMemoryResponse = {
   source: string;
+  pinAvailable?: boolean;
+  editAvailable?: boolean;
   total: number;
   pinnedTotal: number;
   recentCount: number;
@@ -45,6 +49,8 @@ type WeMemoryResponse = {
 
 const emptyData: WeMemoryResponse = {
   source: "empty",
+  pinAvailable: false,
+  editAvailable: false,
   total: 0,
   pinnedTotal: 0,
   recentCount: 0,
@@ -117,6 +123,8 @@ function MemoryCard({
             importance: String(memory.importance ?? ""),
             createdAt: memory.createdAt || "",
             lastActiveAt: memory.lastActiveAt || "",
+            pinAvailable: memory.pinAvailable ? "1" : "0",
+            editAvailable: memory.editAvailable ? "1" : "0",
           },
         })
       }
@@ -246,12 +254,15 @@ export default function WeScreen() {
             <Text style={styles.overviewValue}>{data.total}</Text>
           </View>
 
-          <View style={styles.overviewDivider} />
-
-          <View>
-            <Text style={styles.overviewLabel}>钉选</Text>
-            <Text style={styles.overviewValue}>{data.pinnedTotal}</Text>
-          </View>
+          {data.pinAvailable && (
+            <>
+              <View style={styles.overviewDivider} />
+              <View>
+                <Text style={styles.overviewLabel}>钉选</Text>
+                <Text style={styles.overviewValue}>{data.pinnedTotal}</Text>
+              </View>
+            </>
+          )}
 
           <View style={styles.overviewDivider} />
 

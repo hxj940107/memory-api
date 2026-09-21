@@ -5,6 +5,7 @@ import test from "node:test"
 import { evaluateCandidateEligibility } from "../lib/xiaocMemoryEligibility.js"
 import {
   XIAOC_MEMORY_OWNED_LIFECYCLE_POLICY_VERSION,
+  listOwnedMemoryLibrary,
   listOwnedMemories,
   mutateOwnedMemories,
   normalizeOwnedMemoryLimit,
@@ -12,6 +13,17 @@ import {
 } from "../lib/xiaocMemoryOwnedLifecycle.js"
 
 const MEMORY_ID = "10000000-0000-4000-8000-000000000001"
+
+function libraryClient(rows, relations = []) {
+  return { from(table) {
+    const result = table === "memory_items" ? rows : relations
+    const query = {
+      select() { return query }, eq() { return query }, in() { return query },
+      order() { return query }, async limit() { return { data: result, error: null } },
+    }
+    return query
+  } }
+}
 
 test("owned list defaults to active, is bounded, and maps only UI-safe canonical fields", async () => {
   const calls = []
@@ -51,6 +63,29 @@ test("owned list returns a normal empty result", async () => {
     userId: "user",
   })
   assert.deepEqual(rows, [])
+})
+
+test("Memory Library uses retrieval eligibility for native and approved historical rows", async () => {
+  const base = {
+    user_id: "user", canonical_content: "她喜欢在雨天散步", memory_class: "observation",
+    category: "personal_fact", lifecycle_status: "active", claim_key: null,
+    importance: null, confidence: null, event_time: null, valid_from: null,
+    valid_until: null, resolved_at: null, revision: 1,
+    created_at: "2026-09-20T00:00:00Z", updated_at: "2026-09-20T00:00:00Z",
+    archived_at: null, deleted_at: null,
+  }
+  const rows = [
+    { ...base, id: MEMORY_ID, origin_system: "xiaoc_native", provenance_status: "verified_user", retrieval_tier: null, authority_tier: "native_verified" },
+    { ...base, id: "10000000-0000-4000-8000-000000000002", origin_system: "ombre_legacy", provenance_status: "legacy_unverified", retrieval_tier: "low_authority", authority_tier: "legacy_limited" },
+    { ...base, id: "10000000-0000-4000-8000-000000000003", origin_system: "ombre_legacy", provenance_status: "legacy_unverified", retrieval_tier: "shadow_only", authority_tier: "none" },
+    { ...base, id: "10000000-0000-4000-8000-000000000004", origin_system: "ombre_legacy", provenance_status: "legacy_unverified", retrieval_tier: "disabled", authority_tier: "none" },
+  ]
+  const result = await listOwnedMemoryLibrary({
+    client: libraryClient(rows), userId: "user", retrievalTime: "2026-09-21T00:00:00Z",
+  })
+  assert.deepEqual(result.map(item => item.id), [rows[0].id, rows[1].id])
+  assert.ok(result.every(item => item.pinAvailable === false && item.editAvailable === false))
+  assert.ok(result.every(item => !Object.hasOwn(item, "provenance_status")))
 })
 
 test("archived/deleted access must be explicit and invalid status fails closed", async () => {
@@ -130,6 +165,22 @@ test("migration is scoped to native rows, soft lifecycle updates, operations, an
   assert.doesNotMatch(sql, /canonical_content['"]?\s*[,)]\s*v_/i)
 })
 
+test("Memory Library lifecycle migration extends protected delete only to retrieval-eligible historical authority", () => {
+  const sql = fs.readFileSync("supabase_xiaoc_memory_library_lifecycle.sql", "utf8")
+  assert.match(sql, /create or replace function public\.xiaoc_memory_delete_owned\(/)
+  assert.match(sql, /origin_system = 'xiaoc_native'/)
+  assert.match(sql, /origin_system = 'ombre_legacy'/)
+  assert.match(sql, /provenance_status = 'legacy_unverified'/)
+  assert.match(sql, /retrieval_tier in \('active_legacy', 'low_authority'\)/)
+  assert.match(sql, /authority_tier = 'legacy_limited'/)
+  assert.match(sql, /lifecycle_status = 'deleted'/)
+  assert.match(sql, /xiaoc_memory_finish_operation/)
+  assert.match(sql, /revoke all on function[\s\S]*from public, anon, authenticated/)
+  assert.match(sql, /grant execute on function[\s\S]*to service_role/)
+  assert.doesNotMatch(sql, /delete\s+from\s+public\.memory_items/i)
+  assert.doesNotMatch(sql, /shadow_only|retrieval_tier\s+in\s+\([^)]*disabled/i)
+})
+
 test("operation audit snapshots exclude content and list defaults exclude inactive lifecycle", () => {
   const sql = fs.readFileSync("supabase_xiaoc_memory_owned_lifecycle.sql", "utf8")
   const operationSnapshots = [...sql.matchAll(/jsonb_build_object\(([^;]+?)\)/gs)].map(match => match[1]).join("\n")
@@ -174,7 +225,7 @@ test("Memory API keeps Ombre authority unchanged and enables lifecycle only in f
   const api = fs.readFileSync("api/memory.js", "utf8")
   assert.match(api, /if \(ownedMemoryAuthority\) \{[\s\S]*mutateOwnedMemories/)
   assert.match(api, /userId: req\.identity\.legacyUserId/)
-  assert.match(api, /listOwnedMemories/)
+  assert.match(api, /listOwnedMemoryLibrary/)
   assert.match(api, /postXiaoCMemoryAction\("\/xiaoc\/memory\/pin"/)
   assert.match(api, /postXiaoCMemoryAction\("\/xiaoc\/memory\/delete"/)
   assert.doesNotMatch(api, /owned_authoritative/)

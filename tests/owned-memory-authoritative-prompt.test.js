@@ -153,5 +153,5 @@ test("chat wiring keeps both existing modes intact and owned authority non-proac
   assert.doesNotMatch(chat, /ownedMemoryResult[\s\S]{0,200}proactiveAttention/)
   assert.match(memoryApi, /const ownedMemoryAuthority = isOwnedMemoryAuthorityMode\(memoryAuthorityMode\)/)
   assert.match(memoryApi, /if \(ownedMemoryAuthority\) \{[\s\S]*mutateOwnedMemories/)
-  assert.match(memoryApi, /if \(ownedMemoryAuthority\) \{[\s\S]*listOwnedMemories/)
+  assert.match(memoryApi, /if \(ownedMemoryAuthority\) \{[\s\S]*listOwnedMemoryLibrary/)
 })

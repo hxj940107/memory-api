@@ -73,6 +73,8 @@ export default function WeMemoryDetailScreen() {
   const [draftContent, setDraftContent] = useState(initialContent);
   const [pinned, setPinned] = useState(normalizeText(params.pinned) === "1");
   const [saving, setSaving] = useState(false);
+  const pinAvailable = normalizeText(params.pinAvailable) === "1";
+  const editAvailable = normalizeText(params.editAvailable) === "1";
   const date = formatDate(params.lastActiveAt || params.createdAt);
   const chips = [...new Set([...domains, ...tags].filter(Boolean))];
 
@@ -297,28 +299,32 @@ export default function WeMemoryDetailScreen() {
                 >
                   <Text style={styles.actionText}>复制</Text>
                 </Pressable>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    pressed && styles.actionButtonPressed,
-                  ]}
-                  onPress={startEditing}
-                >
-                  <Text style={styles.actionText}>编辑</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.actionButton,
-                    pressed && styles.actionButtonPressed,
-                    saving && styles.actionButtonDisabled,
-                  ]}
-                  onPress={togglePin}
-                  disabled={saving}
-                >
-                  <Text style={styles.actionText}>
-                    {pinned ? "取消钉选" : "钉选"}
-                  </Text>
-                </Pressable>
+                {editAvailable && (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      pressed && styles.actionButtonPressed,
+                    ]}
+                    onPress={startEditing}
+                  >
+                    <Text style={styles.actionText}>编辑</Text>
+                  </Pressable>
+                )}
+                {pinAvailable && (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      pressed && styles.actionButtonPressed,
+                      saving && styles.actionButtonDisabled,
+                    ]}
+                    onPress={togglePin}
+                    disabled={saving}
+                  >
+                    <Text style={styles.actionText}>
+                      {pinned ? "取消钉选" : "钉选"}
+                    </Text>
+                  </Pressable>
+                )}
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionButton,

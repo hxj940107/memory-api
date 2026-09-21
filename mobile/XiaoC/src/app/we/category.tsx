@@ -19,6 +19,8 @@ type WeMemory = {
   domains?: string[];
   importance?: number;
   pinned?: boolean;
+  pinAvailable?: boolean;
+  editAvailable?: boolean;
   createdAt?: string;
   lastActiveAt?: string;
 };
@@ -144,6 +146,8 @@ export default function WeMemoryCategoryScreen() {
                       importance: String(memory.importance ?? ""),
                       createdAt: memory.createdAt || "",
                       lastActiveAt: memory.lastActiveAt || "",
+                      pinAvailable: memory.pinAvailable ? "1" : "0",
+                      editAvailable: memory.editAvailable ? "1" : "0",
                     },
                   })
                 }

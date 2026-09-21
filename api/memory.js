@@ -3,7 +3,7 @@ import fs from "fs"
 import path from "path"
 import { requireRequestIdentity } from '../lib/requestIdentity.js'
 import {
-  listOwnedMemories,
+  listOwnedMemoryLibrary,
   mutateOwnedMemories,
 } from '../lib/xiaocMemoryOwnedLifecycle.js'
 import {
@@ -338,13 +338,24 @@ function normalizeMemoryBucket(bucket) {
     type: bucket.type || "dynamic",
     importance: Number(bucket.importance || 0),
     pinned: Boolean(bucket.pinned),
+    pinAvailable: true,
+    editAvailable: true,
     score: Number(bucket.score || 0),
     createdAt: bucket.createdAt || createdAt,
     lastActiveAt: bucket.lastActiveAt || bucket.last_active || createdAt,
   }
 }
 
-function categorizeMemory(memory) {
+export function categorizeMemory(memory) {
+  const ownedCategory = {
+    personal_fact: "关于你",
+    relationship_memory: "我们之间",
+    relationship_preference: "我们之间",
+    meaningful_experience: "一起经历过",
+    long_term_concern: "关于你",
+  }[String(memory.tags?.[0] || "").trim()]
+  if (ownedCategory) return ownedCategory
+
   const text = `${memory.title} ${memory.content} ${memory.tags.join(" ")} ${memory.domains.join(" ")}`
 
   if (/关系|伴侣|老婆|老公|小C|小c|回应|互动|陪伴|喜欢.*说|称呼/.test(text)) {
@@ -376,7 +387,7 @@ function getWeCategoryMemories(memories, name) {
     .sort((a, b) => b.importance - a.importance || b.score - a.score)
 }
 
-function buildWeMemoryCategoryResponse(memories, category, source = "ombre") {
+export function buildWeMemoryCategoryResponse(memories, category, source = "ombre") {
   const items = getWeCategoryMemories(memories, category)
 
   return {
@@ -387,7 +398,7 @@ function buildWeMemoryCategoryResponse(memories, category, source = "ombre") {
   }
 }
 
-function buildWeMemoryResponse(memories, source = "ombre") {
+export function buildWeMemoryResponse(memories, source = "ombre") {
   const now = Date.now()
   const recentSince = now - 7 * 24 * 60 * 60 * 1000
   const recentCount = memories.filter((memory) => {
@@ -420,6 +431,8 @@ function buildWeMemoryResponse(memories, source = "ombre") {
 
   return {
     source,
+    pinAvailable: source === "ombre" || source.startsWith("ombre-"),
+    editAvailable: source === "ombre" || source.startsWith("ombre-"),
     total: memories.length,
     pinnedTotal: pinned.length,
     recentCount,
@@ -5541,6 +5554,15 @@ export default async function handler(req, res) {
         }
         if (["archive", "delete", "clear"].includes(action)) {
           try {
+            if (action === "delete") {
+              const visibleMemories = await listOwnedMemoryLibrary({
+                client: supabase,
+                userId: req.identity.legacyUserId,
+              })
+              if (!visibleMemories.some((memory) => memory.id === bucket_id)) {
+                return res.status(404).json({ error: "OWNED_MEMORY_NOT_FOUND", code: "OWNED_MEMORY_NOT_FOUND" })
+              }
+            }
             const result = await mutateOwnedMemories({
               client: supabase,
               userId: req.identity.legacyUserId,
@@ -5618,11 +5640,9 @@ export default async function handler(req, res) {
 
       if (ownedMemoryAuthority) {
         try {
-          const memories = await listOwnedMemories({
+          const memories = await listOwnedMemoryLibrary({
             client: supabase,
             userId: req.identity.legacyUserId,
-            lifecycleStatus: req.query.lifecycle_status,
-            limit: req.query.limit,
           })
           return res.status(200).json(
             category
@@ -5676,6 +5696,8 @@ export default async function handler(req, res) {
             type: "pinned",
             importance: 10,
             pinned: true,
+            pinAvailable: true,
+            editAvailable: true,
             score: 10,
             createdAt: "",
             lastActiveAt: "",
@@ -5692,6 +5714,8 @@ export default async function handler(req, res) {
             type: item.metadata?.type || "stable",
             importance: Number(item.metadata?.importance || 5),
             pinned: Boolean(item.metadata?.pinned),
+            pinAvailable: true,
+            editAvailable: true,
             score: Number(item.metadata?.score || 0),
             createdAt: item.created_at,
             lastActiveAt: item.created_at,
