@@ -347,6 +347,11 @@ function normalizeMemoryBucket(bucket) {
 }
 
 export function categorizeMemory(memory) {
+  const displayCategory = String(memory.category || "").trim()
+  if (["关于你", "我们之间", "一起经历过", "小小偏好"].includes(displayCategory)) {
+    return displayCategory
+  }
+
   const ownedCategory = {
     personal_fact: "关于你",
     relationship_memory: "我们之间",

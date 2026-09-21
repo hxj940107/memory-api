@@ -51,6 +51,9 @@ test("owned list defaults to active, is bounded, and maps only UI-safe canonical
   }])
   assert.equal(rows.length, 1)
   assert.equal(rows[0].content, "她喜欢在雨天散步")
+  assert.equal(rows[0].title, "关于你的这一点")
+  assert.equal(rows[0].category, "关于你")
+  assert.deepEqual(rows[0].tags, [])
   assert.equal(rows[0].lifecycleStatus, "active")
   assert.equal(rows[0].revision, 1)
   assert.equal(Object.hasOwn(rows[0], "metadata"), false)
@@ -86,6 +89,26 @@ test("Memory Library uses retrieval eligibility for native and approved historic
   assert.deepEqual(result.map(item => item.id), [rows[0].id, rows[1].id])
   assert.ok(result.every(item => item.pinAvailable === false && item.editAvailable === false))
   assert.ok(result.every(item => !Object.hasOwn(item, "provenance_status")))
+})
+
+test("Memory Library hides legacy labels, maps historical content, and does not repeat body as title", async () => {
+  const row = {
+    id: MEMORY_ID, user_id: "user", canonical_content: "我们第一次一起去海边，是很重要的共同经历。",
+    origin_system: "ombre_legacy", memory_class: "observation", category: "legacy_沉淀物",
+    provenance_status: "legacy_unverified", lifecycle_status: "active", retrieval_tier: "low_authority",
+    authority_tier: "legacy_limited", claim_key: null, importance: null, confidence: null,
+    event_time: null, valid_from: null, valid_until: null, resolved_at: null, revision: 1,
+    created_at: "2026-09-09T00:00:00Z", updated_at: "2026-09-09T00:00:00Z",
+    archived_at: null, deleted_at: null,
+  }
+  const [memory] = await listOwnedMemoryLibrary({
+    client: libraryClient([row]), userId: "user", retrievalTime: "2026-09-21T00:00:00Z",
+  })
+  assert.equal(memory.category, "一起经历过")
+  assert.equal(memory.title, "一起经历过的事")
+  assert.notEqual(memory.title, memory.content.slice(0, 28))
+  assert.deepEqual(memory.tags, [])
+  assert.doesNotMatch(JSON.stringify(memory), /legacy_/)
 })
 
 test("archived/deleted access must be explicit and invalid status fails closed", async () => {
