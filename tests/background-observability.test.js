@@ -110,6 +110,10 @@ const partial = buildWorkerRunAudit({ userId: "user", ...times, result: { proact
 assert.equal(partial.result, "PARTIAL_FAILURE")
 assert.equal(buildWorkerRunAudit({ userId: "user", ...times, error: new Error("private") }).result, "FAILED")
 assert.doesNotMatch(JSON.stringify(buildWorkerRunAudit({ userId: "user", ...times, error: new Error("private body") })), /private body/)
+const autonomousError = new Error("private model output")
+autonomousError.observabilityCode = "AUTONOMOUS_MOMENT_PARSE_SYNTAXERROR"
+assert.equal(buildWorkerRunAudit({ userId: "user", ...times, error: autonomousError }).error_code, "AUTONOMOUS_MOMENT_PARSE_SYNTAXERROR")
+assert.doesNotMatch(JSON.stringify(buildWorkerRunAudit({ userId: "user", ...times, error: autonomousError })), /private model output/)
 assert.equal(shouldRunObservabilityCleanup(new Date("2026-09-10T10:02:00Z")), true)
 assert.equal(shouldRunObservabilityCleanup(new Date("2026-09-10T10:05:00Z")), false)
 

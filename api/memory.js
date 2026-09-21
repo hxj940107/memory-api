@@ -4311,8 +4311,36 @@ async function updateAutonomousMomentState(userId, state, {
     })
     .eq("user_id", userId)
 
-  if (error) throw error
+  if (error) throw markAutonomousMomentError(error, "state_update")
   return nextConsiderAt
+}
+
+const AUTONOMOUS_MOMENT_STAGES = new Set([
+  "state_load",
+  "context_load",
+  "material_prepare",
+  "model_call",
+  "parse",
+  "candidate_insert",
+  "state_update",
+])
+
+function safeAutonomousMomentErrorType(error) {
+  const value = String(error?.code || error?.name || "UNKNOWN_ERROR")
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .slice(0, 32)
+  return value || "UNKNOWN_ERROR"
+}
+
+function markAutonomousMomentError(error, stage) {
+  const safeStage = AUTONOMOUS_MOMENT_STAGES.has(stage) ? stage : "unknown"
+  const safeType = safeAutonomousMomentErrorType(error)
+  const marked = error instanceof Error ? error : new Error("autonomous moment failed")
+  marked.observabilityStage = safeStage
+  marked.observabilityErrorType = safeType
+  marked.observabilityCode = `AUTONOMOUS_MOMENT_${safeStage.toUpperCase()}_${safeType}`.slice(0, 80)
+  return marked
 }
 
 async function insertAutonomousMomentCandidate({ userId, candidate, material, imageMaterial, now }) {
@@ -4380,7 +4408,7 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
   if (stateError?.code === "42P01") {
     return { checked: 0, model_calls: 0, tableMissing: true }
   }
-  if (stateError) throw stateError
+  if (stateError) throw markAutonomousMomentError(stateError, "state_load")
 
   if (!state) {
     const { error: insertError } = await supabase
@@ -4389,7 +4417,9 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
         user_id: userId,
         next_consider_at: getNextAutonomousMomentTime({ now, initial: true }),
       })
-    if (insertError && insertError.code !== "23505") throw insertError
+    if (insertError && insertError.code !== "23505") {
+      throw markAutonomousMomentError(insertError, "state_update")
+    }
     return { checked: 0, model_calls: 0, initialized: true }
   }
 
@@ -4403,7 +4433,7 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       .from("moment_autonomous_state")
       .update({ next_consider_at: nextConsiderAt, updated_at: now.toISOString() })
       .eq("user_id", userId)
-    if (error) throw error
+    if (error) throw markAutonomousMomentError(error, "state_update")
     return { checked: 0, model_calls: 0, reason: "quiet_hours" }
   }
 
@@ -4452,9 +4482,11 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
   ])
 
   for (const result of [recentResult, dailyResult, pendingResult, messageResult]) {
-    if (result.error) throw result.error
+    if (result.error) throw markAutonomousMomentError(result.error, "context_load")
   }
-  if (albumResult.error?.code !== "42P01" && albumResult.error) throw albumResult.error
+  if (albumResult.error?.code !== "42P01" && albumResult.error) {
+    throw markAutonomousMomentError(albumResult.error, "context_load")
+  }
 
   const recentMoments = recentResult.data || []
   const lastPublishedAt = recentMoments[0]?.created_at || null
@@ -4465,7 +4497,7 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       last_outcome: "daily_cap",
       updated_at: now.toISOString(),
     }).eq("user_id", userId)
-    if (error) throw error
+    if (error) throw markAutonomousMomentError(error, "state_update")
     return { checked: 0, model_calls: 0, reason: "daily_cap" }
   }
   if ((pendingResult.count || 0) >= CONTEXT_BUDGET.momentCandidateMaxPending) {
@@ -4475,28 +4507,33 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       last_outcome: "pending_pool_full",
       updated_at: now.toISOString(),
     }).eq("user_id", userId)
-    if (error) throw error
+    if (error) throw markAutonomousMomentError(error, "state_update")
     return { checked: 0, model_calls: 0, reason: "pending_pool_full" }
   }
 
-  const materials = assignMomentMaterialAliases([
-    ...selectRetainedMomentMaterials(messageResult.data || [], { now, maxMaterials: 8 }),
-    ...buildAlbumMomentMaterials(albumResult.data || [], { maxMaterials: 6 }),
-  ])
-  const prompt = buildAutonomousMomentPrompt({
-    environment: formatAutonomousMomentEnvironment(now),
-    recentMoments: formatRecentAutonomousMomentThemes(recentMoments),
-    materials: formatMomentMaterialsForPrompt(materials),
-  })
-
-  let candidate
+  let materials
+  let prompt
   try {
-    const raw = await callSmallLLM(prompt, {
+    materials = assignMomentMaterialAliases([
+      ...selectRetainedMomentMaterials(messageResult.data || [], { now, maxMaterials: 8 }),
+      ...buildAlbumMomentMaterials(albumResult.data || [], { maxMaterials: 6 }),
+    ])
+    prompt = buildAutonomousMomentPrompt({
+      environment: formatAutonomousMomentEnvironment(now),
+      recentMoments: formatRecentAutonomousMomentThemes(recentMoments),
+      materials: formatMomentMaterialsForPrompt(materials),
+    })
+  } catch (error) {
+    throw markAutonomousMomentError(error, "material_prepare")
+  }
+
+  let raw
+  try {
+    raw = await callSmallLLM(prompt, {
       requestPurpose: "moment_autonomous_candidate",
       max_tokens: 420,
       temperature: 0.35,
     })
-    candidate = parseMomentCandidate(raw)
   } catch (error) {
     await updateAutonomousMomentState(userId, state, {
       now,
@@ -4504,7 +4541,14 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       outcome: "failed",
       declined: false,
     })
-    throw error
+    throw markAutonomousMomentError(error, "model_call")
+  }
+
+  let candidate
+  try {
+    candidate = parseMomentCandidate(raw)
+  } catch (error) {
+    throw markAutonomousMomentError(error, "parse")
   }
 
   const admission = getMomentCandidateAdmission(candidate)
@@ -4586,13 +4630,18 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
     return { checked: 1, model_calls: 1, candidate_created: false, reason: "invalid_or_duplicate" }
   }
 
-  const saveResult = await insertAutonomousMomentCandidate({
-    userId,
-    candidate,
-    material,
-    imageMaterial: candidate.image ? imageMaterial : null,
-    now,
-  })
+  let saveResult
+  try {
+    saveResult = await insertAutonomousMomentCandidate({
+      userId,
+      candidate,
+      material,
+      imageMaterial: candidate.image ? imageMaterial : null,
+      now,
+    })
+  } catch (error) {
+    throw markAutonomousMomentError(error, "candidate_insert")
+  }
   await updateAutonomousMomentState(userId, state, {
     now,
     lastPublishedAt,
@@ -5449,6 +5498,13 @@ export default async function handler(req, res) {
           error: workerError,
         })
       )
+      if (workerError?.observabilityCode?.startsWith("AUTONOMOUS_MOMENT_")) {
+        console.error("AUTONOMOUS MOMENT FAILED:", {
+          stage: workerError.observabilityStage || "unknown",
+          error_code: workerError.observabilityCode,
+          error_type: workerError.observabilityErrorType || "UNKNOWN_ERROR",
+        })
+      }
       if (shouldRunObservabilityCleanup(new Date(finishedAt))) {
         await bestEffortCleanupObservability(supabase)
       }

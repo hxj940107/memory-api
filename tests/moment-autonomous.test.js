@@ -55,6 +55,15 @@ test("worker wiring keeps ordinary ticks and publishing deterministic", () => {
   assert.match(autonomous, /reason: "not_due"/)
   assert.match(autonomous, /model_calls: 0/)
   assert.match(handler, /checkAutonomousMomentConsideration\(\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(error, "model_call"\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(error, "parse"\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(error, "candidate_insert"\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(stateError, "state_load"\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(result\.error, "context_load"\)/)
+  assert.match(autonomous, /markAutonomousMomentError\(error, "material_prepare"\)/)
+  assert.match(source, /markAutonomousMomentError\(error, "state_update"\)/)
+  assert.match(handler, /AUTONOMOUS MOMENT FAILED:/)
+  assert.doesNotMatch(handler, /workerError\.message|workerError\.stack/)
 })
 
 test("schema records autonomous schedule and candidate provenance without a new API function", () => {
