@@ -6,7 +6,17 @@ import {
   AUTONOMOUS_MOMENT_POLICY,
   buildAutonomousMomentPrompt,
   getNextAutonomousMomentTime,
+  normalizeAutonomousMomentTimestamp,
 } from "../lib/momentAutonomous.js"
+
+test("Supabase ISO timestamps are normalized before Intl formatting and invalid rows fail safe", () => {
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai" })
+  const normalized = normalizeAutonomousMomentTimestamp("2026-09-21T12:25:00.255+00:00")
+
+  assert.ok(normalized instanceof Date)
+  assert.doesNotThrow(() => formatter.formatToParts(normalized))
+  assert.equal(normalizeAutonomousMomentTimestamp("not-a-timestamp"), null)
+})
 
 test("autonomous cadence is low-frequency and gives longer silence more opportunities", () => {
   const now = new Date("2026-09-20T08:00:00.000Z")
@@ -54,6 +64,8 @@ test("worker wiring keeps ordinary ticks and publishing deterministic", () => {
   assert.equal((publish.match(/callSmallLLM\(/g) || []).length, 0)
   assert.match(autonomous, /reason: "not_due"/)
   assert.match(autonomous, /model_calls: 0/)
+  assert.match(source, /normalizeAutonomousMomentTimestamp\(item\.created_at\)/)
+  assert.match(source, /if \(!occurredAt\) return \[\]/)
   assert.match(handler, /checkAutonomousMomentConsideration\(\)/)
   assert.match(autonomous, /markAutonomousMomentError\(error, "model_call"\)/)
   assert.match(autonomous, /markAutonomousMomentError\(error, "parse"\)/)

@@ -64,6 +64,7 @@ import {
 import {
   buildAutonomousMomentPrompt,
   getNextAutonomousMomentTime,
+  normalizeAutonomousMomentTimestamp,
 } from "../lib/momentAutonomous.js"
 import { normalizeTreeholeReaction } from "../lib/treeholeReaction.js"
 import { validateTreeholeSourceEvidence } from "../lib/treeholeProvenance.js"
@@ -4267,10 +4268,13 @@ function formatAutonomousMomentEnvironment(now = new Date()) {
 
 function formatRecentAutonomousMomentThemes(moments = []) {
   if (!moments.length) return "暂无"
-  return moments.map(item => {
-    const local = getMomentLocalTime(item.created_at)
+  const themes = moments.flatMap(item => {
+    const occurredAt = normalizeAutonomousMomentTimestamp(item.created_at)
+    if (!occurredAt) return []
+    const local = getMomentLocalTime(occurredAt)
     return `- ${local.date}：${trimText(item.text, 100)}`
-  }).join("\n")
+  })
+  return themes.length ? themes.join("\n") : "暂无"
 }
 
 function getAutonomousMomentPublishAfter(now = new Date()) {
