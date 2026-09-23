@@ -182,11 +182,15 @@ test("maintenance backfill is count-confirmed, bounded, idempotent and verifies 
   assert.equal(retry.remaining, 0)
 })
 
-test("Memory API maintenance action stays behind trusted owner identity and exposes no content", () => {
+test("Memory API maintenance action uses isolated secret auth and fixed server owner", () => {
   const source = readFileSync(new URL("../api/memory.js", import.meta.url), "utf8")
-  assert.ok(source.indexOf("requireRequestIdentity(req, res)") < source.indexOf('type === "memory_embedding_maintenance"'))
-  assert.match(source, /req\.identity\.actorType !== "authenticated_user"/)
-  assert.match(source, /userId: req\.identity\.legacyUserId/)
+  assert.ok(source.indexOf('requestType === "memory_embedding_maintenance"') < source.indexOf("requireRequestIdentity(req, res)"))
+  assert.match(source, /requireXiaoCMaintenanceSecret\(req, process\.env\)/)
+  assert.match(source, /configuredPrivateAuthUserUuid\(process\.env\)/)
+  assert.match(source, /userId: APP_USER\.defaultUserId/)
+  assert.doesNotMatch(source, /memory_embedding_maintenance[\s\S]{0,800}req\.identity/)
+  assert.match(source, /XIAOC_MEMORY_EMBEDDING_MAINTENANCE_SCOPES\.includes\(scope\)/)
+  assert.match(source, /\.\.\.result\.scopes\[scope\]/)
   assert.match(source, /inventoryMemoryEmbeddings/)
   assert.match(source, /backfillMemoryEmbeddingsBatch/)
 })

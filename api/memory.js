@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import fs from "fs"
 import path from "path"
-import { requireRequestIdentity } from '../lib/requestIdentity.js'
+import { configuredPrivateAuthUserUuid, requireRequestIdentity } from '../lib/requestIdentity.js'
 import {
   listOwnedMemoryLibrary,
   mutateOwnedMemories,
@@ -26,7 +26,9 @@ import {
   createXiaoCMemoryEmbeddingProvider,
   inventoryMemoryEmbeddings,
   reconcileMissingNativeEmbeddings,
+  XIAOC_MEMORY_EMBEDDING_MAINTENANCE_SCOPES,
 } from "../lib/xiaocMemoryEmbedding.js"
+import { rejectMaintenanceOwnerOverride, requireXiaoCMaintenanceSecret } from "../lib/xiaocMaintenanceAuth.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getDiaryDateContextWindow } from "../lib/diaryContextWindow.js"
 import {
@@ -5327,7 +5329,46 @@ async function handleSharedContextRequest(req, res, userId) {
   return res.status(405).json({ error: "Unsupported action" })
 }
 
+async function handleMemoryEmbeddingMaintenance(req, res) {
+  try {
+    requireXiaoCMaintenanceSecret(req, process.env)
+    rejectMaintenanceOwnerOverride(req)
+    configuredPrivateAuthUserUuid(process.env)
+    const provider = createXiaoCMemoryEmbeddingProvider({ env: process.env })
+    if (req.method === "GET" && String(req.query.action || "inventory") === "inventory") {
+      const scope = String(req.query.scope || "")
+      if (!XIAOC_MEMORY_EMBEDDING_MAINTENANCE_SCOPES.includes(scope)) {
+        const error = new Error("EMBEDDING_SCOPE_NOT_ALLOWED")
+        error.code = "EMBEDDING_SCOPE_NOT_ALLOWED"
+        throw error
+      }
+      const result = await inventoryMemoryEmbeddings({ client: supabase, provider, userId: APP_USER.defaultUserId })
+      return res.status(200).json({ action: "inventory", scope, ...result.scopes[scope] })
+    }
+    if (req.method === "POST" && req.body.action === "backfill") {
+      const result = await backfillMemoryEmbeddingsBatch({
+        client: supabase,
+        provider,
+        userId: APP_USER.defaultUserId,
+        scope: String(req.body.scope || ""),
+        confirmCount: Number(req.body.confirm_count),
+        limit: req.body.limit,
+      })
+      return res.status(200).json({ action: "backfill", ...result })
+    }
+    return res.status(405).json({ error: "Unsupported maintenance action" })
+  } catch (error) {
+    const code = String(error?.code || error?.message || "EMBEDDING_MAINTENANCE_FAILED").split(":")[0].slice(0, 80)
+    const status = Number(error?.status) || (code === "EMBEDDING_SCOPE_COUNT_MISMATCH" ? 409 : 400)
+    return res.status(status).json({ error: code, code })
+  }
+}
+
 export default async function handler(req, res) {
+  const requestType = req.method === "GET" ? req.query.type : req.body.type
+  if (requestType === "memory_embedding_maintenance") {
+    return handleMemoryEmbeddingMaintenance(req, res)
+  }
   if (!await requireRequestIdentity(req, res)) return
   try {
     const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
@@ -5342,35 +5383,6 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
-
-    if (type === "memory_embedding_maintenance") {
-      if (req.identity.actorType !== "authenticated_user" || !req.identity.legacyUserId) {
-        return res.status(403).json({ error: "maintenance_owner_required", code: "maintenance_owner_required" })
-      }
-      const provider = createXiaoCMemoryEmbeddingProvider({ env: process.env })
-      if (req.method === "GET" && String(req.query.action || "inventory") === "inventory") {
-        const result = await inventoryMemoryEmbeddings({ client: supabase, provider, userId: req.identity.legacyUserId })
-        return res.status(200).json({ action: "inventory", ...result })
-      }
-      if (req.method === "POST" && req.body.action === "backfill") {
-        try {
-          const result = await backfillMemoryEmbeddingsBatch({
-            client: supabase,
-            provider,
-            userId: req.identity.legacyUserId,
-            scope: String(req.body.scope || ""),
-            confirmCount: Number(req.body.confirm_count),
-            limit: req.body.limit,
-          })
-          return res.status(200).json({ action: "backfill", ...result })
-        } catch (error) {
-          const code = String(error?.code || error?.message || "EMBEDDING_BACKFILL_FAILED").split(":")[0].slice(0, 80)
-          const status = code === "EMBEDDING_SCOPE_COUNT_MISMATCH" ? 409 : 400
-          return res.status(status).json({ error: code, code })
-        }
-      }
-      return res.status(405).json({ error: "Unsupported maintenance action" })
-    }
 
     if (type === "shared_context") {
       return handleSharedContextRequest(req, res, user_id)
