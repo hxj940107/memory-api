@@ -118,15 +118,13 @@ async function runCase(definition, options = {}) {
   })
 }
 
-test("ungrounded semantic-only similarity is rejected before ranking", async () => {
+test("eligible semantic-only candidates enter ranking without lexical grounding or recall anchors", async () => {
   const result = await runCase(fixtureCase())
-  assert.equal(result.results.length, 0)
-  const rejection = result.trace.compatibility_rejections[0]
-  assert.equal(rejection.reason_codes[0], "SEMANTIC_ONLY_UNGROUNDED")
-  assert.equal(rejection.signal_mode, "semantic_only")
-  assert.equal(rejection.lexical_score, null)
-  assert.equal(rejection.semantic_score, 1)
-  assert.equal(rejection.semantic_grounded_floor, XIAOC_MEMORY_RETRIEVAL_POLICY.semanticAdmission.groundedMinimum)
+  assert.deepEqual(result.results.map(item => item.memory_id), ["candidate"])
+  assert.equal(result.trace.compatibility_rejections.length, 0)
+  assert.equal(result.trace.ranking_decisions[0].component_scores.lexical, 0)
+  assert.equal(result.trace.ranking_decisions[0].component_scores.semantic, 1)
+  assert.equal(result.trace.ranking_decisions[0].threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.semantic_only)
 })
 
 test("strong grounded semantic-only evidence remains available", async () => {
@@ -140,14 +138,42 @@ test("explicit trusted historical recall can ground a strong semantic-only match
   assert.deepEqual(result.results.map((item) => item.memory_id), ["candidate"])
 })
 
-test("strong lexical evidence rejects a competing semantic-only distractor", async () => {
+test("semantic-only candidates are not vetoed before ranking by a strong lexical competitor", async () => {
   const definition = fixtureCase({
     query: "小满", memories: [{ id: "exact", content: "她喜欢被叫小满" }, { id: "wrong", content: "无关物品" }],
     semantic_vectors: { exact: [0.7, 0.71414284], wrong: [1, 0] },
   })
   const result = await runCase(definition)
-  assert.deepEqual(result.results.map((item) => item.memory_id), ["exact"])
-  assert.ok(result.trace.compatibility_rejections.find((item) => item.memory_id === "wrong").reason_codes.includes("SEMANTIC_CONFLICTS_WITH_STRONG_LEXICAL_EVIDENCE"))
+  assert.equal(result.trace.compatibility_rejections.length, 0)
+  assert.ok(result.trace.ranking_decisions.some(item => item.memory_id === "exact"))
+  assert.ok(result.trace.ranking_decisions.some(item => item.memory_id === "wrong"))
+})
+
+test("semantic-only relevance uses the existing 0.58 threshold for high and weak evidence", async () => {
+  const definition = fixtureCase({
+    memories: [{ id: "high", content: "第一段无字面重合内容" }, { id: "weak", content: "第二段无字面重合内容" }],
+    semantic_vectors: { high: [0.7, 0.71414284], weak: [0.5, 0.8660254] },
+  })
+  const result = await runCase(definition)
+  assert.deepEqual(result.results.map(item => item.memory_id), ["high"])
+  assert.equal(result.trace.ranked_count, 2)
+  assert.equal(result.trace.threshold_rejected_count, 1)
+  assert.equal(result.trace.compatibility_rejections.length, 0)
+  const weak = result.trace.ranking_decisions.find(item => item.memory_id === "weak")
+  assert.equal(weak.threshold, 0.58)
+  assert.equal(weak.passes_threshold, false)
+})
+
+test("real recall phrasings remain fixtures without production keyword or perspective rules", async () => {
+  for (const [definition, options] of [
+    [fixtureCase({ query: "我叫什么？", memories: [{ id: "name", content: "她被家人用一个特别称呼叫着" }], semantic_vectors: { name: [0.7, 0.71414284] } }), {}],
+    [fixtureCase({ query: "还记得榴莲吗？", memories: [{ id: "pet", content: "她养着一只对她很重要的小狗" }], semantic_vectors: { pet: [0.7, 0.71414284] } }), { retrievalContext: { grounding: { strength: "STRONG", anchors: ["旧事"] } } }],
+  ]) {
+    const result = await runCase(definition, options)
+    assert.equal(result.results.length, 1)
+    assert.equal(result.trace.ranking_decisions[0].component_scores.lexical, 0)
+    assert.equal(result.trace.ranking_decisions[0].threshold, 0.58)
+  }
 })
 
 test("semantic admission never bypasses deterministic eligibility", async () => {

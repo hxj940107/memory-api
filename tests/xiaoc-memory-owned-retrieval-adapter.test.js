@@ -106,7 +106,7 @@ test("canonical content stays internal and never enters Shadow telemetry or diag
   assert.doesNotMatch(JSON.stringify(result.diagnostics), new RegExp(secret))
 })
 
-test("semantic admission rejection telemetry exposes only privacy-safe scores and floor", async () => {
+test("eligible semantic-only candidates reach ranking without compatibility rejections", async () => {
   const privateContent = "她有一个需要长期记住的私人事实"
   const row = memory("semantic-private", privateContent)
   const repo = {
@@ -138,15 +138,11 @@ test("semantic admission rejection telemetry exposes only privacy-safe scores an
     context: {},
     maxChars: 1000,
   })
-  assert.deepEqual(result.telemetry.trace.admission_rejected, [{
-    memory_id: "semantic-private",
-    stage: "semantic_admission_rejected",
-    signal_mode: "semantic_only",
-    lexical_score: null,
-    semantic_score: 0.71,
-    semantic_grounded_floor: 0.82,
-    reason_codes: ["SEMANTIC_ONLY_UNGROUNDED", "SEMANTIC_ONLY_BELOW_GROUNDED_FLOOR"],
-  }])
+  assert.deepEqual(result.telemetry.trace.admission_rejected, [])
+  assert.equal(result.telemetry.trace.candidates[0].memory_id, "semantic-private")
+  assert.equal(result.telemetry.trace.candidates[0].lexical_score, 0)
+  assert.equal(result.telemetry.trace.candidates[0].semantic_score, 0.71)
+  assert.equal(result.telemetry.trace.candidates[0].threshold, 0.58)
   assert.doesNotMatch(JSON.stringify(result.telemetry), new RegExp(privateContent))
 })
 

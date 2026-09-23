@@ -13,6 +13,9 @@ node_modules/
 
 # Local generated artifacts
 tmp/
+historical-memory-manual-edit.txt
+historical-memory-category-review.txt
+historical-memory-importance-review.txt
 
 # Archives
 *.zip
