@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
+  backfillMemoryEmbeddingsBatch,
   cosineSimilarity,
   createOpenAICompatibleEmbeddingProvider,
   embeddingStaleness,
   hashEmbeddingInput,
+  inventoryMemoryEmbeddings,
   reconcileMissingNativeEmbeddings,
   validateEmbeddingVector,
   XiaoCMemoryEmbeddingRepository,
@@ -95,4 +97,96 @@ test("bounded reconciliation repairs an eligible native memory missing an embedd
   }
   const result = await reconcileMissingNativeEmbeddings({ client, provider: { ...identity, embed: async () => [[1,0,0]] }, limit: 1, logger: { log(){}, warn(){} } })
   assert.equal(result.repaired, 1)
+})
+
+function maintenanceClient({ memories, embeddings = [] }) {
+  const calls = []
+  const match = (row, filters) => filters.every(([kind, column, value]) => {
+    if (kind === "eq") return row[column] === value
+    if (kind === "in") return value.includes(row[column])
+    if (kind === "is") return row[column] === value
+    return true
+  })
+  return {
+    calls,
+    from(table) {
+      const rows = table === "memory_items" ? memories : embeddings
+      const filters = []
+      let rowLimit = null
+      const result = () => ({
+        data: rows.filter(row => match(row, filters)).slice(0, rowLimit ?? rows.length),
+        error: null,
+      })
+      const query = {
+        select() { return query },
+        eq(column, value) { filters.push(["eq", column, value]); return query },
+        in(column, value) { filters.push(["in", column, value]); return query },
+        is(column, value) { filters.push(["is", column, value]); return query },
+        order() { return query },
+        limit(value) { rowLimit = value; return query },
+        maybeSingle() { return Promise.resolve({ data: rows.find(row => match(row, filters)) || null, error: null }) },
+        then(resolve, reject) { return Promise.resolve(result()).then(resolve, reject) },
+      }
+      return query
+    },
+    async rpc(name, params) {
+      calls.push({ name, params })
+      if (name === "xiaoc_memory_register_embedding") {
+        const id = `embedding-${embeddings.length + 1}`
+        embeddings.push({
+          id, user_id: params.p_user_id, memory_id: params.p_memory_id,
+          provider: params.p_provider, model: params.p_model,
+          embedding_version: params.p_embedding_version, preprocessor_version: params.p_preprocessor_version,
+          dimensions: identity.dimension, content_hash: params.p_content_hash, rollout_status: "shadow",
+        })
+        return { data: id, error: null }
+      }
+      if (name === "xiaoc_memory_activate_embedding") {
+        const row = embeddings.find(item => item.id === params.p_embedding_id)
+        if (row) row.rollout_status = "active"
+        return { data: "operation", error: null }
+      }
+      return { data: null, error: null }
+    },
+  }
+}
+
+test("maintenance inventory returns only scoped counts and compatible active counts", async () => {
+  const nativeContent = "她喜欢雨天"
+  const legacyContent = "我们一起看过海"
+  const memories = [
+    { id: "native-1", user_id: "user", canonical_content: nativeContent, content_hash: hashEmbeddingInput(nativeContent), origin_system: "xiaoc_native", provenance_status: "verified_user", lifecycle_status: "active", retrieval_tier: null, authority_tier: "native_verified" },
+    { id: "legacy-1", user_id: "user", canonical_content: legacyContent, content_hash: hashEmbeddingInput(legacyContent), origin_system: "ombre_legacy", provenance_status: "legacy_unverified", lifecycle_status: "active", retrieval_tier: "low_authority", authority_tier: "legacy_limited" },
+    { id: "shadow-1", user_id: "user", canonical_content: "不可用", content_hash: "x", origin_system: "ombre_legacy", provenance_status: "legacy_unverified", lifecycle_status: "active", retrieval_tier: "shadow_only", authority_tier: "none" },
+  ]
+  const embeddings = [{ memory_id: "legacy-1", user_id: "user", provider: identity.providerId, model: identity.modelId, embedding_version: identity.version, preprocessor_version: identity.preprocessorVersion, dimensions: identity.dimension, content_hash: hashEmbeddingInput(legacyContent), rollout_status: "active" }]
+  const result = await inventoryMemoryEmbeddings({ client: maintenanceClient({ memories, embeddings }), provider: identity })
+  assert.deepEqual(result.scopes.low_authority, { eligible_count: 1, compatible_active_embedding_count: 1 })
+  assert.deepEqual(result.scopes.native_verified, { eligible_count: 1, compatible_active_embedding_count: 0 })
+  assert.doesNotMatch(JSON.stringify(result), /她喜欢|一起看过|embedding":\[/)
+})
+
+test("maintenance backfill is count-confirmed, bounded, idempotent and verifies shadow then active", async () => {
+  const content = "她喜欢安静的雨天"
+  const memories = [{ id: "native-1", user_id: "user", canonical_content: content, content_hash: hashEmbeddingInput(content), origin_system: "xiaoc_native", provenance_status: "verified_user", lifecycle_status: "active", retrieval_tier: null, authority_tier: "native_verified" }]
+  const embeddings = []
+  const client = maintenanceClient({ memories, embeddings })
+  await assert.rejects(backfillMemoryEmbeddingsBatch({ client, provider: { ...identity, maxBatchSize: 2, embed: async () => [[1, 0, 0]] }, scope: "native_verified", confirmCount: 2 }), { code: "EMBEDDING_SCOPE_COUNT_MISMATCH" })
+  assert.equal(client.calls.length, 0)
+  const first = await backfillMemoryEmbeddingsBatch({ client, provider: { ...identity, maxBatchSize: 2, embed: async () => [[1, 0, 0]] }, scope: "native_verified", confirmCount: 1, limit: 1 })
+  assert.deepEqual({ processed: first.processed, shadow: first.shadow, active: first.active, failed: first.failed, remaining: first.remaining }, { processed: 1, shadow: 1, active: 1, failed: 0, remaining: 0 })
+  assert.deepEqual(client.calls.map(call => call.name), ["xiaoc_memory_register_embedding", "xiaoc_memory_activate_embedding"])
+  const retry = await backfillMemoryEmbeddingsBatch({ client, provider: { ...identity, maxBatchSize: 2, embed: async () => assert.fail("already active must not regenerate") }, scope: "native_verified", confirmCount: 1, limit: 1 })
+  assert.equal(retry.processed, 0)
+  assert.equal(retry.active, 0)
+  assert.equal(retry.remaining, 0)
+})
+
+test("Memory API maintenance action stays behind trusted owner identity and exposes no content", () => {
+  const source = readFileSync(new URL("../api/memory.js", import.meta.url), "utf8")
+  assert.ok(source.indexOf("requireRequestIdentity(req, res)") < source.indexOf('type === "memory_embedding_maintenance"'))
+  assert.match(source, /req\.identity\.actorType !== "authenticated_user"/)
+  assert.match(source, /userId: req\.identity\.legacyUserId/)
+  assert.match(source, /inventoryMemoryEmbeddings/)
+  assert.match(source, /backfillMemoryEmbeddingsBatch/)
 })

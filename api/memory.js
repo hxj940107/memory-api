@@ -21,7 +21,12 @@ import {
   normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
-import { createXiaoCMemoryEmbeddingProvider, reconcileMissingNativeEmbeddings } from "../lib/xiaocMemoryEmbedding.js"
+import {
+  backfillMemoryEmbeddingsBatch,
+  createXiaoCMemoryEmbeddingProvider,
+  inventoryMemoryEmbeddings,
+  reconcileMissingNativeEmbeddings,
+} from "../lib/xiaocMemoryEmbedding.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getDiaryDateContextWindow } from "../lib/diaryContextWindow.js"
 import {
@@ -5337,6 +5342,35 @@ export default async function handler(req, res) {
       req.method === "GET"
         ? req.query.type
         : req.body.type
+
+    if (type === "memory_embedding_maintenance") {
+      if (req.identity.actorType !== "authenticated_user" || !req.identity.legacyUserId) {
+        return res.status(403).json({ error: "maintenance_owner_required", code: "maintenance_owner_required" })
+      }
+      const provider = createXiaoCMemoryEmbeddingProvider({ env: process.env })
+      if (req.method === "GET" && String(req.query.action || "inventory") === "inventory") {
+        const result = await inventoryMemoryEmbeddings({ client: supabase, provider, userId: req.identity.legacyUserId })
+        return res.status(200).json({ action: "inventory", ...result })
+      }
+      if (req.method === "POST" && req.body.action === "backfill") {
+        try {
+          const result = await backfillMemoryEmbeddingsBatch({
+            client: supabase,
+            provider,
+            userId: req.identity.legacyUserId,
+            scope: String(req.body.scope || ""),
+            confirmCount: Number(req.body.confirm_count),
+            limit: req.body.limit,
+          })
+          return res.status(200).json({ action: "backfill", ...result })
+        } catch (error) {
+          const code = String(error?.code || error?.message || "EMBEDDING_BACKFILL_FAILED").split(":")[0].slice(0, 80)
+          const status = code === "EMBEDDING_SCOPE_COUNT_MISMATCH" ? 409 : 400
+          return res.status(status).json({ error: code, code })
+        }
+      }
+      return res.status(405).json({ error: "Unsupported maintenance action" })
+    }
 
     if (type === "shared_context") {
       return handleSharedContextRequest(req, res, user_id)
