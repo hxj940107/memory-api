@@ -118,6 +118,30 @@ test("combined hybrid signal ranks above either weaker signal", async () => {
   assert.equal(result.results[0].memory_id, "both")
 })
 
+test("grounded hybrid dual signals use bounded relaxed admission without lowering single-signal guards", () => {
+  const candidate = {
+    memory_id: "dual-signal",
+    lexical_score: 0.206667,
+    semantic_score: 0.358194,
+    semantic_available: true,
+    importance: null,
+    created_at: null,
+    eligibility: { eligible: true, authority: "legacy_limited", temporal_state: "current" },
+  }
+  const ranked = rankEligibleCandidate(candidate, { retrievalTime: NOW })
+  assert.equal(ranked.passes_threshold, true)
+  assert.equal(ranked.threshold, 0.27)
+  assert.ok(ranked.selection_reason_codes.includes("GROUNDED_HYBRID_DUAL_SIGNAL"))
+
+  const weakHybrid = rankEligibleCandidate({ ...candidate, memory_id: "weak-dual", lexical_score: 0.1, semantic_score: 0.2 }, { retrievalTime: NOW })
+  assert.equal(weakHybrid.passes_threshold, false)
+  assert.equal(weakHybrid.threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.hybrid)
+
+  const weakSemanticOnly = rankEligibleCandidate({ ...candidate, memory_id: "weak-semantic", lexical_score: 0, semantic_score: 0.4 }, { retrievalTime: NOW })
+  assert.equal(weakSemanticOnly.passes_threshold, false)
+  assert.equal(weakSemanticOnly.threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.semantic_only)
+})
+
 test("importance is clamped and remains a small soft boost", async () => {
   const low = native("low", "长滩岛", { importance: -100 })
   const high = native("high", "长滩岛", { importance: 100 })

@@ -11,7 +11,7 @@ import {
   isOwnedMemoryAuthorityMode,
 } from "../lib/memoryAuthority.js"
 import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
-import { retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
+import { XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K, retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
 import { XIAOC_MEMORY_EMBEDDING_IDENTITY } from "../lib/aiConfig.js"
 
 const NOW = "2026-09-20T12:00:00.000Z"
@@ -158,6 +158,39 @@ test("authoritative Context Gateway suppresses duplicates and unrelated memories
   assert.equal(result.telemetry.injected, false)
   assert.ok(result.diagnostics.some(item => item.suppression_reason === "duplicate_recent"))
   assert.ok(result.telemetry.trace.gateway.some(item => item.memory_id === "duplicate" && item.suppression_reason === "duplicate_recent"))
+})
+
+test("authoritative Gateway uses an exact complete sentence when selected Memory exceeds budget", async () => {
+  const coreFact = "她的名字是小天使。"
+  const longRepresentation = `${coreFact}${"这是补充背景。".repeat(60)}`
+  const budget = createMemoryContextBudget(coreFact.length)
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository([memory("long-selected", longRepresentation)]),
+    userId: "user",
+    query: "名字小天使",
+    retrievalTime: NOW,
+    context: {},
+    memoryBudget: budget,
+    shadowOnly: false,
+  })
+  assert.equal(result.promptReadyCandidates[0]?.content, coreFact)
+  assert.equal(result.diagnostics[0]?.representation_compacted, true)
+  assert.equal(budget.usedChars, coreFact.length)
+  assert.ok(budget.usedChars <= budget.maxChars)
+})
+
+test("authoritative Gateway leaves fitting representations unchanged and stays inside Top-K budget", async () => {
+  const row = memory("fit", "她喜欢蓝色石头。")
+  const budget = createMemoryContextBudget(row.canonical_content.length)
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository([row]), userId: "user", query: "蓝色石头",
+    retrievalTime: NOW, context: {}, memoryBudget: budget, shadowOnly: false,
+  })
+  assert.equal(result.promptReadyCandidates.length, 1)
+  assert.equal(result.promptReadyCandidates[0].content, row.canonical_content)
+  assert.ok(result.promptReadyCandidates.length <= XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K)
+  assert.ok(result.diagnostics.filter(item => item.injected).every(item => item.representation_compacted === false))
+  assert.ok(budget.usedChars <= budget.maxChars)
 })
 
 test("approved legacy is bounded to one slot and forbidden legacy tiers stay excluded", async () => {
