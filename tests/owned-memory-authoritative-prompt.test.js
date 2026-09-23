@@ -122,6 +122,21 @@ test("semantic flag enables hybrid retrieval and merges a semantic hit", async (
   assert.equal(result.telemetry.requested_channel_mode, "HYBRID")
   assert.equal(result.telemetry.channel_mode, "HYBRID")
   assert.equal(result.promptReadyCandidates[0]?.memoryId, "semantic-hit")
+  assert.deepEqual(result.telemetry.trace.candidates.map(item => ({
+    memory_id: item.memory_id,
+    lexical_score: item.lexical_score,
+    semantic_score: item.semantic_score,
+    final_score: item.final_score,
+    threshold: item.threshold,
+    stage: item.stage,
+  })), [{
+    memory_id: "semantic-hit",
+    lexical_score: 0.771111,
+    semantic_score: 0.95,
+    final_score: 0.83414,
+    threshold: 0.32,
+    stage: "ranked",
+  }])
   assert.equal(JSON.stringify(result.telemetry).includes(item.canonical_content), false)
 })
 
@@ -142,6 +157,7 @@ test("authoritative Context Gateway suppresses duplicates and unrelated memories
   assert.deepEqual(result.promptReadyCandidates, [])
   assert.equal(result.telemetry.injected, false)
   assert.ok(result.diagnostics.some(item => item.suppression_reason === "duplicate_recent"))
+  assert.ok(result.telemetry.trace.gateway.some(item => item.memory_id === "duplicate" && item.suppression_reason === "duplicate_recent"))
 })
 
 test("approved legacy is bounded to one slot and forbidden legacy tiers stay excluded", async () => {
@@ -168,6 +184,7 @@ test("chat wiring keeps both existing modes intact and owned authority non-proac
   assert.match(chat, /dynamicMemory = ownedMemoryResult\.promptReadyCandidates\.map\(item => item\.content\)/)
   assert.match(chat, /candidates: ownedAuthoritative \? \[\] : await getStableMemories\(user_id\)/)
   assert.match(chat, /if \(!ownedAuthoritative\) waitUntil\(runXiaoCMemoryShadowRead/)
+  assert.match(chat, /console\.log\("OWNED MEMORY RETRIEVAL:", JSON\.stringify\(ownedMemoryResult\.telemetry\)\)/)
   assert.match(chat, /if \(memoryAuthorityMode === MEMORY_AUTHORITY_MODE\.OMBRE_AUTHORITATIVE\)[\s\S]*saveLongTermMemory/)
   assert.doesNotMatch(chat, /ownedMemoryResult[\s\S]{0,200}proactiveAttention/)
   assert.match(memoryApi, /const ownedMemoryAuthority = isOwnedMemoryAuthorityMode\(memoryAuthorityMode\)/)

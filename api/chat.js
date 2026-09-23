@@ -3462,7 +3462,7 @@ try {
       embeddingProvider: memoryEmbeddingProvider,
     })
     dynamicMemory = ownedMemoryResult.promptReadyCandidates.map(item => item.content)
-    console.log("OWNED MEMORY RETRIEVAL:", ownedMemoryResult.telemetry)
+    console.log("OWNED MEMORY RETRIEVAL:", JSON.stringify(ownedMemoryResult.telemetry))
   }
   if (!ownedAuthoritative) waitUntil(runXiaoCMemoryShadowRead({
     client: supabase,
