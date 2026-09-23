@@ -19,7 +19,10 @@ test("production query planning contains no incident-specific name or durian rul
   assert.equal(source.includes("姓名"), false)
   assert.equal(source.includes("榴莲"), false)
 })
-import { retrieveXiaoCMemoriesOffline } from "../lib/xiaocMemoryRanking.js"
+import {
+  retrieveXiaoCMemoriesOffline,
+  XIAOC_MEMORY_RETRIEVAL_POLICY,
+} from "../lib/xiaocMemoryRanking.js"
 import { createSyntheticEvaluationRepository, SYNTHETIC_EMBEDDING_IDENTITY } from "../scripts/xiaoc-memory-engine-eval.js"
 
 test("explicit recall shell is removed without naming a fixture entity in production rules", () => {
@@ -118,7 +121,12 @@ async function runCase(definition, options = {}) {
 test("ungrounded semantic-only similarity is rejected before ranking", async () => {
   const result = await runCase(fixtureCase())
   assert.equal(result.results.length, 0)
-  assert.equal(result.trace.compatibility_rejections[0].reason_codes[0], "SEMANTIC_ONLY_UNGROUNDED")
+  const rejection = result.trace.compatibility_rejections[0]
+  assert.equal(rejection.reason_codes[0], "SEMANTIC_ONLY_UNGROUNDED")
+  assert.equal(rejection.signal_mode, "semantic_only")
+  assert.equal(rejection.lexical_score, null)
+  assert.equal(rejection.semantic_score, 1)
+  assert.equal(rejection.semantic_grounded_floor, XIAOC_MEMORY_RETRIEVAL_POLICY.semanticAdmission.groundedMinimum)
 })
 
 test("strong grounded semantic-only evidence remains available", async () => {

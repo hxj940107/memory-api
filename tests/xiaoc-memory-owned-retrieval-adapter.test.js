@@ -106,6 +106,50 @@ test("canonical content stays internal and never enters Shadow telemetry or diag
   assert.doesNotMatch(JSON.stringify(result.diagnostics), new RegExp(secret))
 })
 
+test("semantic admission rejection telemetry exposes only privacy-safe scores and floor", async () => {
+  const privateContent = "她有一个需要长期记住的私人事实"
+  const row = memory("semantic-private", privateContent)
+  const repo = {
+    async listLexicalCandidates() { return [] },
+    async listSemanticCandidates() {
+      return [{
+        ...row,
+        semantic_similarity: 0.71,
+        rollout_status: "active",
+        provider: "openrouter",
+        model: "openai/text-embedding-3-small",
+        embedding_version: "v1",
+        preprocessor_version: "canonical-content-v1",
+        dimensions: 1536,
+      }]
+    },
+    async listRelations() { return [] },
+  }
+  const embeddingProvider = {
+    async embed() { return [Array(1536).fill(0).map((_, index) => index === 0 ? 1 : 0)] },
+  }
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repo,
+    embeddingProvider,
+    env: { XIAOC_MEMORY_SEMANTIC_RETRIEVAL_ENABLED: "true" },
+    userId: "user",
+    query: "完全不同的问法",
+    retrievalTime: NOW,
+    context: {},
+    maxChars: 1000,
+  })
+  assert.deepEqual(result.telemetry.trace.admission_rejected, [{
+    memory_id: "semantic-private",
+    stage: "semantic_admission_rejected",
+    signal_mode: "semantic_only",
+    lexical_score: null,
+    semantic_score: 0.71,
+    semantic_grounded_floor: 0.82,
+    reason_codes: ["SEMANTIC_ONLY_UNGROUNDED", "SEMANTIC_ONLY_BELOW_GROUNDED_FLOOR"],
+  }])
+  assert.doesNotMatch(JSON.stringify(result.telemetry), new RegExp(privateContent))
+})
+
 test("Phase 3 Shadow wiring remains non-injecting beside the explicit authoritative path", () => {
   const chat = fs.readFileSync("api/chat.js", "utf8")
   const shadow = fs.readFileSync("lib/xiaocMemoryShadowRead.js", "utf8")
