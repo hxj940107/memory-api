@@ -17,9 +17,11 @@ import {
   getInactivityReachOutDelayMinutes,
   isProactiveAttentionSendEnabled,
   isWeatherLiveSendEnabled,
+  isXiaoCMemorySemanticRetrievalEnabled,
   normalizeInactivityReachOutMode,
   trimText,
 } from "../lib/aiConfig.js"
+import { createXiaoCMemoryEmbeddingProvider, reconcileMissingNativeEmbeddings } from "../lib/xiaocMemoryEmbedding.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { getDiaryDateContextWindow } from "../lib/diaryContextWindow.js"
 import {
@@ -5504,7 +5506,11 @@ export default async function handler(req, res) {
           checkPendingMomentCandidates(),
         ])
         const autonomousMoment = await checkAutonomousMomentConsideration()
-        result = { proactive, momentCandidates, autonomousMoment }
+        const memoryEmbeddings = isXiaoCMemorySemanticRetrievalEnabled(process.env)
+          ? await reconcileMissingNativeEmbeddings({ client: supabase, provider: createXiaoCMemoryEmbeddingProvider({ env: process.env }), userId: APP_USER.defaultUserId, limit: 3 })
+            .catch(error => ({ failed: true, error_code: String(error?.code || error?.message || "EMBEDDING_RECONCILE_FAILED").split(":")[0].slice(0, 80) }))
+          : { skipped: true, reason: "FLAG_OFF" }
+        result = { proactive, momentCandidates, autonomousMoment, memoryEmbeddings }
       } catch (error) {
         workerError = error
       }

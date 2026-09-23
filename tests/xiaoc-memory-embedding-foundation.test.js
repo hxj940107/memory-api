@@ -6,6 +6,8 @@ import {
   cosineSimilarity,
   createOpenAICompatibleEmbeddingProvider,
   embeddingStaleness,
+  hashEmbeddingInput,
+  reconcileMissingNativeEmbeddings,
   validateEmbeddingVector,
   XiaoCMemoryEmbeddingRepository,
 } from "../lib/xiaocMemoryEmbedding.js"
@@ -64,10 +66,11 @@ test("deployed activation contract retires the prior active row before activatin
 
 test("embedding CLI defaults to dry-run and cannot make an unscoped write", () => {
   assert.deepEqual(dryRunSummary(parseEmbeddingArgs([])).external_requests, 0)
-  assert.throws(() => assertEmbeddingApplyAuthorization(parseEmbeddingArgs(["--apply"])), /EMBEDDING_IDENTITY_REQUIRED/)
-  const approved = parseEmbeddingArgs(["--apply", "--provider=p", "--model=m", "--version=v1", "--dimension=3", "--scope=low_authority", "--confirm-count=6"])
+  assert.throws(() => assertEmbeddingApplyAuthorization(parseEmbeddingArgs(["--apply"])), /EMBEDDING_SCOPE_NOT_ALLOWED/)
+  const approved = parseEmbeddingArgs(["--apply", "--scope=low_authority", "--confirm-count=72"])
   assert.doesNotThrow(() => assertEmbeddingApplyAuthorization(approved))
   assert.throws(() => assertEmbeddingApplyAuthorization({ ...approved, scope: "all" }), /EMBEDDING_SCOPE_NOT_ALLOWED/)
+  assert.throws(() => assertEmbeddingApplyAuthorization({ ...approved, model: "other" }), /EMBEDDING_IDENTITY_MISMATCH/)
 })
 
 test("module construction and dry-run make no external request", () => {
@@ -75,4 +78,21 @@ test("module construction and dry-run make no external request", () => {
   createOpenAICompatibleEmbeddingProvider({ ...identity, apiKey: "fixture", baseUrl: "https://example.invalid", fetchImpl: async () => { calls += 1 } })
   dryRunSummary(parseEmbeddingArgs(["--dry-run"]))
   assert.equal(calls, 0)
+})
+
+test("bounded reconciliation repairs an eligible native memory missing an embedding", async () => {
+  const content = "她喜欢安静的雨天"
+  let active = null
+  const memory = { id: "10000000-0000-4000-8000-000000000001", user_id: "user", canonical_content: content, content_hash: hashEmbeddingInput(content) }
+  const chain = value => ({ select(){return this},eq(){return this},is(){return this},order(){return this},limit(){return Promise.resolve({data:value,error:null})},maybeSingle(){return Promise.resolve({data:active,error:null})} })
+  const client = {
+    from(table) { return chain(table === "memory_items" ? [memory] : []) },
+    async rpc(name) {
+      if (name === "xiaoc_memory_register_embedding") return { data: "20000000-0000-4000-8000-000000000002", error: null }
+      if (name === "xiaoc_memory_activate_embedding") { active = { content_hash: memory.content_hash, provider: "fixture-provider", model: "fixture-model", embedding_version: "v1", preprocessor_version: "canonical-content-v1", dimensions: 3, rollout_status: "active" }; return { data: "op", error: null } }
+      return { data: null, error: null }
+    },
+  }
+  const result = await reconcileMissingNativeEmbeddings({ client, provider: { ...identity, embed: async () => [[1,0,0]] }, limit: 1, logger: { log(){}, warn(){} } })
+  assert.equal(result.repaired, 1)
 })

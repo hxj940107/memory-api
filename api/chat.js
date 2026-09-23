@@ -38,6 +38,7 @@ import {
   normalizeChatModel,
   normalizeCacheText,
   normalizeInactivityReachOutMode,
+  isXiaoCMemorySemanticRetrievalEnabled,
   shouldRunMemoryJudge,
   trimList,
   trimText
@@ -52,6 +53,7 @@ import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
+import { createXiaoCMemoryEmbeddingProvider } from "../lib/xiaocMemoryEmbedding.js"
 import {
   assertOmbreAuthority,
   getMemoryAuthorityMode,
@@ -3145,6 +3147,9 @@ export default async function handler(req, res) {
     const memoryAuthorityMode = getMemoryAuthorityMode(process.env)
     const ownedFreshEmpty = isOwnedFreshEmptyMode(memoryAuthorityMode)
     const ownedAuthoritative = isOwnedAuthoritativeMode(memoryAuthorityMode)
+    const memoryEmbeddingProvider = isXiaoCMemorySemanticRetrievalEnabled(process.env)
+      ? createXiaoCMemoryEmbeddingProvider({ env: process.env })
+      : null
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Only POST" })
     }
@@ -3453,6 +3458,8 @@ try {
       },
       memoryBudget: memoryContextBudget,
       shadowOnly: false,
+      env: process.env,
+      embeddingProvider: memoryEmbeddingProvider,
     })
     dynamicMemory = ownedMemoryResult.promptReadyCandidates.map(item => item.content)
     console.log("OWNED MEMORY RETRIEVAL:", ownedMemoryResult.telemetry)
@@ -4093,6 +4100,7 @@ console.log("======================================\n")
             sourceConversationId: cid,
             currentMessage: message,
             judgeResult,
+            embeddingProvider: memoryEmbeddingProvider,
           })
         } else if (judgeResult.reason) {
           console.warn("MEMORY SKIPPED:", {

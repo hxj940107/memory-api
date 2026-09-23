@@ -155,6 +155,22 @@ test("RPC and audit failures cannot escape into chat", async () => {
   assert.deepEqual(result, { attempted: true, outcome: "failure", error_code: "08006" })
 })
 
+test("embedding failure cannot undo successful native capture", async () => {
+  const chain = { select() { return this }, eq() { return this }, maybeSingle: async () => ({ data: null, error: null }) }
+  const client = {
+    async rpc(name) { return name === "xiaoc_memory_capture_verified" ? { data: messageId, error: null } : { data: null, error: null } },
+    from() { return chain },
+  }
+  const result = await runXiaoCMemoryNativeCapture({ client, ...base,
+    env: { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true" },
+    embeddingProvider: { embed: async () => { throw new Error("EMBEDDING_PROVIDER_REQUEST_FAILED") } },
+    logger: { warn() {}, log() {} },
+  })
+  assert.equal(result.outcome, "success")
+  assert.equal(result.memory_id, messageId)
+  assert.equal(result.embedding, "failed")
+})
+
 test("native capture remains authority-independent while Ombre persistence is explicitly scoped", async () => {
   const chat = await readFile(new URL("../api/chat.js", import.meta.url), "utf8")
   const ombre = chat.indexOf("const saved = await saveLongTermMemory")

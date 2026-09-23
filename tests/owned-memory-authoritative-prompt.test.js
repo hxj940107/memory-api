@@ -12,6 +12,7 @@ import {
 } from "../lib/memoryAuthority.js"
 import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
 import { retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
+import { XIAOC_MEMORY_EMBEDDING_IDENTITY } from "../lib/aiConfig.js"
 
 const NOW = "2026-09-20T12:00:00.000Z"
 
@@ -104,6 +105,24 @@ test("authoritative adapter injects only active native verified candidates and c
   assert.ok(result.promptReadyCandidates.length <= 3)
   assert.equal(repo.calls.some(([name]) => name === "semantic"), false)
   assert.ok(result.diagnostics.some(item => item.candidate_id === "xiaoc-owned-active" && item.injected === true))
+})
+
+test("semantic flag enables hybrid retrieval and merges a semantic hit", async () => {
+  const item = memory("semantic-hit", "她珍惜那次海边旅行")
+  const repo = {
+    async listLexicalCandidates() { return [] },
+    async listSemanticCandidates() { return [{ memory: item, semantic_similarity: 0.95, rollout_status: "active", provider: XIAOC_MEMORY_EMBEDDING_IDENTITY.providerId, model: XIAOC_MEMORY_EMBEDDING_IDENTITY.modelId, embedding_version: XIAOC_MEMORY_EMBEDDING_IDENTITY.version, preprocessor_version: XIAOC_MEMORY_EMBEDDING_IDENTITY.preprocessorVersion, dimensions: XIAOC_MEMORY_EMBEDDING_IDENTITY.dimension }] },
+    async listRelations() { return [] },
+  }
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({ repository: repo, userId: "user", query: "还记得那次旅行吗", retrievalTime: NOW,
+    context: {}, memoryBudget: createMemoryContextBudget(1000), shadowOnly: false,
+    env: { XIAOC_MEMORY_SEMANTIC_RETRIEVAL_ENABLED: "true" },
+    embeddingProvider: { embed: async () => [Array(XIAOC_MEMORY_EMBEDDING_IDENTITY.dimension).fill(0.01)] },
+  })
+  assert.equal(result.telemetry.requested_channel_mode, "HYBRID")
+  assert.equal(result.telemetry.channel_mode, "HYBRID")
+  assert.equal(result.promptReadyCandidates[0]?.memoryId, "semantic-hit")
+  assert.equal(JSON.stringify(result.telemetry).includes(item.canonical_content), false)
 })
 
 test("authoritative Context Gateway suppresses duplicates and unrelated memories", async () => {

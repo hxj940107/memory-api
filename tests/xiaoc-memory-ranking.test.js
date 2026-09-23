@@ -70,6 +70,16 @@ test("zero compatible Memory embeddings remains explicitly lexical-only", async 
   assert.equal(generated.candidates[0].semantic_score, null)
 })
 
+test("semantic RPC failure preserves lexical candidates with safe degradation", async () => {
+  const memory = native("lexical-fallback", "长滩岛")
+  const repo = repository({ lexical: [memory] })
+  repo.listSemanticCandidates = async () => { throw Object.assign(new Error("SEMANTIC_RPC_FAILED:57014"), { code: "57014" }) }
+  const generated = await generateBoundedCandidates({ repository: repo, userId: "user", query: "长滩岛", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  assert.equal(generated.candidates[0].memory_id, "lexical-fallback")
+  assert.equal(generated.degradation_mode, "LEXICAL_ONLY_SEMANTIC_FAILED")
+  assert.equal(generated.semantic_error_code, "57014")
+})
+
 test("lexical and semantic channels union duplicate memory ID", async () => {
   const memory = native("both", "Boracay 长滩岛")
   const generated = await generateBoundedCandidates({ repository: repository({ lexical: [memory], semantic: [semanticRow(memory, [1, 0])] }), userId: "user", query: "长滩岛", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })

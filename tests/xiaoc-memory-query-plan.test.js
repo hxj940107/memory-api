@@ -1,11 +1,24 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFile } from "node:fs/promises"
 
 import {
   buildXiaoCMemoryQueryPlan,
   XIAOC_MEMORY_LEXICAL_MAX_TERM_CODEPOINTS,
   XIAOC_MEMORY_LEXICAL_MAX_TERMS,
 } from "../lib/xiaocMemoryQueryPlan.js"
+
+test("question-word 什么 is not truncated as a trailing particle", () => {
+  const plan = buildXiaoCMemoryQueryPlan("我叫什么？")
+  assert.equal(plan.retrieval_query.includes("什么"), true)
+  assert.equal(plan.retrieval_query.includes("我叫什") && !plan.retrieval_query.includes("什么"), false)
+})
+
+test("production query planning contains no incident-specific name or durian rules", async () => {
+  const source = await readFile(new URL("../lib/xiaocMemoryQueryPlan.js", import.meta.url), "utf8")
+  assert.equal(source.includes("姓名"), false)
+  assert.equal(source.includes("榴莲"), false)
+})
 import { retrieveXiaoCMemoriesOffline } from "../lib/xiaocMemoryRanking.js"
 import { createSyntheticEvaluationRepository, SYNTHETIC_EMBEDDING_IDENTITY } from "../scripts/xiaoc-memory-engine-eval.js"
 
