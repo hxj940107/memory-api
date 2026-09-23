@@ -205,6 +205,18 @@ test("top-k is bounded, configurable and contains no duplicate identities", asyn
   assert.equal(result.results.length, 2)
   assert.equal(new Set(result.results.map((item) => item.memory_id)).size, 2)
   assert.equal(result.results.filter((item) => ["a", "b"].includes(item.memory_id)).length, 1)
+  assert.equal(result.selection_pool.length, 3)
+})
+
+test("eligible historical memories are deduped normally without a one-slot legacy quota", async () => {
+  const rows = [
+    legacy("legacy-a", "长滩岛海边"),
+    legacy("legacy-b", "长滩岛旅行"),
+    legacy("legacy-c", "长滩岛假期"),
+  ]
+  const result = await retrieve(repository({ lexical: rows }))
+  assert.deepEqual(result.results.map(item => item.memory_id), ["legacy-a", "legacy-b", "legacy-c"])
+  assert.equal(result.results.every(item => item.legacy_limited), true)
 })
 
 test("input permutation preserves deterministic ranking and tie-break", async () => {

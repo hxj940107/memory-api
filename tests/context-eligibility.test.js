@@ -107,4 +107,18 @@ function memory(content, extra = {}) {
   assert.equal(result.diagnostics[0].suppression_reason, "duplicate_core")
 }
 
+// G. A candidate that cannot fit does not consume a slot or bypass the budget;
+// a later fitting candidate can still fill the bounded prompt-ready set.
+{
+  const result = evaluateContextCandidates([
+    memory("一段无法在当前预算中安全完整表达且没有可用紧凑表示的长期记忆", { candidateId: "too-large" }),
+    memory("她喜欢茶。", { candidateId: "fits" }),
+    memory("她喜欢花。", { candidateId: "top-k-stop" }),
+  ], {}, { maxChars: 6, maxInjected: 1 })
+  assert.deepEqual(result.injected.map(item => item.candidateId), ["fits"])
+  assert.equal(result.diagnostics[0].suppression_reason, "budget_exceeded")
+  assert.equal(result.diagnostics.some(item => item.candidate_id === "top-k-stop"), false)
+  assert.ok(result.injected.reduce((sum, item) => sum + item.content.length, 0) <= 6)
+}
+
 console.log("context eligibility regression tests passed")

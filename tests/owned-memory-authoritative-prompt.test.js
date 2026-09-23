@@ -193,20 +193,73 @@ test("authoritative Gateway leaves fitting representations unchanged and stays i
   assert.ok(budget.usedChars <= budget.maxChars)
 })
 
-test("approved legacy is bounded to one slot and forbidden legacy tiers stay excluded", async () => {
+test("approved historical memories use normal Top-K while forbidden legacy tiers stay excluded", async () => {
   const rows = [
     memory("legacy-a", "她喜欢蓝色石头", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
-    memory("legacy-b", "她收藏蓝色石头", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
+    memory("legacy-b", "她珍惜海边旅行", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
+    memory("legacy-c", "她保存小C纪念礼物", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
     memory("legacy-shadow", "她研究蓝色石头", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "none", retrieval_tier: "shadow_only" }),
     memory("legacy-disabled", "她见过蓝色石头", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "none", retrieval_tier: "disabled" }),
   ]
   const result = await retrieveOwnedMemoryPromptCandidatesShadow({
-    repository: repository(rows), userId: "user", query: "蓝色石头", retrievalTime: NOW,
+    repository: {
+      async listLexicalCandidates() { return [] },
+      async listSemanticCandidates() {
+        return rows.map(row => ({
+          ...row, semantic_similarity: 0.9, rollout_status: "active",
+          provider: XIAOC_MEMORY_EMBEDDING_IDENTITY.providerId,
+          model: XIAOC_MEMORY_EMBEDDING_IDENTITY.modelId,
+          embedding_version: XIAOC_MEMORY_EMBEDDING_IDENTITY.version,
+          preprocessor_version: XIAOC_MEMORY_EMBEDDING_IDENTITY.preprocessorVersion,
+          dimensions: XIAOC_MEMORY_EMBEDDING_IDENTITY.dimension,
+        }))
+      },
+      async listRelations() { return [] },
+    },
+    embeddingProvider: { embed: async () => [Array(XIAOC_MEMORY_EMBEDDING_IDENTITY.dimension).fill(0.01)] },
+    env: { XIAOC_MEMORY_SEMANTIC_RETRIEVAL_ENABLED: "true" },
+    userId: "user", query: "相关的长期记忆", retrievalTime: NOW,
     context: {}, memoryBudget: createMemoryContextBudget(1000), shadowOnly: false,
   })
-  assert.equal(result.promptReadyCandidates.length, 1)
-  assert.match(result.promptReadyCandidates[0].memoryId, /^legacy-[ab]$/)
-  assert.equal(result.promptReadyCandidates[0].source, "xiaoc_owned_legacy_limited")
+  assert.equal(result.promptReadyCandidates.length, 3)
+  assert.equal(result.promptReadyCandidates.every(item => item.memoryId.startsWith("legacy-")), true)
+  assert.equal(result.promptReadyCandidates.every(item => item.source === "xiaoc_owned_legacy_limited"), true)
+})
+
+test("Gateway suppression backfills prompt-ready slots from the ranked pool", async () => {
+  const first = "她喜欢蓝色石头"
+  const second = "她收藏蓝色玻璃石头"
+  const third = "她珍惜蓝色纪念石头"
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository([memory("first", first), memory("second", second), memory("third", third)]),
+    userId: "user", query: "蓝色石头", retrievalTime: NOW,
+    context: { summaryTexts: [first], recentTexts: [second] },
+    memoryBudget: createMemoryContextBudget(1000), shadowOnly: false,
+  })
+  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["third"])
+  assert.equal(result.diagnostics.find(item => item.memory_id === "first")?.suppression_reason, "duplicate_summary")
+  assert.equal(result.diagnostics.find(item => item.memory_id === "second")?.suppression_reason, "duplicate_recent")
+})
+
+test("Gateway refill never exceeds Top-K or the shared character budget", async () => {
+  const duplicate = "她喜欢蓝色石头"
+  const rows = [
+    memory("duplicate", duplicate),
+    memory("one", "她收藏蓝色玻璃石头"),
+    memory("two", "她珍惜蓝色纪念石头"),
+    memory("three", "她喜欢蓝色水晶石头"),
+    memory("four", "她保存蓝色旅行石头"),
+  ]
+  const acceptedChars = rows.slice(1, 4).reduce((sum, row) => sum + row.canonical_content.length, 0)
+  const budget = createMemoryContextBudget(acceptedChars)
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository(rows), userId: "user", query: "蓝色石头", retrievalTime: NOW,
+    context: { summaryTexts: [duplicate] }, memoryBudget: budget, shadowOnly: false,
+  })
+  assert.equal(result.promptReadyCandidates.length, 3)
+  assert.ok(result.promptReadyCandidates.length <= XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K)
+  assert.ok(budget.usedChars <= budget.maxChars)
+  assert.equal(result.promptReadyCandidates.some(item => item.memoryId === "duplicate"), false)
 })
 
 test("chat wiring keeps both existing modes intact and owned authority non-proactive", () => {
