@@ -16,6 +16,10 @@ function semanticRow(memory, vector) {
   return { memory, vector, rollout_status: "active", provider: "synthetic", model: "fixture", embedding_version: "v1", preprocessor_version: "fixture-v1", dimensions: 2 }
 }
 
+function semanticScoredRow(memory, score) {
+  return { ...semanticRow(memory, [1, 0]), semantic_similarity: score }
+}
+
 function hashFor(id) {
   return Buffer.from(String(id)).toString("hex").padEnd(64, "0").slice(0, 64)
 }
@@ -140,6 +144,47 @@ test("grounded hybrid dual signals use bounded relaxed admission without lowerin
   const weakSemanticOnly = rankEligibleCandidate({ ...candidate, memory_id: "weak-semantic", lexical_score: 0, semantic_score: 0.4 }, { retrievalTime: NOW })
   assert.equal(weakSemanticOnly.passes_threshold, false)
   assert.equal(weakSemanticOnly.threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.semantic_only)
+})
+
+test("semantic-only clear leading-cluster separation admits relevant candidates below the absolute threshold", async () => {
+  const result = await retrieve(repository({
+    semantic: [
+      semanticScoredRow(native("first", "第一条长期事实"), 0.560739),
+      semanticScoredRow(native("second", "第二条长期事实"), 0.509573),
+      semanticScoredRow(native("tail", "较弱的候选"), 0.354681),
+    ],
+  }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  assert.deepEqual(result.results.map(item => item.memory_id), ["first", "second"])
+  assert.ok(result.results.every(item => item.selection_reason_codes.includes("SEMANTIC_DISTRIBUTION_SEPARATED")))
+})
+
+test("semantic-only close low-confidence distribution remains rejected", async () => {
+  const result = await retrieve(repository({
+    semantic: [
+      semanticScoredRow(native("first", "候选甲"), 0.55),
+      semanticScoredRow(native("second", "候选乙"), 0.53),
+      semanticScoredRow(native("third", "候选丙"), 0.51),
+    ],
+  }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  assert.deepEqual(result.results, [])
+})
+
+test("semantic-only garbage rank one cannot pass on relative position alone", async () => {
+  const result = await retrieve(repository({
+    semantic: [
+      semanticScoredRow(native("garbage-first", "弱候选甲"), 0.31),
+      semanticScoredRow(native("garbage-second", "弱候选乙"), 0.1),
+    ],
+  }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  assert.deepEqual(result.results, [])
+})
+
+test("semantic-only single high-confidence candidate keeps the existing absolute path", async () => {
+  const result = await retrieve(repository({
+    semantic: [semanticScoredRow(native("confident", "高置信候选"), 0.82)],
+  }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
+  assert.deepEqual(result.results.map(item => item.memory_id), ["confident"])
+  assert.equal(result.results[0].selection_reason_codes.includes("SEMANTIC_DISTRIBUTION_SEPARATED"), false)
 })
 
 test("importance is clamped and remains a small soft boost", async () => {
