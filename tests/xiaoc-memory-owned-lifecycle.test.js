@@ -349,7 +349,7 @@ test("Memory API keeps Ombre authority unchanged and enables lifecycle only in f
   assert.match(api, /waitUntil\(ensureActiveMemoryEmbedding/)
   assert.match(api, /total: memories\.length/)
   assert.match(api, /pinnedTotal: pinned\.length/)
-  assert.doesNotMatch(api, /recentCount/)
+  assert.match(api, /source === "xiaoc-owned"[\s\S]*pinned: \[\][\s\S]*recent: \[\][\s\S]*recentCount: 0[\s\S]*recentWindowLabel: "最近 7 天"/)
   assert.doesNotMatch(api, /owned_authoritative/)
   assert.ok(api.indexOf("requireRequestIdentity(req, res)") < api.indexOf('type === "we"'))
 

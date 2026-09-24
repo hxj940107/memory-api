@@ -442,6 +442,14 @@ export function buildWeMemoryResponse(memories, source = "ombre") {
     total: memories.length,
     pinnedTotal: pinned.length,
     categories,
+    ...(source === "xiaoc-owned"
+      ? {
+          pinned: [],
+          recent: [],
+          recentCount: 0,
+          recentWindowLabel: "最近 7 天",
+        }
+      : {}),
   }
 }
 
