@@ -148,6 +148,29 @@ test("Memory Library sorts active pins first and otherwise remains stable", asyn
 
 })
 
+test("owned Memory Library response exposes real all, pinned, and rolling seven-day views", async () => {
+  process.env.SUPABASE_URL ||= "https://example.supabase.co"
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key"
+  process.env.XIAOC_PRIVATE_AUTH_USER_UUID ||= "00000000-0000-4000-8000-000000000001"
+  const { buildWeMemoryResponse, buildWeMemoryViewResponse } = await import("../api/memory.js")
+  const memories = [
+    { id: "1", content: "较早记忆", category: "关于你", pinned: true, createdAt: "2026-09-16T23:59:59Z" },
+    { id: "2", content: "七天内记忆", category: "我们之间", pinned: false, createdAt: "2026-09-18T00:00:00Z" },
+    { id: "3", content: "最新钉选", category: "相处方式", pinned: true, createdAt: "2026-09-24T00:00:00Z" },
+  ]
+  const now = new Date("2026-09-24T00:00:00Z")
+  const response = buildWeMemoryResponse(memories, "xiaoc-owned", now)
+  assert.equal(response.total, 3)
+  assert.equal(response.pinnedTotal, 2)
+  assert.equal(response.recentCount, 2)
+  assert.deepEqual(response.pinned.map(item => item.id), ["1", "3"])
+  assert.deepEqual(response.recent.map(item => item.id), ["2", "3"])
+  assert.equal(response.recentWindowLabel, "最近 7 天")
+  assert.deepEqual(buildWeMemoryViewResponse(memories, "all", "xiaoc-owned", now).items, memories)
+  assert.deepEqual(buildWeMemoryViewResponse(memories, "pinned", "xiaoc-owned", now).items.map(item => item.id), ["1", "3"])
+  assert.deepEqual(buildWeMemoryViewResponse(memories, "recent", "xiaoc-owned", now).items.map(item => item.id), ["2", "3"])
+})
+
 test("archived/deleted access must be explicit and invalid status fails closed", async () => {
   assert.equal(normalizeOwnedMemoryListStatus(), "active")
   assert.equal(normalizeOwnedMemoryListStatus("archived"), "archived")
@@ -349,7 +372,7 @@ test("Memory API keeps Ombre authority unchanged and enables lifecycle only in f
   assert.match(api, /waitUntil\(ensureActiveMemoryEmbedding/)
   assert.match(api, /total: memories\.length/)
   assert.match(api, /pinnedTotal: pinned\.length/)
-  assert.match(api, /source === "xiaoc-owned"[\s\S]*pinned: \[\][\s\S]*recent: \[\][\s\S]*recentCount: 0[\s\S]*recentWindowLabel: "最近 7 天"/)
+  assert.match(api, /source === "xiaoc-owned"[\s\S]*pinned,[\s\S]*recent,[\s\S]*recentCount: recent\.length[\s\S]*recentWindowLabel: "最近 7 天"/)
   assert.doesNotMatch(api, /owned_authoritative/)
   assert.ok(api.indexOf("requireRequestIdentity(req, res)") < api.indexOf('type === "we"'))
 
@@ -368,6 +391,10 @@ test("Memory Library UI is four-category, body-only, two-line, and uses protecte
   assert.doesNotMatch(home, /我慢慢记得了你，也记得了我们|现在先显示小C能浮起来的记忆|最近\s*7\s*天/)
   assert.match(home, />记忆<\/Text>/)
   assert.match(home, />钉选<\/Text>/)
+  assert.match(home, />最近新增<\/Text>/)
+  assert.match(home, /openMemoryView\("all", "全部记忆"\)/)
+  assert.match(home, /openMemoryView\("pinned", "钉选"\)/)
+  assert.match(home, /openMemoryView\("recent", "最近新增"\)/)
   assert.match(home, /numberOfLines=\{2\}/)
   assert.match(category, /numberOfLines=\{2\}/)
   assert.match(home, /normalizeMemoryResponse\(response\)/)

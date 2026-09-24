@@ -15,9 +15,17 @@ type WeMemory = {
 };
 
 type WeCategory = { id: string; name: string; total: number; items: WeMemory[] };
-type WeMemoryResponse = { source: string; total: number; pinnedTotal: number; categories: WeCategory[] };
+type WeMemoryResponse = {
+  source: string;
+  total: number;
+  pinnedTotal: number;
+  recentCount: number;
+  categories: WeCategory[];
+};
 
-const emptyData: WeMemoryResponse = { source: "empty", total: 0, pinnedTotal: 0, categories: [] };
+const emptyData: WeMemoryResponse = {
+  source: "empty", total: 0, pinnedTotal: 0, recentCount: 0, categories: [],
+};
 
 function normalizeMemoryResponse(value: unknown): WeMemoryResponse {
   if (!value || typeof value !== "object") return emptyData;
@@ -35,6 +43,7 @@ function normalizeMemoryResponse(value: unknown): WeMemoryResponse {
     source: String(response.source || "empty"),
     total: Number.isFinite(Number(response.total)) ? Number(response.total) : 0,
     pinnedTotal: Number.isFinite(Number(response.pinnedTotal)) ? Number(response.pinnedTotal) : 0,
+    recentCount: Number.isFinite(Number(response.recentCount)) ? Number(response.recentCount) : 0,
     categories,
   };
 }
@@ -102,6 +111,10 @@ function MemorySection({ category }: { category: WeCategory }) {
   );
 }
 
+function openMemoryView(view: "all" | "pinned" | "recent", category: string) {
+  router.push({ pathname: "/we/category", params: { view, category } });
+}
+
 export default function WeScreen() {
   const [data, setData] = useState<WeMemoryResponse>(emptyData);
   const [loading, setLoading] = useState(false);
@@ -138,15 +151,20 @@ export default function WeScreen() {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadMemories} />}
       >
         <View style={styles.overviewCard}>
-          <View style={styles.overviewItem}>
+          <Pressable style={styles.overviewItem} onPress={() => openMemoryView("all", "全部记忆")}>
             <Text style={styles.overviewLabel}>记忆</Text>
             <Text style={styles.overviewValue}>{data.total}</Text>
-          </View>
+          </Pressable>
           <View style={styles.overviewDivider} />
-          <View style={styles.overviewItem}>
+          <Pressable style={styles.overviewItem} onPress={() => openMemoryView("pinned", "钉选")}>
             <Text style={styles.overviewLabel}>钉选</Text>
             <Text style={styles.overviewValue}>{data.pinnedTotal}</Text>
-          </View>
+          </Pressable>
+          <View style={styles.overviewDivider} />
+          <Pressable style={styles.overviewItem} onPress={() => openMemoryView("recent", "最近新增")}>
+            <Text style={styles.overviewLabel}>最近新增</Text>
+            <Text style={styles.overviewValue}>{data.recentCount}</Text>
+          </Pressable>
         </View>
 
         {!loading && data.total === 0 ? (

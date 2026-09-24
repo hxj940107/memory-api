@@ -392,6 +392,8 @@ export function categorizeMemory(memory) {
 }
 
 const WE_MEMORY_CATEGORIES = ["关于你", "我们之间", "一起经历过", "相处方式"]
+const WE_MEMORY_VIEWS = new Set(["all", "pinned", "recent"])
+const WE_MEMORY_RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 const WE_MEMORY_CATEGORY_IDS = {
   "关于你": "about-her",
   "我们之间": "our-relationship",
@@ -421,9 +423,30 @@ export function buildWeMemoryCategoryResponse(memories, category, source = "ombr
   }
 }
 
-export function buildWeMemoryResponse(memories, source = "ombre") {
+function getWeRecentMemories(memories, now = new Date()) {
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now || ""))
+  const cutoffMs = nowMs - WE_MEMORY_RECENT_WINDOW_MS
+  return memories.filter((memory) => {
+    const createdAtMs = Date.parse(String(memory.createdAt || ""))
+    return Number.isFinite(createdAtMs) && createdAtMs >= cutoffMs && createdAtMs <= nowMs
+  })
+}
+
+export function buildWeMemoryViewResponse(memories, view, source = "ombre", now = new Date()) {
+  const items = view === "pinned"
+    ? memories.filter((memory) => memory.pinned)
+    : view === "recent"
+      ? getWeRecentMemories(memories, now)
+      : memories
+  const labels = { all: "全部记忆", pinned: "钉选", recent: "最近新增" }
+
+  return { source, view, category: labels[view] || "记忆", total: items.length, items }
+}
+
+export function buildWeMemoryResponse(memories, source = "ombre", now = new Date()) {
   const pinned = memories
     .filter((memory) => memory.pinned)
+  const recent = getWeRecentMemories(memories, now)
   const categories = WE_MEMORY_CATEGORIES.map((name) => {
     const items = getWeCategoryMemories(memories, name)
 
@@ -444,9 +467,9 @@ export function buildWeMemoryResponse(memories, source = "ombre") {
     categories,
     ...(source === "xiaoc-owned"
       ? {
-          pinned: [],
-          recent: [],
-          recentCount: 0,
+          pinned,
+          recent,
+          recentCount: recent.length,
           recentWindowLabel: "最近 7 天",
         }
       : {}),
@@ -5741,9 +5764,16 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && type === "we") {
       const category = String(req.query.category || "").trim()
+      const view = String(req.query.view || "").trim().toLowerCase()
 
       if (category && !WE_MEMORY_CATEGORIES.includes(category)) {
         return res.status(400).json({ error: "unsupported memory category" })
+      }
+      if (view && !WE_MEMORY_VIEWS.has(view)) {
+        return res.status(400).json({ error: "unsupported memory view" })
+      }
+      if (category && view) {
+        return res.status(400).json({ error: "memory category and view are mutually exclusive" })
       }
 
       if (ownedMemoryAuthority) {
@@ -5755,6 +5785,8 @@ export default async function handler(req, res) {
           return res.status(200).json(
             category
               ? buildWeMemoryCategoryResponse(memories, category, "xiaoc-owned")
+              : view
+                ? buildWeMemoryViewResponse(memories, view, "xiaoc-owned")
               : buildWeMemoryResponse(memories, "xiaoc-owned")
           )
         } catch (error) {

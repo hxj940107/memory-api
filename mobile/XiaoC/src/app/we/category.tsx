@@ -21,6 +21,7 @@ const normalizeParam = (value?: string | string[]) =>
 export default function WeMemoryCategoryScreen() {
   const params = useLocalSearchParams();
   const category = normalizeParam(params.category);
+  const view = normalizeParam(params.view);
   const [items, setItems] = useState<WeMemory[]>([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -31,7 +32,7 @@ export default function WeMemoryCategoryScreen() {
     setFailed(false);
     try {
       const response = await apiJson<CategoryResponse>("/api/memory", {
-        query: { type: "we", category, user_id: APP_USER_ID },
+        query: { type: "we", ...(view ? { view } : { category }), user_id: APP_USER_ID },
         timeoutMs: 16000,
       });
       setItems(Array.isArray(response?.items) ? response.items : []);
@@ -41,7 +42,7 @@ export default function WeMemoryCategoryScreen() {
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }, [category, view]);
 
   useFocusEffect(useCallback(() => { loadMemories(); }, [loadMemories]));
 
