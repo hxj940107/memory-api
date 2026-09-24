@@ -1,10 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
+import { waitUntil } from "@vercel/functions"
 import fs from "fs"
 import path from "path"
 import { configuredPrivateAuthUserUuid, requireRequestIdentity } from '../lib/requestIdentity.js'
 import {
+  editOwnedMemory,
   listOwnedMemoryLibrary,
   mutateOwnedMemories,
+  setOwnedMemoryPin,
 } from '../lib/xiaocMemoryOwnedLifecycle.js'
 import {
   AI_ENDPOINTS,
@@ -24,6 +27,7 @@ import {
 import {
   backfillMemoryEmbeddingsBatch,
   createXiaoCMemoryEmbeddingProvider,
+  ensureActiveMemoryEmbedding,
   inventoryMemoryEmbeddings,
   reconcileMissingNativeEmbeddings,
   XIAOC_MEMORY_EMBEDDING_MAINTENANCE_SCOPES,
@@ -357,14 +361,14 @@ function normalizeMemoryBucket(bucket) {
 
 export function categorizeMemory(memory) {
   const displayCategory = String(memory.category || "").trim()
-  if (["关于你", "我们之间", "一起经历过", "小小偏好"].includes(displayCategory)) {
+  if (["关于你", "我们之间", "一起经历过", "相处方式"].includes(displayCategory)) {
     return displayCategory
   }
 
   const ownedCategory = {
     personal_fact: "关于你",
     relationship_memory: "我们之间",
-    relationship_preference: "我们之间",
+    relationship_preference: "相处方式",
     meaningful_experience: "一起经历过",
     long_term_concern: "关于你",
   }[String(memory.tags?.[0] || "").trim()]
@@ -384,21 +388,26 @@ export function categorizeMemory(memory) {
     return "关于你"
   }
 
-  return "小小偏好"
+  return "相处方式"
 }
 
-const WE_MEMORY_CATEGORIES = ["关于你", "我们之间", "一起经历过", "小小偏好"]
+const WE_MEMORY_CATEGORIES = ["关于你", "我们之间", "一起经历过", "相处方式"]
 const WE_MEMORY_CATEGORY_IDS = {
   "关于你": "about-her",
   "我们之间": "our-relationship",
   "一起经历过": "shared-experiences",
-  "小小偏好": "small-preferences",
+  "相处方式": "relationship-preferences",
 }
 
 function getWeCategoryMemories(memories, name) {
   return memories
-    .filter((memory) => !memory.pinned && categorizeMemory(memory) === name)
-    .sort((a, b) => b.importance - a.importance || b.score - a.score)
+    .filter((memory) => categorizeMemory(memory) === name)
+    .sort((a, b) =>
+      Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+      || Number(a.pinOrdinal ?? Number.MAX_SAFE_INTEGER) - Number(b.pinOrdinal ?? Number.MAX_SAFE_INTEGER)
+      || String(b.lastActiveAt || b.createdAt || "").localeCompare(String(a.lastActiveAt || a.createdAt || ""))
+      || String(a.id || "").localeCompare(String(b.id || ""))
+    )
 }
 
 export function buildWeMemoryCategoryResponse(memories, category, source = "ombre") {
@@ -413,17 +422,8 @@ export function buildWeMemoryCategoryResponse(memories, category, source = "ombr
 }
 
 export function buildWeMemoryResponse(memories, source = "ombre") {
-  const now = Date.now()
-  const recentSince = now - 7 * 24 * 60 * 60 * 1000
-  const recentCount = memories.filter((memory) => {
-    const timestamp = new Date(memory.createdAt || memory.lastActiveAt).getTime()
-
-    return !Number.isNaN(timestamp) && timestamp >= recentSince
-  }).length
   const pinned = memories
     .filter((memory) => memory.pinned)
-    .sort((a, b) => b.importance - a.importance || b.score - a.score)
-  const pinnedIds = new Set(pinned.map((memory) => memory.id))
   const categories = WE_MEMORY_CATEGORIES.map((name) => {
     const items = getWeCategoryMemories(memories, name)
 
@@ -434,26 +434,14 @@ export function buildWeMemoryResponse(memories, source = "ombre") {
       items: items.slice(0, 6),
     }
   })
-  const recent = [...memories]
-    .filter((memory) => !(source !== "ombre" && pinnedIds.has(memory.id)))
-    .sort((a, b) =>
-      String(b.lastActiveAt || b.createdAt).localeCompare(
-        String(a.lastActiveAt || a.createdAt)
-      )
-    )
-    .slice(0, 8)
 
   return {
     source,
-    pinAvailable: source === "ombre" || source.startsWith("ombre-"),
-    editAvailable: source === "ombre" || source.startsWith("ombre-"),
+    pinAvailable: source === "xiaoc-owned" || source === "ombre" || source.startsWith("ombre-"),
+    editAvailable: source === "xiaoc-owned" || source === "ombre" || source.startsWith("ombre-"),
     total: memories.length,
     pinnedTotal: pinned.length,
-    recentCount,
-    recentWindowLabel: "最近 7 天",
-    pinned: pinned.slice(0, 10),
     categories,
-    recent,
   }
 }
 
@@ -5606,20 +5594,73 @@ export default async function handler(req, res) {
       const bucket_id = req.body.bucket_id
 
       if (ownedMemoryAuthority) {
-        if (["archive", "delete"].includes(action) && !bucket_id) {
+        if (["archive", "delete", "update", "pin"].includes(action) && !bucket_id) {
           return res.status(400).json({ error: "bucket_id required", code: "OWNED_MEMORY_ID_REQUIRED" })
         }
-        if (["archive", "delete", "clear"].includes(action)) {
+        if (["archive", "delete", "clear", "update", "pin"].includes(action)) {
           try {
-            if (action === "delete") {
+            let visibleMemory = null
+            if (action !== "clear") {
               const visibleMemories = await listOwnedMemoryLibrary({
                 client: supabase,
                 userId: req.identity.legacyUserId,
               })
-              if (!visibleMemories.some((memory) => memory.id === bucket_id)) {
+              visibleMemory = visibleMemories.find((memory) => memory.id === bucket_id)
+              if (!visibleMemory) {
                 return res.status(404).json({ error: "OWNED_MEMORY_NOT_FOUND", code: "OWNED_MEMORY_NOT_FOUND" })
               }
             }
+
+            if (action === "pin") {
+              const result = await setOwnedMemoryPin({
+                client: supabase,
+                userId: req.identity.legacyUserId,
+                memoryId: bucket_id,
+                active: Boolean(req.body.pinned),
+                idempotencyKey: req.body.idempotency_key,
+              })
+              return res.status(200).json({ source: "xiaoc-owned", ...result })
+            }
+
+            if (action === "update") {
+              if (typeof req.body.content !== "string") {
+                return res.status(400).json({ error: "content must be a string", code: "OWNED_MEMORY_CONTENT_REQUIRED" })
+              }
+              const content = req.body.content.trim()
+              if (!content || content.length > MAX_MEMORY_CONTENT_CHARS) {
+                return res.status(400).json({
+                  error: !content ? "content cannot be empty" : `content exceeds ${MAX_MEMORY_CONTENT_CHARS} characters`,
+                  code: !content ? "OWNED_MEMORY_CONTENT_REQUIRED" : "OWNED_MEMORY_CONTENT_TOO_LONG",
+                })
+              }
+              const result = await editOwnedMemory({
+                client: supabase,
+                userId: req.identity.legacyUserId,
+                memoryId: bucket_id,
+                content,
+                category: req.body.category,
+                expectedRevision: req.body.expected_revision ?? visibleMemory.revision,
+                idempotencyKey: req.body.idempotency_key,
+              })
+              const embeddingProvider = createXiaoCMemoryEmbeddingProvider({ env: process.env })
+              waitUntil(ensureActiveMemoryEmbedding({
+                client: supabase,
+                provider: embeddingProvider,
+                memory: {
+                  id: result.memory_id,
+                  user_id: req.identity.legacyUserId,
+                  canonical_content: result.canonical_content,
+                  content_hash: result.content_hash,
+                },
+              }).catch(error => {
+                console.warn("OWNED MEMORY EDIT EMBEDDING FAILED:", {
+                  memory_id: result.memory_id,
+                  error_code: String(error?.code || error?.message || "EMBEDDING_FAILED").split(":")[0].slice(0, 80),
+                })
+              }))
+              return res.status(200).json({ source: "xiaoc-owned", ...result })
+            }
+
             const result = await mutateOwnedMemories({
               client: supabase,
               userId: req.identity.legacyUserId,
@@ -5631,7 +5672,9 @@ export default async function handler(req, res) {
             return res.status(200).json({ source: "xiaoc-owned", ...result })
           } catch (error) {
             const code = String(error?.message || error?.code || "OWNED_MEMORY_ACTION_FAILED")
-            const status = code.includes("NOT_FOUND") ? 404 : code.includes("REQUIRED") ? 400 : 409
+            const status = code.includes("NOT_FOUND") ? 404
+              : code.includes("REQUIRED") || code.includes("INVALID") || code.includes("TOO_LONG") ? 400
+                : code.includes("STALE") ? 409 : 409
             return res.status(status).json({ error: code, code })
           }
         }
