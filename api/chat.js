@@ -1584,13 +1584,23 @@ async function readCoreMemorySnapshot(conversationId) {
   const { data, error } = await supabase
     .from("conversation_summary")
     .select(
-      "core_memory_snapshot,core_memory_snapshot_hash,core_memory_snapshot_created_at,core_memory_source_bucket_ids"
+      "core_memory_snapshot,core_memory_snapshot_hash,core_memory_snapshot_created_at,core_memory_source_bucket_ids,owned_core_memory_snapshot,owned_core_memory_snapshot_hash,owned_core_memory_snapshot_created_at,owned_core_memory_sources"
     )
     .eq("conversation_id", conversationId)
     .maybeSingle()
 
   if (error) throw new Error(`Core memory snapshot read failed: ${error.message}`)
   return data
+}
+
+async function initializeOwnedCoreMemorySnapshot({ conversationId, userId }) {
+  const { data, error } = await supabase.rpc("xiaoc_memory_initialize_owned_core_snapshot", {
+    p_user_id: userId,
+    p_conversation_id: conversationId,
+  })
+
+  if (error) throw new Error(`Owned Core memory snapshot initialization failed: ${error.message}`)
+  return Array.isArray(data) ? data[0] : data
 }
 
 async function initializeCoreMemorySnapshot(candidate) {
@@ -3354,6 +3364,10 @@ const coreMemorySnapshot = await ensureCoreMemorySnapshot({
   conversationId: cid,
   readSnapshot: readCoreMemorySnapshot,
   initializeSnapshot: initializeCoreMemorySnapshot,
+  initializeOwnedSnapshot: ({ conversationId }) => initializeOwnedCoreMemorySnapshot({
+    conversationId,
+    userId: user_id,
+  }),
   authorityMode: memoryAuthorityMode,
 })
 
@@ -3457,6 +3471,7 @@ try {
         currentConversationId: cid,
       },
       memoryBudget: memoryContextBudget,
+      excludedMemoryIds: coreMemorySnapshot.sourceMemoryIds || [],
       shadowOnly: false,
       env: process.env,
       embeddingProvider: memoryEmbeddingProvider,

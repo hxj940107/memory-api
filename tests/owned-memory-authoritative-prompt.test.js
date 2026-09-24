@@ -38,7 +38,7 @@ function repository(rows) {
   }
 }
 
-test("owned_authoritative is explicit, Core-empty, and Ombre-fail-closed", async () => {
+test("owned_authoritative initializes Owned Core and remains Ombre-fail-closed", async () => {
   assert.equal(
     getMemoryAuthorityMode({ XIAOC_MEMORY_AUTHORITY_MODE: "owned_authoritative" }),
     MEMORY_AUTHORITY_MODE.OWNED_AUTHORITATIVE,
@@ -52,15 +52,22 @@ test("owned_authoritative is explicit, Core-empty, and Ombre-fail-closed", async
     conversationId: "owned-authoritative",
     authorityMode: MEMORY_AUTHORITY_MODE.OWNED_AUTHORITATIVE,
     readSnapshot: async () => null,
-    initializeSnapshot: async () => assert.fail("owned Core must not persist"),
+    initializeSnapshot: async () => assert.fail("owned Core must not use Ombre snapshot persistence"),
+    initializeOwnedSnapshot: async () => ({
+      owned_core_memory_snapshot: "Owned Core body",
+      owned_core_memory_snapshot_hash: "f439b72beff6de91924d31a95b70f9b5619e35f9aabebf5c6c9f4c0d38a8bb3f",
+      owned_core_memory_snapshot_created_at: NOW,
+      owned_core_memory_sources: [{ memory_id: "10000000-0000-4000-8000-000000000001", content_hash: "a".repeat(64) }],
+    }),
     fetchPinnedMemories: async () => assert.fail("owned Core must not call Ombre"),
   })
-  assert.equal(core.snapshot, "")
+  assert.equal(core.snapshot, "Owned Core body")
   assert.equal(core.authorityMode, MEMORY_AUTHORITY_MODE.OWNED_AUTHORITATIVE)
 })
 
 test("owned_authoritative ignores a persisted Ombre Core snapshot without using it as authority", async () => {
-  let initialized = false
+  let legacyInitialized = false
+  let ownedInitialized = false
   let fetched = false
   const core = await ensureCoreMemorySnapshot({
     conversationId: "legacy-core-conversation",
@@ -71,13 +78,23 @@ test("owned_authoritative ignores a persisted Ombre Core snapshot without using 
       core_memory_snapshot_created_at: NOW,
       core_memory_source_bucket_ids: ["legacy-bucket"],
     }),
-    initializeSnapshot: async () => { initialized = true },
+    initializeSnapshot: async () => { legacyInitialized = true },
+    initializeOwnedSnapshot: async () => {
+      ownedInitialized = true
+      return {
+        owned_core_memory_snapshot: "Owned replacement Core",
+        owned_core_memory_snapshot_hash: "72c9fcaea6a2c6e7a727299db433be55457b9bde0efbe265dd34cf815e288ddb",
+        owned_core_memory_snapshot_created_at: NOW,
+        owned_core_memory_sources: [{ memory_id: "10000000-0000-4000-8000-000000000002", content_hash: "b".repeat(64) }],
+      }
+    },
     fetchPinnedMemories: async () => { fetched = true },
   })
-  assert.equal(core.snapshot, "")
-  assert.deepEqual(core.sourceBucketIds, [])
+  assert.equal(core.snapshot, "Owned replacement Core")
+  assert.deepEqual(core.sourceMemoryIds, ["10000000-0000-4000-8000-000000000002"])
   assert.equal(core.authorityMode, MEMORY_AUTHORITY_MODE.OWNED_AUTHORITATIVE)
-  assert.equal(initialized, false)
+  assert.equal(legacyInitialized, false)
+  assert.equal(ownedInitialized, true)
   assert.equal(fetched, false)
 })
 
