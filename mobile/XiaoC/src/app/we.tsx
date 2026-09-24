@@ -19,6 +19,26 @@ type WeMemoryResponse = { source: string; total: number; pinnedTotal: number; ca
 
 const emptyData: WeMemoryResponse = { source: "empty", total: 0, pinnedTotal: 0, categories: [] };
 
+function normalizeMemoryResponse(value: unknown): WeMemoryResponse {
+  if (!value || typeof value !== "object") return emptyData;
+  const response = value as Partial<WeMemoryResponse>;
+  const categories = Array.isArray(response.categories)
+    ? response.categories.map((category, index) => ({
+        id: String(category?.id || `memory-category-${index}`),
+        name: String(category?.name || "记忆"),
+        total: Number.isFinite(Number(category?.total)) ? Number(category?.total) : 0,
+        items: Array.isArray(category?.items) ? category.items : [],
+      }))
+    : [];
+
+  return {
+    source: String(response.source || "empty"),
+    total: Number.isFinite(Number(response.total)) ? Number(response.total) : 0,
+    pinnedTotal: Number.isFinite(Number(response.pinnedTotal)) ? Number(response.pinnedTotal) : 0,
+    categories,
+  };
+}
+
 function openMemory(memory: WeMemory) {
   router.push({
     pathname: "/we/[id]",
@@ -90,7 +110,7 @@ export default function WeScreen() {
         query: { type: "we", user_id: APP_USER_ID },
         timeoutMs: 16000,
       });
-      setData(response);
+      setData(normalizeMemoryResponse(response));
     } catch (error) {
       console.log("We memory load failed:", error);
     } finally {

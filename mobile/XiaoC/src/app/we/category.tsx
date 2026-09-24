@@ -34,7 +34,7 @@ export default function WeMemoryCategoryScreen() {
         query: { type: "we", category, user_id: APP_USER_ID },
         timeoutMs: 16000,
       });
-      setItems(response.items || []);
+      setItems(Array.isArray(response?.items) ? response.items : []);
     } catch (error) {
       console.log("Memory category load failed:", error);
       setFailed(true);
