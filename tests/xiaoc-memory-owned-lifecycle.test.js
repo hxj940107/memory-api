@@ -373,6 +373,8 @@ test("Memory Library UI is four-category, body-only, two-line, and uses protecte
   assert.match(home, /normalizeMemoryResponse\(response\)/)
   assert.match(home, /Array\.isArray\(response\.categories\)/)
   assert.match(home, /Array\.isArray\(category\?\.items\) \? category\.items : \[\]/)
+  assert.match(home, /const items = Array\.isArray\(category\?\.items\) \? category\.items : \[\]/)
+  assert.doesNotMatch(home, /category\.items\.length/)
   assert.match(category, /Array\.isArray\(response\?\.items\) \? response\.items : \[\]/)
   assert.doesNotMatch(`${home}\n${category}`, /memory\.title|item\.title/)
   assert.match(home, /memory\.pinned \? "📌 " : ""/)

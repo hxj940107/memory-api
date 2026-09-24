@@ -76,11 +76,14 @@ function MemoryCard({ memory }: { memory: WeMemory }) {
 }
 
 function MemorySection({ category }: { category: WeCategory }) {
+  const items = Array.isArray(category?.items) ? category.items : [];
+  const total = Number.isFinite(Number(category?.total)) ? Number(category.total) : items.length;
+
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{category.name}</Text>
-        {category.total > category.items.length && (
+        {total > items.length && (
           <Pressable
             hitSlop={10}
             onPress={() => router.push({ pathname: "/we/category", params: { category: category.name } })}
@@ -90,7 +93,7 @@ function MemorySection({ category }: { category: WeCategory }) {
         )}
       </View>
 
-      {category.items.length > 0 ? category.items.map(memory => (
+      {items.length > 0 ? items.map(memory => (
         <MemoryCard key={memory.id} memory={memory} />
       )) : (
         <Text style={styles.emptyCategoryText}>这里暂时没有记忆。</Text>
