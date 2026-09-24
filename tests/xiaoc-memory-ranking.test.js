@@ -107,7 +107,7 @@ test("repository cannot return an unbounded pool", async () => {
   await assert.rejects(() => generateBoundedCandidates({ repository: repo, userId: "user", query: "memory" }), /LEXICAL_REPOSITORY_UNBOUNDED_RESULT/)
 })
 
-test("strong exact lexical and strong semantic candidates survive thresholds", async () => {
+test("strong exact lexical and strong semantic candidates remain ranked", async () => {
   const exact = await retrieve(repository({ lexical: [native("exact", "长滩岛")] }))
   assert.deepEqual(exact.results.map((item) => item.memory_id), ["exact"])
   const semantic = await retrieve(repository({ lexical: [], semantic: [semanticRow(native("semantic", "旧日海边旅行"), [1, 0])] }), { queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY, retrievalContext: { grounding: { strength: "STRONG", anchors: ["海边度假"] } } })
@@ -122,7 +122,7 @@ test("combined hybrid signal ranks above either weaker signal", async () => {
   assert.equal(result.results[0].memory_id, "both")
 })
 
-test("grounded hybrid dual signals use bounded relaxed admission without lowering single-signal guards", () => {
+test("low relevance lexical, hybrid, and semantic candidates remain ranked", () => {
   const candidate = {
     memory_id: "dual-signal",
     lexical_score: 0.206667,
@@ -133,20 +133,16 @@ test("grounded hybrid dual signals use bounded relaxed admission without lowerin
     eligibility: { eligible: true, authority: "legacy_limited", temporal_state: "current" },
   }
   const ranked = rankEligibleCandidate(candidate, { retrievalTime: NOW })
-  assert.equal(ranked.passes_threshold, true)
-  assert.equal(ranked.threshold, 0.27)
-  assert.ok(ranked.selection_reason_codes.includes("GROUNDED_HYBRID_DUAL_SIGNAL"))
+  assert.ok(ranked.selection_reason_codes.includes("RANKED_BY_RELEVANCE"))
 
   const weakHybrid = rankEligibleCandidate({ ...candidate, memory_id: "weak-dual", lexical_score: 0.1, semantic_score: 0.2 }, { retrievalTime: NOW })
-  assert.equal(weakHybrid.passes_threshold, false)
-  assert.equal(weakHybrid.threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.hybrid)
+  assert.equal(weakHybrid.component_scores.relevance, 0.148)
 
   const weakSemanticOnly = rankEligibleCandidate({ ...candidate, memory_id: "weak-semantic", lexical_score: 0, semantic_score: 0.4 }, { retrievalTime: NOW })
-  assert.equal(weakSemanticOnly.passes_threshold, false)
-  assert.equal(weakSemanticOnly.threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.semantic_only)
+  assert.equal(weakSemanticOnly.component_scores.relevance, 0.4)
 })
 
-test("semantic-only clear leading-cluster separation admits relevant candidates below the absolute threshold", async () => {
+test("semantic-only candidates below the former absolute threshold remain in ranked order", async () => {
   const result = await retrieve(repository({
     semantic: [
       semanticScoredRow(native("first", "第一条长期事实"), 0.560739),
@@ -154,11 +150,11 @@ test("semantic-only clear leading-cluster separation admits relevant candidates 
       semanticScoredRow(native("tail", "较弱的候选"), 0.354681),
     ],
   }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
-  assert.deepEqual(result.results.map(item => item.memory_id), ["first", "second"])
-  assert.ok(result.results.every(item => item.selection_reason_codes.includes("SEMANTIC_DISTRIBUTION_SEPARATED")))
+  assert.deepEqual(result.results.map(item => item.memory_id), ["first", "second", "tail"])
+  assert.equal(result.trace.ranked_pool_count, 3)
 })
 
-test("semantic-only close low-confidence distribution remains rejected", async () => {
+test("semantic-only close low-confidence distribution remains ranked", async () => {
   const result = await retrieve(repository({
     semantic: [
       semanticScoredRow(native("first", "候选甲"), 0.55),
@@ -166,25 +162,25 @@ test("semantic-only close low-confidence distribution remains rejected", async (
       semanticScoredRow(native("third", "候选丙"), 0.51),
     ],
   }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
-  assert.deepEqual(result.results, [])
+  assert.deepEqual(result.results.map(item => item.memory_id), ["first", "second", "third"])
 })
 
-test("semantic-only garbage rank one cannot pass on relative position alone", async () => {
+test("semantic-only low scores remain candidates and preserve score order", async () => {
   const result = await retrieve(repository({
     semantic: [
       semanticScoredRow(native("garbage-first", "弱候选甲"), 0.31),
       semanticScoredRow(native("garbage-second", "弱候选乙"), 0.1),
     ],
   }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
-  assert.deepEqual(result.results, [])
+  assert.deepEqual(result.results.map(item => item.memory_id), ["garbage-first", "garbage-second"])
 })
 
-test("semantic-only single high-confidence candidate keeps the existing absolute path", async () => {
+test("semantic-only single high-confidence candidate remains ranked", async () => {
   const result = await retrieve(repository({
     semantic: [semanticScoredRow(native("confident", "高置信候选"), 0.82)],
   }), { query: "自然语义查询", queryEmbedding: [1, 0], embeddingIdentity: EMBEDDING_IDENTITY })
   assert.deepEqual(result.results.map(item => item.memory_id), ["confident"])
-  assert.equal(result.results[0].selection_reason_codes.includes("SEMANTIC_DISTRIBUTION_SEPARATED"), false)
+  assert.ok(result.results[0].selection_reason_codes.includes("RANKED_BY_RELEVANCE"))
 })
 
 test("importance is clamped and remains a small soft boost", async () => {
@@ -203,9 +199,9 @@ test("recency decays softly and old events retain a floor", () => {
   assert.equal(scoreRecency(native("missing", "x", { created_at: null }), NOW), 0.35)
 })
 
-test("authority preference is limited and cannot rescue irrelevant verified memory", async () => {
+test("authority preference remains soft and relevance still determines order", async () => {
   const result = await retrieve(repository({ lexical: [native("irrelevant", "完全无关"), legacy("relevant", "长滩岛")] }))
-  assert.deepEqual(result.results.map((item) => item.memory_id), ["relevant"])
+  assert.deepEqual(result.results.map((item) => item.memory_id), ["relevant", "irrelevant"])
   assert.equal(result.results[0].legacy_limited, true)
 })
 
@@ -239,9 +235,12 @@ test("historical recall admits and boosts an expired historical event", async ()
   assert.ok(historical.results[0].selection_reason_codes.includes("HISTORICAL_RECALL_BOOST"))
 })
 
-test("irrelevant and weak accidental overlap return empty", async () => {
-  assert.equal((await retrieve(repository({ lexical: [native("none", "完全无关的工作记录")] }))).results.length, 0)
-  assert.equal((await retrieve(repository({ lexical: [native("weak", "长时间工作") ] }), { query: "长滩岛" })).results.length, 0)
+test("low lexical relevance remains ranked instead of being admission-rejected", async () => {
+  const unrelated = await retrieve(repository({ lexical: [native("none", "完全无关的工作记录")] }))
+  const weak = await retrieve(repository({ lexical: [native("weak", "长时间工作") ] }), { query: "长滩岛" })
+  assert.deepEqual(unrelated.results.map(item => item.memory_id), ["none"])
+  assert.deepEqual(weak.results.map(item => item.memory_id), ["weak"])
+  assert.ok(unrelated.results[0].relevance_score < 0.28)
 })
 
 test("top-k is bounded, configurable and contains no duplicate identities", async () => {

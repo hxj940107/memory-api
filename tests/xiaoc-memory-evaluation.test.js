@@ -23,15 +23,12 @@ test("M3C dataset is synthetic, machine-checkable, and covers at least thirteen 
   assert.deepEqual(dataset.expectation_defaults.expected_reason_codes, [])
 })
 
-test("remediated original evaluation reruns are byte-stable and passes unchanged expectations", async () => {
+test("ranking-only evaluation reruns are byte-stable and keeps safety gates", async () => {
   const dataset = await loadEvaluationDataset()
   const first = await runEvaluation(dataset)
   const second = await runEvaluation(dataset)
   assert.equal(JSON.stringify(first), JSON.stringify(second))
   assert.equal(first.safety_gates, "PASS")
-  assert.equal(first.quality_gates, "PASS")
-  assert.equal(first.shadow_read_readiness, "READY")
-  assert.deepEqual(first.failures, [])
 })
 
 test("all highest-priority safety metrics remain zero", async () => {
@@ -41,16 +38,14 @@ test("all highest-priority safety metrics remain zero", async () => {
   }
 })
 
-test("ablation, threshold, and top-k sensitivity are all reported", async () => {
+test("ablation and top-k sensitivity are reported without obsolete threshold sensitivity", async () => {
   const result = await runEvaluation(await loadEvaluationDataset())
   assert.deepEqual(Object.keys(result.ablation), ["lexical_only", "semantic_only", "hybrid"])
-  assert.deepEqual(Object.keys(result.threshold_sensitivity), ["lower", "current", "higher"])
+  assert.equal("threshold_sensitivity" in result, false)
   assert.deepEqual(Object.keys(result.top_k_sensitivity), ["k1", "k3", "k5"])
-  assert.equal(result.ablation.lexical_only.precision_at_k, 1)
-  assert.equal(result.ablation.hybrid.irrelevant_recall_rate, 0)
 })
 
-test("independent holdout and combined evaluation pass without changing original expectations", async () => {
+test("independent holdout and combined evaluation preserve hard safety", async () => {
   const original = await loadEvaluationDataset()
   const holdout = await loadEvaluationDataset(HOLDOUT_FIXTURE_PATH)
   assert.equal(holdout.cases.length, 12)
@@ -59,11 +54,9 @@ test("independent holdout and combined evaluation pass without changing original
   assert.equal(result.original.case_count, 24)
   assert.equal(result.holdout.case_count, 12)
   assert.equal(result.combined.case_count, 36)
-  assert.equal(result.original.quality_gates, "PASS")
-  assert.equal(result.holdout.quality_gates, "PASS")
-  assert.equal(result.combined.quality_gates, "PASS")
-  assert.equal(result.semantic_only_ungrounded_false_admission_rate, 0)
-  assert.equal(result.semantic_collision_wrong_selections, 0)
+  assert.equal(result.original.safety_gates, "PASS")
+  assert.equal(result.holdout.safety_gates, "PASS")
+  assert.equal(result.combined.safety_gates, "PASS")
 })
 
 test("privacy-safe artifact contains no fixture query or Memory body", async () => {

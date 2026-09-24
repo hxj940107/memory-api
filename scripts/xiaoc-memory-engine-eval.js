@@ -63,14 +63,6 @@ export function createSyntheticEvaluationRepository(caseDefinition) {
   }
 }
 
-function policyWithThresholdDelta(delta) {
-  return {
-    ...XIAOC_MEMORY_RETRIEVAL_POLICY,
-    version: `${XIAOC_MEMORY_RETRIEVAL_POLICY.version}:threshold:${delta >= 0 ? "+" : ""}${delta}`,
-    thresholds: Object.fromEntries(Object.entries(XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds).map(([key, value]) => [key, Math.min(1, Math.max(0, value + delta))])),
-  }
-}
-
 async function runCase(definition, dataset, { channelMode = "hybrid", topK = 3, policy = XIAOC_MEMORY_RETRIEVAL_POLICY } = {}) {
   if (definition.should_retrieve === false) return {
     id: definition.id, category: definition.category, selected_ids: [], suppressed: [], ranking: [],
@@ -186,10 +178,6 @@ export async function runEvaluation(dataset) {
     const variant = await evaluateVariant(dataset, { channelMode, topK: 3, policy: XIAOC_MEMORY_RETRIEVAL_POLICY })
     ablation[channelMode] = variant.metrics
   }
-  const thresholdSensitivity = {}
-  for (const [label, delta] of [["lower", -0.08], ["current", 0], ["higher", 0.08]]) {
-    thresholdSensitivity[label] = (await evaluateVariant(dataset, { channelMode: "hybrid", topK: 3, policy: policyWithThresholdDelta(delta) })).metrics
-  }
   const topKSensitivity = {}
   for (const topK of [1, 3, 5]) topKSensitivity[`k${topK}`] = (await evaluateVariant(dataset, { channelMode: "hybrid", topK, policy: XIAOC_MEMORY_RETRIEVAL_POLICY })).metrics
 
@@ -217,7 +205,6 @@ export async function runEvaluation(dataset) {
     failures,
     cases: base.results,
     ablation,
-    threshold_sensitivity: thresholdSensitivity,
     top_k_sensitivity: topKSensitivity,
     privacy: { real_historical_memory_bodies_used: 0, external_calls: 0, real_embeddings_created: 0, supabase_writes: 0 },
   }

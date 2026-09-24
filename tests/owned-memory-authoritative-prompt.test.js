@@ -11,7 +11,7 @@ import {
   isOwnedMemoryAuthorityMode,
 } from "../lib/memoryAuthority.js"
 import { ensureCoreMemorySnapshot } from "../lib/coreMemorySnapshot.js"
-import { XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K, retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
+import { retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
 import { XIAOC_MEMORY_EMBEDDING_IDENTITY } from "../lib/aiConfig.js"
 
 const NOW = "2026-09-20T12:00:00.000Z"
@@ -119,7 +119,7 @@ test("authoritative adapter injects only active native verified candidates and c
   assert.equal(budget.remainingChars, 0)
   assert.equal(result.telemetry.injected, true)
   assert.equal(result.telemetry.channel_mode, "LEXICAL_ONLY")
-  assert.ok(result.promptReadyCandidates.length <= 3)
+  assert.equal(result.promptReadyCandidates.length, 1)
   assert.equal(repo.calls.some(([name]) => name === "semantic"), false)
   assert.ok(result.diagnostics.some(item => item.candidate_id === "xiaoc-owned-active" && item.injected === true))
 })
@@ -144,20 +144,18 @@ test("semantic flag enables hybrid retrieval and merges a semantic hit", async (
     lexical_score: item.lexical_score,
     semantic_score: item.semantic_score,
     final_score: item.final_score,
-    threshold: item.threshold,
     stage: item.stage,
   })), [{
     memory_id: "semantic-hit",
     lexical_score: 0.771111,
     semantic_score: 0.95,
     final_score: 0.83414,
-    threshold: 0.32,
     stage: "ranked",
   }])
   assert.equal(JSON.stringify(result.telemetry).includes(item.canonical_content), false)
 })
 
-test("authoritative Context Gateway suppresses duplicates and unrelated memories", async () => {
+test("authoritative Context Gateway suppresses duplicates and backfills the next ranked memory", async () => {
   const duplicate = "她最喜欢蓝色石头"
   const result = await retrieveOwnedMemoryPromptCandidatesShadow({
     repository: repository([
@@ -171,8 +169,8 @@ test("authoritative Context Gateway suppresses duplicates and unrelated memories
     memoryBudget: createMemoryContextBudget(500),
     shadowOnly: false,
   })
-  assert.deepEqual(result.promptReadyCandidates, [])
-  assert.equal(result.telemetry.injected, false)
+  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["irrelevant"])
+  assert.equal(result.telemetry.injected, true)
   assert.ok(result.diagnostics.some(item => item.suppression_reason === "duplicate_recent"))
   assert.ok(result.telemetry.trace.gateway.some(item => item.memory_id === "duplicate" && item.suppression_reason === "duplicate_recent"))
 })
@@ -196,7 +194,7 @@ test("authoritative Gateway uses an exact complete sentence when selected Memory
   assert.ok(budget.usedChars <= budget.maxChars)
 })
 
-test("authoritative Gateway leaves fitting representations unchanged and stays inside Top-K budget", async () => {
+test("authoritative Gateway leaves fitting representations unchanged and stays inside the char budget", async () => {
   const row = memory("fit", "她喜欢蓝色石头。")
   const budget = createMemoryContextBudget(row.canonical_content.length)
   const result = await retrieveOwnedMemoryPromptCandidatesShadow({
@@ -205,12 +203,11 @@ test("authoritative Gateway leaves fitting representations unchanged and stays i
   })
   assert.equal(result.promptReadyCandidates.length, 1)
   assert.equal(result.promptReadyCandidates[0].content, row.canonical_content)
-  assert.ok(result.promptReadyCandidates.length <= XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K)
   assert.ok(result.diagnostics.filter(item => item.injected).every(item => item.representation_compacted === false))
   assert.ok(budget.usedChars <= budget.maxChars)
 })
 
-test("approved historical memories use normal Top-K while forbidden legacy tiers stay excluded", async () => {
+test("approved historical memories are budget-driven while forbidden legacy tiers stay excluded", async () => {
   const rows = [
     memory("legacy-a", "她喜欢蓝色石头", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
     memory("legacy-b", "她珍惜海边旅行", { origin_system: "ombre_legacy", provenance_status: "legacy_unverified", authority_tier: "legacy_limited", retrieval_tier: "low_authority" }),
@@ -258,25 +255,52 @@ test("Gateway suppression backfills prompt-ready slots from the ranked pool", as
   assert.equal(result.diagnostics.find(item => item.memory_id === "second")?.suppression_reason, "duplicate_recent")
 })
 
-test("Gateway refill never exceeds Top-K or the shared character budget", async () => {
+test("Gateway refill is not capped at three and never exceeds the shared character budget", async () => {
   const duplicate = "她喜欢蓝色石头"
   const rows = [
     memory("duplicate", duplicate),
-    memory("one", "她收藏蓝色玻璃石头"),
-    memory("two", "她珍惜蓝色纪念石头"),
-    memory("three", "她喜欢蓝色水晶石头"),
-    memory("four", "她保存蓝色旅行石头"),
+    memory("one", "甲"),
+    memory("two", "乙"),
+    memory("three", "丙"),
+    memory("four", "丁"),
   ]
-  const acceptedChars = rows.slice(1, 4).reduce((sum, row) => sum + row.canonical_content.length, 0)
+  const acceptedChars = rows.slice(1).reduce((sum, row) => sum + row.canonical_content.length, 0)
   const budget = createMemoryContextBudget(acceptedChars)
   const result = await retrieveOwnedMemoryPromptCandidatesShadow({
     repository: repository(rows), userId: "user", query: "蓝色石头", retrievalTime: NOW,
     context: { summaryTexts: [duplicate] }, memoryBudget: budget, shadowOnly: false,
   })
-  assert.equal(result.promptReadyCandidates.length, 3)
-  assert.ok(result.promptReadyCandidates.length <= XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K)
+  assert.equal(result.promptReadyCandidates.length, 4)
   assert.ok(budget.usedChars <= budget.maxChars)
   assert.equal(result.promptReadyCandidates.some(item => item.memoryId === "duplicate"), false)
+})
+
+test("Gateway skips an unsafe partial representation and backfills a later short Memory", async () => {
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository([
+      memory("long", "这是一条没有任何完整句号而且远远超过剩余预算的长期记忆正文"),
+      memory("short", "短记忆。"),
+    ]),
+    userId: "user", query: "任意", retrievalTime: NOW,
+    context: {}, memoryBudget: createMemoryContextBudget("短记忆。".length), shadowOnly: false,
+  })
+  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["short"])
+  assert.equal(result.promptReadyCandidates[0].content, "短记忆。")
+  assert.equal(result.diagnostics.find(item => item.memory_id === "long")?.suppression_reason, "budget_exceeded")
+})
+
+test("owned prompt injection strictly respects the unchanged 380 character budget", async () => {
+  const rows = Array.from({ length: 8 }, (_, index) => memory(`budget-${index}`, `${String(index).repeat(70)}。`))
+  const budget = createMemoryContextBudget(380)
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository(rows), userId: "user", query: "任意", retrievalTime: NOW,
+    context: {}, memoryBudget: budget, shadowOnly: false,
+  })
+  assert.ok(result.promptReadyCandidates.length > 3)
+  assert.ok(result.telemetry.used_chars <= 380)
+  assert.ok(budget.usedChars <= 380)
+  assert.equal(result.telemetry.remaining_budget_chars, 380 - result.telemetry.used_chars)
+  assert.ok(result.promptReadyCandidates.every(item => item.content.endsWith("。")))
 })
 
 test("chat wiring keeps both existing modes intact and owned authority non-proactive", () => {

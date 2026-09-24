@@ -3,10 +3,7 @@ import fs from "node:fs"
 import test from "node:test"
 
 import { createMemoryContextBudget } from "../lib/memoryContextGateway.js"
-import {
-  XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K,
-  retrieveOwnedMemoryPromptCandidatesShadow,
-} from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
+import { retrieveOwnedMemoryPromptCandidatesShadow } from "../lib/xiaocMemoryOwnedRetrievalAdapter.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 
 const NOW = "2026-09-20T12:00:00.000Z"
@@ -33,17 +30,17 @@ function repository(rows) {
   }
 }
 
-test("owned adapter is lexical-only, normal-current, thresholded, and Top-K <= 3", async () => {
-  const rows = [1, 2, 3, 4].map(index => memory(`owned-${index}`, `她喜欢蓝色石头 ${index}`))
+test("owned adapter is lexical-only and budget-driven without a fixed prompt Top-K", async () => {
+  const rows = ["甲", "乙", "丙", "丁"].map((content, index) => memory(`owned-${index + 1}`, content))
   const repo = repository(rows)
   const result = await retrieveOwnedMemoryPromptCandidatesShadow({
     repository: repo, userId: "user", query: "蓝色石头", retrievalTime: NOW,
     context: {}, maxChars: 1000,
   })
   assert.ok(result.promptReadyCandidates.length > 0)
-  assert.ok(result.promptReadyCandidates.length <= XIAOC_OWNED_MEMORY_PROMPT_READY_TOP_K)
+  assert.equal(result.promptReadyCandidates.length, 4)
   assert.equal(result.telemetry.channel_mode, "LEXICAL_ONLY")
-  assert.equal(result.telemetry.top_k, 3)
+  assert.equal(result.telemetry.ranked_pool_count, 4)
   assert.equal(result.telemetry.injected, false)
   assert.equal(repo.calls.some(([name]) => name === "semantic"), false)
   assert.equal(repo.calls[0][1].limit, 24)
@@ -68,13 +65,23 @@ test("only native verified and explicitly eligible legacy rows become prompt-rea
     repository: repository(rows), userId: "user", query: "蓝色石头", retrievalTime: NOW,
     context: {}, maxChars: 1000,
   })
-  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["active"])
+  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["active", "irrelevant"])
   const legacyOnly = await retrieveOwnedMemoryPromptCandidatesShadow({
     repository: repository(rows.filter(item => item.id.startsWith("legacy"))),
     userId: "user", query: "蓝色玻璃石头", retrievalTime: NOW, context: {}, maxChars: 1000,
   })
   assert.deepEqual(legacyOnly.promptReadyCandidates.map(item => item.memoryId), ["legacy-approved"])
   assert.equal(legacyOnly.promptReadyCandidates[0]?.source, "xiaoc_owned_legacy_limited")
+})
+
+test("Core source IDs remain excluded before ranking", async () => {
+  const result = await retrieveOwnedMemoryPromptCandidatesShadow({
+    repository: repository([memory("core", "核心事实"), memory("dynamic", "普通事实")]),
+    userId: "user", query: "事实", retrievalTime: NOW, context: {}, maxChars: 1000,
+    excludedMemoryIds: ["core"],
+  })
+  assert.deepEqual(result.promptReadyCandidates.map(item => item.memoryId), ["dynamic"])
+  assert.equal(result.telemetry.trace.candidates.some(item => item.memory_id === "core"), false)
 })
 
 test("Context Gateway dedupe and shared remaining budget are reused without consuming production budget", async () => {
@@ -106,7 +113,7 @@ test("canonical content stays internal and never enters Shadow telemetry or diag
   assert.doesNotMatch(JSON.stringify(result.diagnostics), new RegExp(secret))
 })
 
-test("eligible semantic-only candidates reach ranking without compatibility rejections", async () => {
+test("eligible semantic-only candidates reach ranking without an absolute admission gate", async () => {
   const privateContent = "她有一个需要长期记住的私人事实"
   const row = memory("semantic-private", privateContent)
   const repo = {
@@ -138,11 +145,10 @@ test("eligible semantic-only candidates reach ranking without compatibility reje
     context: {},
     maxChars: 1000,
   })
-  assert.deepEqual(result.telemetry.trace.admission_rejected, [])
   assert.equal(result.telemetry.trace.candidates[0].memory_id, "semantic-private")
   assert.equal(result.telemetry.trace.candidates[0].lexical_score, 0)
   assert.equal(result.telemetry.trace.candidates[0].semantic_score, 0.71)
-  assert.equal(result.telemetry.trace.candidates[0].threshold, 0.58)
+  assert.equal(result.telemetry.trace.candidates[0].stage, "ranked")
   assert.doesNotMatch(JSON.stringify(result.telemetry), new RegExp(privateContent))
 })
 

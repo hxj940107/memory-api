@@ -124,7 +124,7 @@ test("eligible semantic-only candidates enter ranking without lexical grounding 
   assert.equal(result.trace.compatibility_rejections.length, 0)
   assert.equal(result.trace.ranking_decisions[0].component_scores.lexical, 0)
   assert.equal(result.trace.ranking_decisions[0].component_scores.semantic, 1)
-  assert.equal(result.trace.ranking_decisions[0].threshold, XIAOC_MEMORY_RETRIEVAL_POLICY.thresholds.semantic_only)
+  assert.equal(result.trace.ranking_decisions[0].rank, 1)
 })
 
 test("strong grounded semantic-only evidence remains available", async () => {
@@ -149,19 +149,18 @@ test("semantic-only candidates are not vetoed before ranking by a strong lexical
   assert.ok(result.trace.ranking_decisions.some(item => item.memory_id === "wrong"))
 })
 
-test("semantic-only relevance uses the existing 0.58 threshold for high and weak evidence", async () => {
+test("semantic-only relevance below the former 0.58 gate remains in the ranked pool", async () => {
   const definition = fixtureCase({
     memories: [{ id: "high", content: "第一段无字面重合内容" }, { id: "weak", content: "第二段无字面重合内容" }],
     semantic_vectors: { high: [0.7, 0.71414284], weak: [0.5, 0.8660254] },
   })
   const result = await runCase(definition)
-  assert.deepEqual(result.results.map(item => item.memory_id), ["high"])
+  assert.deepEqual(result.results.map(item => item.memory_id), ["high", "weak"])
   assert.equal(result.trace.ranked_count, 2)
-  assert.equal(result.trace.threshold_rejected_count, 1)
   assert.equal(result.trace.compatibility_rejections.length, 0)
   const weak = result.trace.ranking_decisions.find(item => item.memory_id === "weak")
-  assert.equal(weak.threshold, 0.58)
-  assert.equal(weak.passes_threshold, false)
+  assert.equal(weak.component_scores.semantic, 0.5)
+  assert.ok(weak.reason_codes.includes("RANKED_BY_RELEVANCE"))
 })
 
 test("real recall phrasings remain fixtures without production keyword or perspective rules", async () => {
@@ -172,7 +171,7 @@ test("real recall phrasings remain fixtures without production keyword or perspe
     const result = await runCase(definition, options)
     assert.equal(result.results.length, 1)
     assert.equal(result.trace.ranking_decisions[0].component_scores.lexical, 0)
-    assert.equal(result.trace.ranking_decisions[0].threshold, 0.58)
+    assert.equal(result.trace.ranking_decisions[0].rank, 1)
   }
 })
 
