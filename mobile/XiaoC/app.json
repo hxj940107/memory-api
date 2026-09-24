@@ -3,6 +3,12 @@
     "name": "XiaoC",
     "slug": "XiaoC",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a554dfaf-e9d2-4293-b333-4f1a207a3807"
+    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "xiaoc",

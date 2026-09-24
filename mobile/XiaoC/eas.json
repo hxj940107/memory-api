@@ -8,6 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
+      "channel": "voice-poc",
       "env": {
         "XIAOC_VOICE_POC_BUILD": "1"
       }
@@ -15,15 +16,18 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "environment": "development"
+      "environment": "development",
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
-      "environment": "preview"
+      "environment": "preview",
+      "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
-      "environment": "production"
+      "environment": "production",
+      "channel": "production"
     }
   },
   "submit": {
