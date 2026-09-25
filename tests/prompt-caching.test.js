@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import {
   buildCachedPromptMessages,
-  buildHistoryPromptMessages,
   buildPromptCacheUsageLog,
 } from "../lib/promptCaching.js"
 
@@ -12,15 +11,10 @@ import {
     relationshipContract: "RELATIONSHIP-CONTRACT-STABLE",
     coreMemorySnapshot: "CORE-SNAPSHOT-STABLE",
     fixedRules: "FIXED-RULES-STABLE",
-    history: [
-      { role: "user", content: "HISTORY-USER" },
-      { role: "assistant", content: "HISTORY-ASSISTANT" },
-    ],
     dynamicContext: "CURRENT-TIME-2026-08-21 SUMMARY-DYNAMIC IMAGE-DYNAMIC",
   })
   const stable = JSON.stringify(messages[0])
-  const history = JSON.stringify(messages.slice(1, -1))
-  const dynamic = JSON.stringify(messages.at(-1))
+  const dynamic = JSON.stringify(messages[1])
 
   assert.match(stable, /PERSONA-STABLE/)
   assert.match(stable, /RELATIONSHIP-CONTRACT-STABLE/)
@@ -28,13 +22,9 @@ import {
   assert.match(stable, /FIXED-RULES-STABLE/)
   assert.doesNotMatch(stable, /CURRENT-TIME|SUMMARY-DYNAMIC|IMAGE-DYNAMIC/)
   assert.match(dynamic, /CURRENT-TIME-2026-08-21/)
-  assert.match(history, /HISTORY-USER/)
-  assert.match(history, /HISTORY-ASSISTANT/)
   assert.equal(messages[0].content.at(-1).cache_control.type, "ephemeral")
   assert.equal(messages[0].content.at(-1).cache_control.ttl, "1h")
-  assert.equal(messages.at(-2).content[0].cache_control.type, "ephemeral")
-  assert.equal(messages.at(-2).content[0].cache_control.ttl, undefined)
-  assert.equal(messages.at(-1).content.cache_control, undefined)
+  assert.equal(messages[1].content.cache_control, undefined)
   assert.deepEqual(
     messages[0].content.map(({ text }) => text),
     [
@@ -46,44 +36,6 @@ import {
   )
   assert.equal(messages[0].content[1].cache_control, undefined)
   assert.equal(messages[0].content[3].cache_control.type, "ephemeral")
-}
-
-{
-  const history = buildHistoryPromptMessages([
-    { role: "user", content: "first" },
-    { role: "assistant", content: "last" },
-  ])
-  assert.equal(history[0].content, "first")
-  assert.deepEqual(history[1].content, [{
-    type: "text",
-    text: "last",
-    cache_control: { type: "ephemeral" },
-  }])
-}
-
-{
-  const shared = {
-    persona: "PERSONA",
-    relationshipContract: "RELATIONSHIP",
-    coreMemorySnapshot: "CORE",
-    fixedRules: "RULES",
-    history: [
-      { role: "user", content: "persisted user" },
-      { role: "assistant", content: "persisted assistant" },
-    ],
-  }
-  const first = buildCachedPromptMessages({
-    ...shared,
-    dynamicContext: "SUMMARY-A RETRIEVAL-A WEB-A",
-  })
-  const second = buildCachedPromptMessages({
-    ...shared,
-    dynamicContext: "SUMMARY-B RETRIEVAL-B",
-  })
-
-  assert.deepEqual(first.slice(0, -1), second.slice(0, -1))
-  assert.notDeepEqual(first.at(-1), second.at(-1))
-  assert.equal(first.at(-1).role, "system")
 }
 
 {
@@ -147,16 +99,7 @@ import {
   assert.match(chat, /callLLM\(messages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /buildCachedPromptMessages\(\{/)
-  assert.match(chat, /history: promptHistory/)
-  assert.match(chat, /historyCacheEnabled: recentSelection\.cacheEnabled/)
   assert.match(chat, /relationshipContract: relationshipPrompt/)
-  assert.ok(
-    chat.indexOf("history: promptHistory") < chat.indexOf("dynamicContext: dynamicPromptContext")
-  )
-  assert.doesNotMatch(
-    chat.slice(chat.indexOf("const messages = ["), chat.indexOf("// ===== Prompt Inspector =====")),
-    /\.\.\.history\.map/
-  )
   assert.doesNotMatch(chat, /callLLM\([\s\S]{0,300}AI_MODELS\.imageDescription,[\s\S]{0,100}session_id/)
 }
 
