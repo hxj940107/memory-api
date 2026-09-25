@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import {
   allocateDynamicContextBudget,
+  buildDeterministicHistoryEpoch,
   selectTokenAwareRecentHistory,
 } from "../lib/dynamicContextBudget.js"
 import {
@@ -10,6 +11,13 @@ import {
 
 function message(id, role, content) {
   return { id: String(id), role, content, created_at: `2026-08-20T00:00:${String(id).padStart(2, "0")}.000Z` }
+}
+
+function makeTurns(count, content = index => `第 ${index} 轮`) {
+  return Array.from({ length: count }, (_, index) => ([
+    message(`u-${index + 1}`, "user", content(index + 1, "user")),
+    message(`a-${index + 1}`, "assistant", content(index + 1, "assistant")),
+  ])).flat()
 }
 
 // 1. Many short messages can exceed the old fixed 10-message window.
@@ -77,6 +85,64 @@ function message(id, role, content) {
   assert.ok(waiting.active > casual.active)
 }
 
+// A four-turn epoch keeps its seed byte-for-byte stable while the tail appends.
+{
+  const atBoundary = buildDeterministicHistoryEpoch(makeTurns(20), {
+    completedUserTurns: 20,
+    epochUserTurns: 4,
+  })
+  const nextTurn = buildDeterministicHistoryEpoch(makeTurns(21), {
+    completedUserTurns: 21,
+    epochUserTurns: 4,
+  })
+
+  assert.deepEqual(
+    nextTurn.messages.slice(0, atBoundary.messages.length).map(item => item.id),
+    atBoundary.messages.map(item => item.id)
+  )
+  assert.deepEqual(nextTurn.tailMessages.map(item => item.id), ["u-21", "a-21"])
+  assert.equal(nextTurn.earlyRollover, false)
+  assert.ok(nextTurn.baselineMessages.every(item => (
+    nextTurn.messages.some(candidate => candidate.id === item.id)
+  )))
+}
+
+// The fourth completed turn deterministically starts a new seed.
+{
+  const before = buildDeterministicHistoryEpoch(makeTurns(23), {
+    completedUserTurns: 23,
+    epochUserTurns: 4,
+  })
+  const after = buildDeterministicHistoryEpoch(makeTurns(24), {
+    completedUserTurns: 24,
+    epochUserTurns: 4,
+  })
+
+  assert.equal(before.epochPosition, 3)
+  assert.equal(after.epochPosition, 0)
+  assert.deepEqual(after.tailMessages, [])
+  assert.notEqual(after.messages[0].id, before.messages[0].id)
+}
+
+// Oversized epoch growth rolls over to the existing bounded selection; it does not truncate it.
+{
+  const messages = makeTurns(6, (index, role) => (
+    index === 6 ? `${role}-${"长".repeat(180)}` : `${role}-${index}`
+  ))
+  const result = buildDeterministicHistoryEpoch(messages, {
+    completedUserTurns: 6,
+    epochUserTurns: 4,
+    tokenBudget: 120,
+    tailTokenAllowance: 30,
+  })
+
+  assert.equal(result.earlyRollover, true)
+  assert.deepEqual(
+    result.messages.map(item => item.id),
+    result.baselineMessages.map(item => item.id)
+  )
+}
+
 // 14. Gateway applies the shared remaining budget and exposes budget_exceeded.
 {
   const budget = createMemoryContextBudget(20)
@@ -97,4 +163,3 @@ function message(id, role, content) {
 }
 
 console.log("dynamic context budget tests passed")
-

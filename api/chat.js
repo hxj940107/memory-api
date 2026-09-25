@@ -102,7 +102,7 @@ import {
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import {
   allocateDynamicContextBudget,
-  selectTokenAwareRecentHistory,
+  buildDeterministicHistoryEpoch,
 } from "../lib/dynamicContextBudget.js"
 import {
   applyProactiveEventProposals,
@@ -3258,11 +3258,20 @@ const userMessageId = await saveUserMessage(
   selfCallHeaders,
 )
 // 2. history
-const historyCandidates = await getRecentMessages(
-  user_id,
-  cid,
-  CONTEXT_BUDGET.recentHistoryFetchMessages
-)
+const [historyCandidates, completedUserTurnsResult] = await Promise.all([
+  getRecentMessages(
+    user_id,
+    cid,
+    CONTEXT_BUDGET.recentHistoryFetchMessages
+  ),
+  supabase
+    .from("messages")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user_id)
+    .eq("conversation_id", cid)
+    .eq("role", "user")
+    .neq("id", userMessageId),
+])
 const userMessageCreatedAt = historyCandidates.find(
   (historyMessage) => historyMessage.id === userMessageId
 )?.created_at || new Date().toISOString()
@@ -3292,14 +3301,25 @@ const dynamicContextBudget = allocateDynamicContextBudget({
   expectsWebContext,
   totalChars: CONTEXT_BUDGET.dynamicContextChars,
 })
-const recentSelection = selectTokenAwareRecentHistory(historyCandidates, {
-  excludeMessageIds: [userMessageId],
-  tokenBudget: CONTEXT_BUDGET.recentHistoryTokens,
-  charBudget: dynamicContextBudget.recent,
-  maxMessages: CONTEXT_BUDGET.recentHistoryMessages,
-  maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
-})
-const history = recentSelection.messages
+const persistedHistoryCandidates = historyCandidates.filter(
+  item => item.id !== userMessageId
+)
+const recentSelection = buildDeterministicHistoryEpoch(
+  persistedHistoryCandidates,
+  {
+    completedUserTurns: completedUserTurnsResult.error
+      ? null
+      : completedUserTurnsResult.count,
+    epochUserTurns: CONTEXT_BUDGET.historyCacheEpochUserTurns,
+    tokenBudget: CONTEXT_BUDGET.recentHistoryTokens,
+    tailTokenAllowance: CONTEXT_BUDGET.historyCacheTailTokens,
+    baselineCharBudget: dynamicContextBudget.recent,
+    maxMessages: CONTEXT_BUDGET.recentHistoryMessages,
+    maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
+  }
+)
+const history = recentSelection.baselineMessages
+const promptHistory = recentSelection.messages
 console.log("RECENT HISTORY BUDGET:", {
   tokenBudget: recentSelection.tokenBudget,
   estimatedTokens: recentSelection.estimatedTokens,
@@ -3309,6 +3329,10 @@ console.log("RECENT HISTORY BUDGET:", {
   hardMaxTurns: recentSelection.maxTurns,
   selectedMessages: recentSelection.selectedMessages,
   selectedTurns: recentSelection.selectedTurns,
+  promptSelectedMessages: promptHistory.length,
+  cacheEpochPosition: recentSelection.epochPosition,
+  cacheEarlyRollover: recentSelection.earlyRollover,
+  cacheEnabled: recentSelection.cacheEnabled,
 })
 const activeConversationContextPrompt = trimText(
   formatActiveConversationContext(activeConversationContext, {
@@ -3655,6 +3679,8 @@ ${systemPrompt}
 
 ${injectedPinMemory}`,
   fixedRules: fixedPromptRules,
+  history: promptHistory,
+  historyCacheEnabled: recentSelection.cacheEnabled,
   dynamicContext: dynamicPromptContext,
 })
 
@@ -3666,13 +3692,6 @@ const currentUserPromptContent = formatUserVoiceForPrompt(
 
 const messages = [
   ...cachedPromptMessages,
-
-  // 保留历史，但去掉最后一条用户消息
-  // 因为最后一条要重新加入（可能带图片）
-  ...history.map(item => ({
-    role: item.role,
-    content: item.content,
-  })),
 
   ...(webSearch
     ? [
