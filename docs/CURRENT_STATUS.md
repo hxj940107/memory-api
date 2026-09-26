@@ -1,148 +1,140 @@
 # XiaoC Current Status
 
-> Canonical snapshot: 2026-09-10 (Asia/Shanghai). This is a current fact and release-gate snapshot, not a changelog.
+> Canonical snapshot: 2026-09-26 (Asia/Shanghai). This is the repository and project handoff baseline, not a changelog. When Production state cannot be proven from repository evidence, it is marked **NEEDS CONFIRMATION**.
 
 ## Status Legend
 
-- **COMPLETE**: implemented and covered by the current local verification baseline.
-- **PRODUCTION**: active on the real production path.
-- **PENDING VERIFICATION**: implemented or configured, but still needs a new binary or production check.
-- **PAUSED**: deliberately not being expanded now.
-- **LATER / NON-BLOCKING**: future work, not a release blocker.
+- **DONE**: implemented in the current repository and supported by focused tests or retained migration evidence.
+- **PRODUCTION**: confirmed on the real XiaoC Private production path by retained project evidence.
+- **READY / NOT DEPLOYED**: implementation exists, but deployment or real-device verification is not established here.
+- **PAUSED / INCOMPLETE**: intentionally stopped or not yet implemented.
+- **NEEDS CONFIRMATION**: repository evidence is insufficient to assert the live external state.
 
-## Release Snapshot
+## Current State
 
-- **PRODUCTION** — XiaoC is a private, single-user, mobile-first AI companion. The Expo iOS app is primary; the web app is a historical prototype.
-- **PRODUCTION** — Vercel remains at the Hobby hard limit of `12/12` Serverless Functions.
-- **PENDING VERIFICATION** — The latest confirmed TestFlight binary is Production **Build 10**, created at **2026-09-05 15:20 Asia/Shanghai**. Do not assume Build 11 exists.
-- **PENDING VERIFICATION** — The next Production Build must embed EAS production `EXPO_PUBLIC_XIAOC_APP_TOKEN`, then pass real-device startup, chat, voice, and API checks.
-- **PENDING VERIFICATION** — Strict private API auth must remain disabled until that token-bearing binary is installed and verified.
+- **PRODUCTION** — XiaoC Private remains a private, single-user, mobile-first AI companion. The Expo iOS client is the primary product surface.
+- **DONE** — The repository root `public/` is only the Legacy Web Prototype. It is not the Public App and must not become its implementation path.
+- **SEPARATE REPOSITORY** — XiaoC Public is an independent product/client in `/Users/hxj/Documents/xiaoc-public`. `memory-api` and `xiaoc-public` are separate Git repositories; Public development must not turn XiaoC Private into a multi-user client.
+- **DONE** — Public App v1 is bounded as Own Stack: each user supplies and pays for their own Supabase, Vercel, OpenRouter and other enabled-service accounts. It is not a Hosted SaaS backed by XiaoC Private resources.
+- **DONE** — Shared Backend means reusable code, schema contracts, migrations, configuration conventions and maintenance patterns. It does not permit sharing XiaoC Private persona, memories, relationship state, business state, secrets, quotas or Production data with Public users.
+- **PRODUCTION CONSTRAINT** — Vercel Hobby remains at the hard limit of `12/12` Serverless Functions. New capabilities must reuse an existing endpoint unless another Function is first consolidated.
+- **PRODUCTION / REAL-DEVICE PASS** — iOS Production Build 17 is the current native baseline. It is in TestFlight, installed, and has passed real-device validation. The exact Production OTA update currently selected by installed devices and some live environment values remain external state.
 
-## Memory / Context
+## Done
 
-- **PRODUCTION SHADOW (1%)** — XiaoC Memory Engine has progressed from M0 source preservation through M1/M2 schema and historical import to M3D/M3D1 production Shadow. The 1% Shadow read is active, read-only, failure-isolated, and cannot inject into Chat or Context Gateway.
-- **PRODUCTION AUTHORITATIVE** — Ombre remains the authoritative Memory runtime and retrieval source. No XiaoC Memory Engine cutover, fallback, merge path, or embedding-based production retrieval is enabled.
-- **COMPLETE** — Historical preservation imported all `150/150` locked legacy memories into the XiaoC-owned schema with stable identity and lineage. Import completion did not enable production reads or create embeddings.
+### Memory / Context
 
-- **COMPLETE** — P0: factual Memory and conversational attention are separated; duplicate/novelty behavior, provenance boundaries, and “remembered but should not be raised now” regressions are covered.
-- **COMPLETE** — P1: Memory / Context Gateway, Stable Memory consolidation, provenance and supersedes, Core Memory Snapshot, token-aware Recent, Summary Segments, old-summary compression, and Dynamic Context Budget are implemented.
-- **PRODUCTION** — P1.5 proactive implementation is complete and production real-send is active. Scheduler wake-up, execution Gate, arbitration, final recheck, lifecycle protection, idempotency, and kill switch remain in force.
-- **COMPLETE / PAUSED** — P2 Shared Context Batch 1 is implemented for explicitly bound conversations with checkpoint recovery, batched updates, parse-failure backoff, and diagnostics. Further expansion is paused.
-- **PRODUCTION** — Active Context and proactive event proposals share one structured Haiku judge call. Parser failures are isolated; proposal failure does not discard a valid Active Context result.
-- **PRODUCTION** — Summary records historical continuity only. It does not create future reminders, active attention, or proactive eligibility.
-- **PRODUCTION** — Dynamic Memory excludes Core source buckets, preserves provenance, applies relevance/duplicate controls, and remains background knowledge rather than a topic recommendation system.
-- **DO NOT RESTORE** — New chat turns must not recreate the old per-message `plan_follow_up` path. Historical execution compatibility may remain until separately retired.
-- **LATER / NON-BLOCKING** — Deep on-demand retrieval and long-term heat / cold / archive lifecycle are not implemented.
+- XiaoC-owned `memory_items` is implemented as the authoritative Memory Engine path, including owner/lifecycle/provenance/authority eligibility, native capture, protected lifecycle operations, lexical/semantic hybrid discovery, deterministic ranking, dedupe/suppression, Top-K and Context Gateway budgeting.
+- The final manually reviewed historical corpus contains `97` eligible memories. The previous eligible historical set of `72` was made ineligible rather than physically deleted; rollback artifacts were prepared. The completed migration recorded:
+  - categories: `personal_fact=22`, `relationship_memory=17`, `meaningful_experience=16`, `relationship_preference=42`;
+  - importance: `10=14`, `8=53`, `5=23`, `3=7`;
+  - compatible embeddings: `97/97` at verification.
+- Production Memory authority is `owned_authoritative`; Memory Engine is the Production Memory mainline. Normal runtime performs no Ombre Memory I/O and has no Ombre fallback. The Railway Ombre service, Volume and historical data have not completed final retirement/cleanup and are retained only for rollback/archive; retirement remains paused backlog work.
+- Semantic-only candidates that pass deterministic eligibility participate in normal relevance ranking instead of being rejected solely for missing lexical grounding. Historical selection is no longer restricted to a one-item legacy slot; Gateway suppression can continue through ranked candidates to find prompt-ready replacements.
+- Owned Core Snapshot is restored: eligible PIN memories are frozen per conversation, persisted with identity/hash/source metadata, and reused within that conversation. PIN changes affect later conversations, not an already-frozen snapshot.
+- Memory Library is connected to owned Memory Engine and supports the four product categories, real eligible/pinned/recent counts and lists, pinned-first ordering, detail view, protected edit, protected soft-delete and protected PIN/UNPIN. Edits invalidate stale embedding compatibility and use the existing maintenance path for regeneration.
+- Memory / Context P0, P1 and P1.5 remain complete: Context Gateway, token-aware Recent, Summary Segments, Active Context, Shared Context Batch 1, stable provenance/supersedes boundaries and proactive-attention separation are retained.
+- Deep on-demand memory tool retrieval and long-term heat/cold/archive lifecycle are not implemented.
 
-## Proactive / Inactivity
+### Chat / Prompt / Cost
 
-- **PRODUCTION** — Inactivity proactive runs through the real scheduler, Judge, execution gates, persistence, and push path. A due time is only a Judge opportunity, never a guaranteed send.
-- **PRODUCTION** — In `frequent` mode, an open conversation gets its first Judge opportunity after a randomized **60–120 minutes** of silence.
-- **PRODUCTION** — In `frequent` mode, `conversation_end` gets a short protection period and then its first Judge opportunity after **120–180 minutes**. It is no longer a fixed 4–6 hour no-contact rule.
-- **PRODUCTION** — Conversation-end meaning remains context for the Judge; it lowers near-term interruption risk but does not lock the entire silence phase.
-- **PRODUCTION** — Quiet hours (`23:30–07:00`), cooldown, frequency sequencing, same-silence-phase limits, user-return cancellation, weather/event arbitration, execution-time recheck, and message/task idempotency still apply.
-- **PRODUCTION** — Judge may return `should_send=false`; no schedule window requires XiaoC to contact the user.
+- Main chat retains Persona, Relationship Contract, frozen Core Snapshot and fixed rules as the stable BP1 prefix with explicit `1h` caching and conversation-level session affinity.
+- Connectome-lite history folding is implemented: persisted history is represented as a cache-stable folded/append-only conversation layer with BP2, while volatile runtime context is serialized after that boundary as an explicitly marked contextual user block. This avoids OpenRouter lifting volatile mid-conversation system content ahead of history.
+- Production observation recorded BP2 cache reads around `11.6k–11.8k` cached tokens and ordinary warm-turn costs around `$0.0068–$0.0075`; these are observed samples, not a permanent pricing guarantee.
+- **COMPLETED / FROZEN** — Connectome-lite and activity-aware BP1 keepalive passed Production validation and are not active optimization work. Keepalive read `9,097` BP1 cached tokens at about `$0.00279`; a real chat after the original one-hour TTL still read the same `9,097` BP1 tokens, and subsequent turns resumed combined BP1+BP2 reads. One real main-chat activity can produce at most one near-expiry keepalive; it reuses the same stable-prefix builder, persists no message, and cannot keep itself alive indefinitely.
+- Rolling Summary, Recent Message Ledger, Recent History, retrieval, Active/Shared Context, environment and conditional contexts remain distinct. Cost work must not silently reduce Persona, relationship continuity, Core, Memory or history information.
+- Claude Sonnet 4.6 remains XiaoC's brain and image-tool decision-maker; a dedicated image model performs the image generation/edit operation. Production generation, inline rendering, historical generated-image rendering, fullscreen preview, direct Photos save and shared-album save have passed. Generated-image media actions did not add a new Vercel Function.
 
-## Moments / Weather
+### Moments / Album
 
-- **PRODUCTION** — Moments support text/images, delayed XiaoC viewing, like/comment/none/private-follow-up decisions, interaction notifications, unread state, detail navigation, and stable author identity.
-- **PRODUCTION** — Moment private follow-up is an immediate decision action with message-ID idempotency. It does not create a second delayed proactive task.
-- **PRODUCTION** — Historical Moment images use independently persisted image descriptions; assistant reply text is not visual provenance.
-- **PENDING FOLLOW-UP** — Continue checking historical-material selection versus current publishing perspective. Event time and publish time are separated, but edge cases where old material is narrated as if it just happened are not declared permanently solved.
-- **COMPLETE / PRODUCTION-CAPABLE** — Nanjing weather rhythm, holiday/workday handling, Shadow diagnostics, final weather recheck, dedupe, and inactivity arbitration are implemented. Real sends remain fail-closed behind `WEATHER_LIVE_SEND_ENABLED=true`; confirm activation from Production environment when auditing live behavior.
-- **LATER / NON-BLOCKING** — Weather windows must not become fixed greetings or fixed-time notifications.
+- Moments supports text/images, delayed viewing, likes/comments/private follow-up, interaction notifications and idempotent persistence.
+- Shared-album material discovery and structured image choice remain model-driven; relevant album material is offered as an option rather than forced into every Moment.
+- Album image compatibility accepts a sufficiently specific, normalized asset relation/entity label explicitly mentioned by source text as animal-subject grounding. Time-period, weather and unsupported-subject protections remain in force.
+- Event time and publish time are separated. Historical-material perspective remains an area for continued observation rather than a closed guarantee.
 
-## Chat / Search / History
+### Identity / Tenant Foundation
 
-- **COMPLETE** — History pagination is cumulative: older pages append without replacing loaded messages, with stable timestamp/message-ID ordering and deduplication.
-- **COMPLETE** — Prepending older history preserves the visible scroll anchor.
-- **COMPLETE** — Search queries full server-side conversation history rather than only locally loaded messages.
-- **COMPLETE** — Results jump to the real target with surrounding context and temporary query highlighting.
-- **COMPLETE** — Returning from located history restores the latest conversation position without corrupting pagination state.
-- **PRODUCTION** — Cloud message IDs remain stable identity for polling, HTTP replies, focus refresh, split bubbles, attachments, voice, favorites, and provenance.
+- M2C.3 Production grant containment, M2C.4 additive UUID foundation and M2C.5 first private companion binding are complete according to retained checkpoint documents.
+- The verified private Auth account is bound to the first active `companion_instances` root. The approved legacy `user` cohort was backfilled to that owner; excluded rows remain quarantined rather than guessed or reassigned.
+- The Private Trusted Identity Bridge is implemented across the current private API routes: Supabase JWTs are cryptographically verified, issuer/audience/expiry/subject are checked, the subject must match the configured private owner, and an active companion binding is required. Client-supplied UUID ownership is rejected.
+- The mobile client includes private Supabase enrollment/session persistence. A fixed app-token fallback exists only as an explicit compatibility switch; it is not a multi-user identity model.
+- Private runtime still preserves the legacy logical owner lane where required for compatibility. UUID foundation does not itself authorize UUID-authoritative writers, broad RLS changes, account switching or a Public client.
 
-## Diary / Favorites
+### Mobile / Release
 
-- **PRODUCTION** — Wife Observation Diary supports cloud entries, manual recent-date selection, generated short titles, time-grouped observations, XiaoC-perspective observation conclusions, deletion, and current presentation rules.
-- **KNOWN PRODUCT DECISION** — Bundled local diary sample entries in `mobile/XiaoC/src/data/observationDiary.ts` are permanently merged into the diary view. Do not delete them as stale data without an explicit product decision.
-- **PRODUCTION** — Favorites use local cache plus cloud synchronization and preserve stable message identity.
-- **COMPLETE / DATABASE APPLIED** — Concurrent `client_preferences` updates use Supabase `patch_client_preferences`. Favorites, ordinary preferences, and notification settings patch only their own fields; the SQL migration has been executed in Production.
+- EAS production builds use the `production` channel; Expo Updates uses the existing EAS project and `runtimeVersion.policy = fingerprint`, preventing native-incompatible OTA updates from targeting a different runtime.
+- Development and preview builds use separate channels. Production bundle identifier and EAS project identity remain unchanged.
+- Production iOS Build 17 is in TestFlight, installed and real-device verified. It includes `expo-media-library`; generated images can be saved directly to iPhone Photos.
+- Generated-image long press is available from both thumbnail and fullscreen preview, with “保存至本地” and “保存至共享相册”. Local success reports “保存成功”; shared-album save reuses the existing import/editor/upload path.
+- Memory Library management, chat/history, attachments, voice-message STT/TTS, Moments, shared album, diary, favorites and generated-image interactions are present in the private mobile client.
+- Voice Call Phase 0 media Checkpoints A/B remain complete but paused before Checkpoint C STT/model-pipeline expansion.
 
-## Voice / Audio
+## Paused / Incomplete
 
-- **COMPLETE / PAUSED** — Voice Call Phase 0 Checkpoints A and B passed. The media foundation is deliberately paused before model-pipeline expansion; the next gate is Checkpoint C (STT).
+- **Public App** — the separate repository exists at `/Users/hxj/Documents/xiaoc-public`; registration, public sign-in/recovery/logout, account lifecycle, onboarding, deployment UX and Own Stack setup progress must be tracked there, not inferred from `memory-api`.
+- **M2C.6+** — Core tenant constraint validation, remaining-domain UUID work and any later authority cutover are not started. No further UUID migration is authorized by this document.
+- **RLS** — M2C.3 grant containment is not equivalent to completed tenant RLS. The five Core tables documented by M2C.4 retained RLS-off/service-mediated behavior at that checkpoint. Current live catalog state beyond retained evidence needs fresh read-only verification before future work.
+- **Multi-user** — XiaoC Private is not being converted into a multi-user client. It has no account switcher, public registration, organization/team model, billing or shared quotas.
+- **Hosted SaaS** — subscriptions, pooled provider credits, subsidies, abuse controls and managed customer infrastructure are deferred and are not Public App v1 requirements.
+- **Memory future work** — deep tool-loop retrieval and heat/cold/archive lifecycle remain later work. Shared Context expansion is paused after Batch 1.
+- **Voice Call** — Checkpoint C and later realtime voice-model integration remain paused.
+- **Judge prefilter** — deterministic prefilter remains observational/Shadow unless separately authorized by sufficient production evidence.
 
-- **PRODUCTION** — XiaoC TTS uses MiniMax China (`speech-2.8-hd` by default) through the provider-neutral persistence boundary.
-- **PRODUCTION** — User STT uses Groq `whisper-large-v3`; transcript and voice modality enter the existing chat path without fabricated acoustic perception.
-- **COMPLETE** — Recording and XiaoC/user playback are unified on `expo-av ~16.0.8`. `expo-audio` is removed from dependencies and native plugins.
-- **COMPLETE** — Standalone Splash startup was repaired by removing the conflicting audio dependency/config and making native Splash release independent of audio initialization.
-- **COMPLETE** — Chat unmount cleanup releases `Audio.Sound`, safely stops/unloads `Audio.Recording`, clears timers, avoids upload/transcription/send, and restores `allowsRecordingIOS: false`.
-- **COMPLETE** — Hold-to-record, release-to-send, swipe-up cancel, swipe-down restore, 60-second cap, playback, and transcript expand/collapse remain intact.
-- **LATER / NON-BLOCKING** — A future Expo audio migration is not a current blocker.
+## Next
 
-## Startup / Private API Auth
+1. Resume Public App only in `/Users/hxj/Documents/xiaoc-public`; do not build it under `memory-api/public/` or add multi-user UX to XiaoC Private.
+2. Before Public implementation, write the Own Stack bootstrap contract: required user-owned services, secret placement, migration/version compatibility, health checks, rollback and upgrade path.
+3. Define the Shared Backend extraction boundary from current private code. Share generic mechanisms only; require explicit configuration and separate data stores/credentials for each Public installation.
+4. Reassess M2C.6+ as an Engine identity/data-isolation project. Start with fresh read-only schema/RLS/runtime evidence and separate approval; do not infer authorization from M2C.5 completion.
+5. Continue production observation of owned Memory retrieval, Core/PIN behavior and Moments material selection; keep the Production-passed Connectome-lite, cache keepalive and generated-image baseline frozen unless a demonstrated blocker appears.
+6. Keep the private iOS release path healthy: Production EAS build for native/config changes, Production OTA only for JS/TS changes compatible with the installed fingerprint runtime.
 
-- **COMPLETE** — Root Splash release does not wait for network, storage, authentication, cloud preferences, or audio initialization.
-- **COMPLETE** — Welcome reads local account/password first with recoverable error handling. Cloud preferences synchronize in the background and cannot keep `unlockReady` pending.
-- **CONFIGURED / PENDING VERIFICATION** — Vercel Production has a new `XIAOC_APP_TOKEN`; EAS production has the matching `EXPO_PUBLIC_XIAOC_APP_TOKEN`; the last configuration verification reported `MATCH` without exposing either value.
-- **CONFIGURED** — `CRON_SECRET` exists and remains separate from private App authentication.
-- **NOT YET ENABLED** — `XIAOC_APP_AUTH_ENABLED` is intentionally not `true`. Build 10 was not confirmed to contain the new client token, so enabling strict auth now could cut off the installed App.
-- **PENDING VERIFICATION** — After validating the next token-bearing Production Build, enable `XIAOC_APP_AUTH_ENABLED=true`, redeploy, then verify unauthenticated private API requests return `401`, App requests succeed, and Cron continues to run.
-- **SECURITY NOTE** — The embedded token protects this privately distributed API from casual unauthenticated access; it is not device attestation. Rotate both sides and rebuild if exposed.
+## Current Architecture Boundaries
 
-## Token / Cost
+### Product boundary
 
-- **PRODUCTION** — Explicit prompt caching works. The stable prefix contains Persona, Relationship Contract, Core Memory Snapshot, and fixed rules; current time and dynamic context remain after the breakpoint.
-- **COMPLETE** — Recent Message Ledger now exposes compact `m1`, `m2` ordering, speaker, compact Shanghai time, and only meaningful special sources. Full UUIDs remain unchanged in internal provenance and persistence.
-- **COMPLETE** — Stable Summary/Memory/context-use rules moved into the cache prefix without duplication.
-- **COMPLETE** — Empty User Profile, Summary, Dynamic Memory, Active Context, Shared Context, Diary, and other optional dynamic blocks omit headings and filler.
-- **ESTIMATE, NOT GUARANTEE** — Offline formatting estimates indicate about **830–850 fewer uncached input tokens per typical turn**. With the audited workload and cache pattern, a typical main-chat turn may move from about **$0.0115 toward ~$0.009**. Production usage must confirm the saving.
-- **PAUSED** — Do not compress Persona, Relationship Contract, Core Snapshot, Recent content, or reduce model quality merely to lower nominal input.
+```text
+XiaoC Private client
+  -> Private API/runtime
+  -> Private Supabase, provider accounts, persona/memory/relationship state
 
-## Engineering Health
+XiaoC Public (`/Users/hxj/Documents/xiaoc-public`, separate repo/client)
+  -> user-owned Own Stack deployment
+  -> user-owned Supabase/Vercel/providers/data
 
-Refresh this baseline whenever code changes. As of this snapshot:
+Shared Backend
+  = reusable mechanisms and contracts
+  != shared tenant, credentials, quota, persona, Memory or relationship state
+```
 
-- Full Node tests: `265/265` passing.
-- Mobile TypeScript: `0 errors` with `npx tsc --noEmit`.
-- `git diff --check`: passing.
-- Vercel API Functions: `12/12`.
+### Runtime boundary
 
-## Observability
+- Mobile clients call the service-mediated API; service code resolves trusted identity and owner scope. The client cannot select an arbitrary UUID owner.
+- Memory authority, Core Snapshot, retrieval eligibility and lifecycle protection remain server-owned. Production is `owned_authoritative`; Ombre must not re-enter normal runtime I/O.
+- Memory existence/retrieval is not proactive eligibility. Summary, Active Context and proactive events retain distinct responsibilities.
+- Current XiaoC Private data and provider accounts must never become defaults or fallbacks for Public installations.
+- No new `api/*.js` Function may be added while the repository remains at `12/12` without first consolidating an existing Function.
 
-- **PRODUCTION / HEALTHY** — Treehole execution and `xiaoc_background_check` run audits are active with privacy-safe, append-only records and 60-day retention.
-- **PRODUCTION / HEALTHY** — Audit writes are failure-isolated; `service_role` has direct `SELECT`/`INSERT` only, while expired-row deletion is restricted to the cleanup RPC.
+## Known Technical Debt / Follow-up
 
-## Planned Product Phase
+- Dedicated Memory and multi-user design documents intentionally retain historical checkpoint status. They are evidence records, not the canonical present-tense snapshot; this file takes precedence for current status.
+- `docs/memory-context-architecture.md` still contains Ombre-era present-tense wording and an older cache/accounting snapshot. It needs a separate architecture-focused update before being treated as fully current.
+- Railway Ombre service/Volume/historical data remain only for rollback/archive. Final retirement and cleanup are paused backlog work and require separately approved, recoverable handling; normal Production runtime must not use them.
+- Service-role mediation is still broad. Per-domain RLS/credential narrowing must follow M2C checkpoint discipline and cannot be inferred from JWT verification alone.
+- Production deployment state is partly external to git. EAS build/update IDs, Vercel environment switches, Supabase catalog state and provider routing must be rechecked at the start of release or migration work.
+- Generated-image and Moments media paths need continued privacy, signed-URL and lifecycle observation; no evidence here authorizes changing storage policy.
+- The old `265/265` full-suite baseline is obsolete. Do not quote a new full-suite number until it is intentionally rerun.
 
-- **IN PROGRESS / M2C.5 COMPLETE** — Multi-user database isolation has completed Production grant containment, the additive UUID foundation, and the first private companion binding. The verified private Auth account owns the exact 3,966-row legacy `user` manifest; 3,329 excluded Core rows remain quarantined and unbound. M2C.6 is not started, and the current application runtime remains on its private legacy identity lane.
+## Needs Confirmation
 
-## Current Priorities
-
-### Release blockers / required sequence
-
-1. Create the next EAS Production Build using the `production` environment; do not assume its number before EAS creates it.
-2. Install through TestFlight and verify startup, unlock, chat, recording/playback, and API access on a real device.
-3. Confirm that binary contains the configured production client token without printing it.
-4. Enable Vercel Production `XIAOC_APP_AUTH_ENABLED=true` and redeploy.
-5. Verify: no-token private API returns `401`; the App still accesses private APIs; Cron remains authorized and operational.
-
-### Follow-up, not release blockers
-
-- Keep XiaoC Memory Engine at 1% Shadow until its review gate is satisfied; Ombre remains authoritative and cutover requires separate approval.
-- Resume Voice Call at Checkpoint C only when the paused Phase 0 work is explicitly restarted.
-- Reassess M2C.6+ scope before any further implementation; continue only Engine identity/data-isolation work and keep Hosted-SaaS operations deferred.
-- Observe production Token/Cost after cache warm-up and compare with the offline estimate.
-- Continue Moments event-time/publish-time and historical-material perspective checks.
-- Decide whether permanent bundled diary samples should remain a lasting product feature; until then, preserve them.
-- Keep Shared Context expansion paused until a concrete companion-experience need justifies the next batch.
-- Old API compatibility branches and Expo starter leftovers are isolated low-priority cleanup.
-- Continue production observation of proactive reliability and Judge diagnostics; do not revive broad P1.5 redesign without a real blocker.
+- Exact Production OTA update currently selected by installed devices.
+- Current live values of identity compatibility switches and whether fixed app-token fallback is still enabled.
+- Current live RLS/policy/catalog state outside the completed M2C.3–M2C.5 evidence.
 
 ## Development Guardrails
 
-- Read `docs/PRODUCT_VISION.md`, `docs/DEVELOPMENT_PRINCIPLES.md`, and `docs/memory-context-architecture.md` before Memory/Context work.
-- Do not add `api/*.js` unless another Function is first consolidated or removed; Production is already `12/12`.
-- Do not expose secret values in logs, documentation, tests, or reports.
-- Memory retrieval or prompt inclusion never grants proactive attention.
-- Prefer small, reversible changes and verify the real production path before expanding architecture.
+- Read `docs/PRODUCT_VISION.md`, `docs/DEVELOPMENT_PRINCIPLES.md`, this file and `docs/memory-context-architecture.md` before Memory/Context or identity work.
+- Do not expose secrets, private Memory bodies or personal identifiers in docs, tests, logs or reports.
+- Do not modify XiaoC Private runtime, enable UUID writers, apply schema/RLS changes or deploy merely to make documentation match a desired future state.
+- Prefer small, reversible changes with focused verification. Preserve owner/lifecycle/provenance/authority, prompt budgets and user-visible continuity.
+- Public App work must preserve Own Stack isolation and must never default to XiaoC Private infrastructure.
