@@ -4,7 +4,9 @@ import {
   buildCachedPromptMessages,
   buildHistoryPromptMessages,
   buildPromptCacheUsageLog,
+  buildStablePromptMessage,
 } from "../lib/promptCaching.js"
+import { MAIN_CHAT_FIXED_RULES } from "../lib/mainChatFixedRules.js"
 
 {
   const messages = buildCachedPromptMessages({
@@ -50,6 +52,19 @@ import {
   )
   assert.equal(messages[0].content[1].cache_control, undefined)
   assert.equal(messages[0].content[3].cache_control.type, "ephemeral")
+}
+
+{
+  const input = {
+    persona: "PERSONA-STABLE",
+    relationshipContract: "RELATIONSHIP-CONTRACT-STABLE",
+    coreMemorySnapshot: "CORE-SNAPSHOT-STABLE",
+    fixedRules: "FIXED-RULES-STABLE",
+  }
+  assert.deepEqual(
+    buildStablePromptMessage(input),
+    buildCachedPromptMessages({ ...input, history: [], dynamicContext: "" })[0],
+  )
 }
 
 {
@@ -123,10 +138,11 @@ import {
   assert.match(dynamicSource, /stableMemory/)
   assert.match(dynamicSource, /diaryContext/)
   assert.match(dynamicSource, /webSearch/)
-  assert.match(fixedSource, /【Context Layers｜上下文使用边界】/)
-  assert.match(fixedSource, /Summary 是 recent raw window 之前的历史连续性背景/)
-  assert.match(fixedSource, /Stable Memory、Memory 与 Core Memory 都只是背景事实/)
-  assert.match(fixedSource, /【Web Search Policy｜联网边界】/)
+  assert.equal(fixedSource.includes("MAIN_CHAT_FIXED_RULES"), true)
+  assert.match(MAIN_CHAT_FIXED_RULES, /【Context Layers｜上下文使用边界】/)
+  assert.match(MAIN_CHAT_FIXED_RULES, /Summary 是 recent raw window 之前的历史连续性背景/)
+  assert.match(MAIN_CHAT_FIXED_RULES, /Stable Memory、Memory 与 Core Memory 都只是背景事实/)
+  assert.match(MAIN_CHAT_FIXED_RULES, /【Web Search Policy｜联网边界】/)
   assert.doesNotMatch(dynamicSource, /Summary 是 recent raw window 之前的历史连续性背景/)
   assert.doesNotMatch(dynamicSource, /Stable Memory、Memory 与 Core Memory 都只是背景事实/)
   assert.doesNotMatch(fixedSource, /new Date|randomUUID|message\.id|created_at|recentMessageLedger/)

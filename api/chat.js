@@ -86,7 +86,15 @@ import {
   buildCoreMemoryExclusionIds,
   ensureCoreMemorySnapshot,
   fetchAvailableMemoriesByIds,
+  readStoredCoreMemorySnapshot,
 } from "../lib/coreMemorySnapshot.js"
+import {
+  BP1_CACHE_KEEPALIVE_SOURCE_TYPE,
+  BP1_CACHE_KEEPALIVE_TASK_TYPE,
+  buildBp1CacheKeepaliveSuffix,
+  getBp1CacheKeepaliveDueAt,
+} from "../lib/cacheKeepalive.js"
+import { MAIN_CHAT_FIXED_RULES } from "../lib/mainChatFixedRules.js"
 import {
   LEGACY_CORE_MEMORY_BUCKET_IDS,
 } from "../lib/dynamicMemoryFilter.js"
@@ -127,6 +135,7 @@ import {
   buildCachedPromptMessages,
   buildContextualPromptMessage,
   buildPromptCacheUsageLog,
+  buildStablePromptMessage,
 } from "../lib/promptCaching.js"
 import {
   MOMENT_IMAGE_LIBRARY,
@@ -804,6 +813,52 @@ async function enqueueInactivityReachOutTask({
 
   if (error) throw error
 
+  return data
+}
+
+async function enqueueBp1CacheKeepalive({
+  user_id,
+  conversation_id,
+  user_message_id,
+  model,
+  activity_at = new Date(),
+}) {
+  if (!user_message_id || !conversation_id) return null
+  const scheduledAt = new Date(activity_at).toISOString()
+
+  await supabase
+    .from("xiaoc_proactive_tasks")
+    .update({ status: "skipped", last_error: "superseded_by_new_main_chat_activity", updated_at: scheduledAt })
+    .eq("user_id", user_id)
+    .eq("conversation_id", conversation_id)
+    .eq("type", BP1_CACHE_KEEPALIVE_TASK_TYPE)
+    .eq("status", "pending")
+
+  const { data, error } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert({
+      user_id,
+      type: BP1_CACHE_KEEPALIVE_TASK_TYPE,
+      source_type: BP1_CACHE_KEEPALIVE_SOURCE_TYPE,
+      source_id: user_message_id,
+      status: "pending",
+      due_at: getBp1CacheKeepaliveDueAt(activity_at),
+      conversation_id,
+      reason: "Refresh the active conversation BP1 cache once after real chat activity.",
+      payload: {
+        activity_message_id: user_message_id,
+        activity_at: scheduledAt,
+        model: normalizeChatModel(model),
+      },
+      completed_at: null,
+      message_id: null,
+      last_error: null,
+      updated_at: scheduledAt,
+    }, { onConflict: "user_id,type,source_type,source_id" })
+    .select("id,due_at,status")
+    .single()
+
+  if (error) throw error
   return data
 }
 
@@ -3201,6 +3256,36 @@ export default async function handler(req, res) {
     const normalizedFileText = trimText(String(fileText || "").trim(), 12000)
     const hasFileText = Boolean(normalizedFileName && normalizedFileText)
 
+    if (req.body?.action === BP1_CACHE_KEEPALIVE_TASK_TYPE) {
+      if (req.identity?.actorType !== "cron") {
+        return res.status(401).json({ error: "Unauthorized" })
+      }
+      const storedSnapshot = readStoredCoreMemorySnapshot(
+        await readCoreMemorySnapshot(cid),
+        memoryAuthorityMode,
+      )
+      if (!storedSnapshot) {
+        return res.status(409).json({ error: "Frozen Core snapshot unavailable" })
+      }
+      const stableMessage = buildStablePromptMessage({
+        persona: `\n${systemPrompt}\n`,
+        relationshipContract: relationshipPrompt,
+        coreMemorySnapshot: `【Identity｜人格层】\n\n${storedSnapshot.snapshot}`,
+        fixedRules: MAIN_CHAT_FIXED_RULES,
+      })
+      const keepalive = await callLLM(
+        [stableMessage, buildBp1CacheKeepaliveSuffix()],
+        selectedChatModel,
+        { max_tokens: 1, temperature: 0, session_id: cid },
+      )
+      console.log("BP1 CACHE KEEPALIVE:", {
+        conversation_id: cid,
+        model: selectedChatModel,
+        ...buildPromptCacheUsageLog(keepalive.usage),
+      })
+      return res.status(200).json({ success: true })
+    }
+
     const existingClientTurn = await findExistingClientTurn(
       user_id,
       cid,
@@ -3600,31 +3685,7 @@ console.log("CHAT MODEL:", selectedChatModel)
 const environmentContext = buildEnvironmentContext()
 const imageUnderstandingContext = buildImageUnderstandingContext(normalizedImageKinds)
 
-const fixedPromptRules = `【Time Authority｜当前时间优先级】
-Environment 是本轮请求唯一可信的当前时间，来自服务端并已转换为用户时区。
-历史消息、summary、memory 中出现的“晚安、晚上、刚才、现在”等都只属于当时语境，不能用来推断本轮当前时间。
-如果历史里的小C曾判断错时间，必须忽略旧判断；用户询问时间或当前状态时，只根据 Environment 回答。
-白天不得因为历史里出现“晚安、睡觉、睡不着”而继续使用夜间语境。
-回复前必须区分三件事：本轮 Environment 表示的当前真实时间、正在讨论的事件发生时间、你此刻准备执行的聊天行为时间。讨论昨晚或睡前发生的事，不代表现在仍处于昨晚或睡前；过去事件语境不能自动变成当前行为状态。只有她在当前消息中明确表达现在准备睡觉、补觉等新状态时，才按当前证据进入对应语境。
-Recent Message Ledger 只提供真实消息时间与来源；Recent Messages 的 role/content 保持当时原文。主动消息中关于更早历史的自我叙述不自动成为事实。发生冲突时，她的原话和数据库中实际出现过的消息行为优先于小C后来对自己历史的描述。
-
-【Project Context｜项目上下文】
-当前 XiaoC 的主聊天模型由 App 设置独立选择，Haiku 4.5 继续用于 memory judge / summary。用户正在关注 token 成本控制；回答项目技术问题时，优先结合当前架构给具体建议，不要询问你已经知道的模型信息。
-Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私人观察。除非她明确说“我写了”，不要说成“她写的 diary”；应该说“我写给你的 diary”或“我写的那篇”。
-深夜树洞由树洞页面里的“催更”入口或小C的自主更新触发。聊天中不要声称已经写入或更新树洞；如果她在聊天里催更，可以自然提醒她去树洞页面催你。
-
-【Voice Modality｜语音消息边界】
-当消息被标注为语音时，你知道她选择了亲口说出这段话，而不是键盘输入。语音形式只是对话背景，不要求每次在回复中提及，也不要固定说“收到语音”或“听到了”。
-当前系统只提供语音转写和时长，没有可靠的声学分析。除非转写内容明确说明，否则不得声称听出了她的音色、语速、停顿、笑声、哭腔、疲惫、撒娇、音量或其他情绪声音特征。可以自然回应“她把这句话说出口了”这件事，但不能虚构没有提供的听觉细节。
-
-【Web Search Policy｜联网边界】
-普通聊天和可凭稳定知识回答的问题不要联网。
-只有当当前问题依赖会变化的外部事实，而且你确实无法可靠确认时，才只输出一行：[[WEB_SEARCH_NEEDED: 精简搜索词]]
-不要附加其他文字，不要把聊天历史、私人记忆、称呼或人格信息写进搜索词。
-
-【Context Layers｜上下文使用边界】
-Summary 是 recent raw window 之前的历史连续性背景，不是当前注意力列表；与 Recent Messages 仍有重叠的内容不能因此获得额外重要性。
-Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。`
+const fixedPromptRules = MAIN_CHAT_FIXED_RULES
 
 const systemDynamicRules = joinContextBlocks([
   imageUnderstandingContext,
@@ -4152,6 +4213,18 @@ console.log("======================================\n")
           console.error("moment auto-create failed:", err)
         })
     )
+
+    waitUntil(enqueueBp1CacheKeepalive({
+      user_id,
+      conversation_id: cid,
+      user_message_id: userMessageId,
+      model: selectedChatModel,
+      activity_at: userMessageCreatedAt || new Date(),
+    }).then(task => {
+      if (task) console.log("BP1 CACHE KEEPALIVE QUEUED:", task)
+    }).catch(err => {
+      console.error("BP1 cache keepalive enqueue failed:", err)
+    }))
 
     waitUntil((async () => {
       try {

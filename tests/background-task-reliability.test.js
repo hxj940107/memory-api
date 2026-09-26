@@ -20,6 +20,7 @@ assert.equal(planBackgroundFailure({
   type: "treehole_autonomous_update",
   previousAttempts: 1,
 }).status, "failed")
+assert.equal(planBackgroundFailure({ type: "bp1_cache_keepalive" }).status, "failed")
 assert.equal(getPayloadRetryCount({ proactive_attention_send_attempt_count: 2 }), 2)
 assert.equal(getPayloadRetryCount({
   background_retry_count: 1,

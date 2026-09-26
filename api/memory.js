@@ -4,6 +4,10 @@ import fs from "fs"
 import path from "path"
 import { configuredPrivateAuthUserUuid, requireRequestIdentity } from '../lib/requestIdentity.js'
 import {
+  BP1_CACHE_KEEPALIVE_TASK_TYPE,
+  evaluateBp1CacheKeepaliveActivity,
+} from "../lib/cacheKeepalive.js"
+import {
   editOwnedMemory,
   listOwnedMemoryLibrary,
   mutateOwnedMemories,
@@ -3910,8 +3914,54 @@ async function executeProactiveAttentionWakeup(task) {
 }
 
 async function executeProactiveTask(task) {
-  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update", WEATHER_SHADOW_TASK_TYPE, PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE].includes(task.type)) {
+  if (!["plan_follow_up", "inactivity_reach_out", "treehole_autonomous_update", WEATHER_SHADOW_TASK_TYPE, PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(task.type)) {
     return { skipped: true, reason: "unsupported proactive task type" }
+  }
+
+  if (task.type === BP1_CACHE_KEEPALIVE_TASK_TYPE) {
+    const { data: latestUserMessage, error } = await supabase
+      .from("messages")
+      .select("id,conversation_id,created_at")
+      .eq("user_id", task.user_id)
+      .eq("conversation_id", task.conversation_id)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) return { skipped: true, reason: "keepalive_activity_check_failed" }
+    const eligibility = evaluateBp1CacheKeepaliveActivity(task, latestUserMessage)
+    if (!eligibility.eligible) {
+      return { skipped: true, reason: eligibility.reason }
+    }
+
+    try {
+      const response = await fetch(`${process.env.BASE_URL}/api/chat`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.CRON_SECRET}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: BP1_CACHE_KEEPALIVE_TASK_TYPE,
+          user_id: task.user_id,
+          conversation_id: task.conversation_id,
+          model: task.payload?.model,
+        }),
+      })
+      if (!response.ok) {
+        return { skipped: true, reason: `keepalive_request_failed_${response.status}` }
+      }
+      return {
+        shadowOnly: true,
+        conversationId: task.conversation_id,
+        payload: {
+          ...(task.payload || {}),
+          keepalive_completed_at: new Date().toISOString(),
+        },
+      }
+    } catch {
+      return { skipped: true, reason: "keepalive_request_failed" }
+    }
   }
 
   if (task.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE) {
@@ -4067,8 +4117,12 @@ async function checkPendingProactiveTasks() {
   if (error) throw error
   if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0, reconciliation, task_counts: taskCounts }
 
-  const shadowWakeups = pending.filter(item => item.type === PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
-  const quietDeferred = pending.filter(item => item.type !== PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE)
+  const quietHourExempt = pending.filter(item =>
+    [PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
+  )
+  const quietDeferred = pending.filter(item =>
+    ![PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
+  )
   if (isProactiveQuietHours(now) && quietDeferred.length) {
     const nextDueAt = getNextProactiveMorning(now)
     const { error: deferError } = await supabase
@@ -4084,7 +4138,7 @@ async function checkPendingProactiveTasks() {
       taskCounts.by_type[task.type] = (taskCounts.by_type[task.type] || 0) + 1
     }
 
-    if (!shadowWakeups.length) {
+    if (!quietHourExempt.length) {
       return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt, reconciliation, task_counts: taskCounts }
     }
   }
@@ -4095,12 +4149,13 @@ async function checkPendingProactiveTasks() {
 
   const taskPriority = {
     proactive_attention_wakeup: 0,
-    plan_follow_up: 1,
-    weather_shadow_check: 2,
-    inactivity_reach_out: 3,
-    treehole_autonomous_update: 4,
+    bp1_cache_keepalive: 1,
+    plan_follow_up: 2,
+    weather_shadow_check: 3,
+    inactivity_reach_out: 4,
+    treehole_autonomous_update: 5,
   }
-  const processablePending = isProactiveQuietHours(now) ? shadowWakeups : pending
+  const processablePending = isProactiveQuietHours(now) ? quietHourExempt : pending
   const prioritizedPending = [...processablePending].sort((a, b) =>
     (taskPriority[a.type] ?? 9) - (taskPriority[b.type] ?? 9)
   )
