@@ -46,6 +46,9 @@ export const normalizeGeneratedAttachments = (
   });
 };
 
+export const isImageAttachment = (attachment: GeneratedAttachment) =>
+  /^image\/(?:png|jpe?g|webp)$/i.test(attachment.mime_type.trim());
+
 export const formatAttachmentSize = (size: number) => {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
@@ -53,7 +56,11 @@ export const formatAttachmentSize = (size: number) => {
 };
 
 export const getAttachmentTypeLabel = (mimeType: string) =>
-  mimeType === "text/markdown" ? "Markdown" : "纯文本";
+  mimeType === "text/markdown"
+    ? "Markdown"
+    : mimeType === "text/plain"
+      ? "纯文本"
+      : "文件";
 
 export const getSafeDownloadFilename = (name: string) =>
   name.replace(/[\\/:*?"<>|]/g, "-").slice(0, 100) || "小C文件.txt";

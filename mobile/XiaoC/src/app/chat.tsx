@@ -79,6 +79,7 @@ import {
   formatAttachmentSize,
   getAttachmentTypeLabel,
   getSafeDownloadFilename,
+  isImageAttachment,
   normalizeGeneratedAttachments,
   type GeneratedAttachment,
 } from "../lib/generatedAttachments";
@@ -96,6 +97,7 @@ import {
   type MessageVoiceAsset,
 } from "../lib/messageVoice";
 import { normalizeUserVoiceAsset, type UserVoiceAsset } from "../lib/userVoice";
+import { ImagePreviewModal } from "../components/ImagePreviewModal";
 
 type Message = {
   id: string;
@@ -197,7 +199,7 @@ const hydrateGeneratedImageAttachments = async (
 ) =>
   Promise.all(
     attachments.map(async (attachment) => {
-      if (attachment.type !== "generated_image" || attachment.display_url) {
+      if (!isImageAttachment(attachment) || attachment.display_url) {
         return attachment;
       }
       try {
@@ -609,27 +611,41 @@ function ChatMessageImage({
   uri,
   multiple,
   subdued,
+  preserveAspectRatio = false,
 }: {
   uri: string;
   multiple: boolean;
   subdued: boolean;
+  preserveAspectRatio?: boolean;
 }) {
   const [aspectRatio, setAspectRatio] = useState(1);
+  const maxWidth = 240;
+  const maxHeight = 320;
+  const preservedSize = preserveAspectRatio
+    ? {
+        width: Math.min(maxWidth, maxHeight * aspectRatio),
+        height: Math.min(maxHeight, maxWidth / aspectRatio),
+      }
+    : null;
 
   return (
     <Image
       source={{ uri }}
-      resizeMode="cover"
+      resizeMode={preserveAspectRatio ? "contain" : "cover"}
       onLoad={(event) => {
         const { width, height } = event.nativeEvent.source;
 
         if (width && height) {
-          setAspectRatio(Math.min(Math.max(width / height, 0.72), 1.5));
+          setAspectRatio(
+            preserveAspectRatio
+              ? width / height
+              : Math.min(Math.max(width / height, 0.72), 1.5),
+          );
         }
       }}
       style={[
         styles.messageImage,
-        !multiple && { aspectRatio },
+        !multiple && (preservedSize || { aspectRatio }),
         multiple && styles.messageImageGridItem,
         subdued && styles.messageImageSending,
       ]}
@@ -2187,6 +2203,60 @@ export default function ChatScreen() {
     }
   };
 
+  const saveGeneratedImage = async (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    const save = async () => {
+      try {
+        const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
+          type: "generated_file",
+          action: "sign_download",
+          user_id: APP_USER_ID,
+          conversation_id: conversationIdRef.current,
+          message_id: message.cloudId || message.id,
+          attachment_id: attachment.id,
+        });
+        const cacheDirectory = `${FileSystem.cacheDirectory || ""}generated-images/`;
+        await FileSystem.makeDirectoryAsync(cacheDirectory, {
+          intermediates: true,
+        });
+        const localUri = `${cacheDirectory}${getSafeDownloadFilename(attachment.name)}`;
+        await FileSystem.deleteAsync(localUri, { idempotent: true });
+        const downloaded = await FileSystem.downloadAsync(signed.url, localUri);
+
+        if (!(await Sharing.isAvailableAsync())) {
+          Alert.alert("图片已下载", downloaded.uri);
+          return;
+        }
+        await Sharing.shareAsync(downloaded.uri, {
+          mimeType: attachment.mime_type,
+          dialogTitle: "保存图片",
+          UTI: "public.image",
+        });
+      } catch (error) {
+        console.log("Generated image save failed:", error);
+        Alert.alert("暂时无法保存图片", "请稍后再试。");
+      }
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["取消", "保存图片"],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => buttonIndex === 1 && void save(),
+      );
+      return;
+    }
+
+    Alert.alert("图片", undefined, [
+      { text: "取消", style: "cancel" },
+      { text: "保存图片", onPress: () => void save() },
+    ]);
+  };
+
   const sendMessage = async () => {
     if (isSendDisabled) return;
 
@@ -3207,14 +3277,14 @@ export default function ChatScreen() {
                           <>
                             {!!item.attachments?.some(
                               (attachment) =>
-                                attachment.type === "generated_image" &&
+                                isImageAttachment(attachment) &&
                                 attachment.display_url,
                             ) && (
                               <View style={styles.messageImageWrap}>
                                 {item.attachments
                                   .filter(
                                     (attachment) =>
-                                      attachment.type === "generated_image" &&
+                                      isImageAttachment(attachment) &&
                                       attachment.display_url,
                                   )
                                   .map((attachment) => (
@@ -3225,11 +3295,15 @@ export default function ChatScreen() {
                                           attachment.display_url || null,
                                         )
                                       }
+                                      onLongPress={() =>
+                                        saveGeneratedImage(item, attachment)
+                                      }
                                     >
                                       <ChatMessageImage
                                         uri={attachment.display_url || ""}
                                         multiple={false}
                                         subdued={false}
+                                        preserveAspectRatio
                                       />
                                     </Pressable>
                                   ))}
@@ -3237,13 +3311,13 @@ export default function ChatScreen() {
                             )}
                             {!!item.attachments?.some(
                               (attachment) =>
-                                attachment.type === "generated_file",
+                                !isImageAttachment(attachment),
                             ) && (
                               <View style={styles.generatedAttachmentList}>
                                 {item.attachments
                                   .filter(
                                     (attachment) =>
-                                      attachment.type === "generated_file",
+                                      !isImageAttachment(attachment),
                                   )
                                   .map((attachment) => (
                                   <Pressable
@@ -3668,32 +3742,11 @@ export default function ChatScreen() {
           </View>
         </View>
 
-        <Modal
+        <ImagePreviewModal
           visible={!!previewImageUri}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setPreviewImageUri(null)}
-        >
-          <Pressable
-            style={styles.imagePreviewOverlay}
-            onPress={() => setPreviewImageUri(null)}
-          >
-            {previewImageUri && (
-              <Image
-                source={{ uri: previewImageUri }}
-                style={styles.imagePreview}
-                resizeMode="contain"
-              />
-            )}
-
-            <Pressable
-              style={styles.imagePreviewClose}
-              onPress={() => setPreviewImageUri(null)}
-            >
-              <Text style={styles.imagePreviewCloseText}>×</Text>
-            </Pressable>
-          </Pressable>
-        </Modal>
+          images={previewImageUri ? [{ uri: previewImageUri }] : []}
+          onClose={() => setPreviewImageUri(null)}
+        />
 
         <Modal
           visible={messageMenuVisible}

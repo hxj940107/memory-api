@@ -211,7 +211,7 @@ test("mobile renders persisted generated images through the existing chat image 
   const app = fs.readFileSync(new URL("../mobile/XiaoC/src/app/chat.tsx", import.meta.url), "utf8")
   const history = fs.readFileSync(new URL("../api/history.js", import.meta.url), "utf8")
   assert.match(app, /hydrateGeneratedImageAttachments/)
-  assert.match(app, /attachment\.type === "generated_image"/)
+  assert.match(app, /isImageAttachment\(attachment\)/)
   assert.match(app, /<ChatMessageImage/)
   assert.match(history, /metadata: item\.metadata \|\| \{\}/)
 })
