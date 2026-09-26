@@ -79,7 +79,6 @@ import {
 } from "../lib/activeConversationContext.js"
 import {
   buildOptionalContextSection,
-  buildHistoricalSummaryView,
   buildRecentMessageLedger,
   joinContextBlocks,
 } from "../lib/mainChatContext.js"
@@ -102,7 +101,7 @@ import {
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import {
   allocateDynamicContextBudget,
-  selectTokenAwareRecentHistory,
+  buildDeterministicHistoryEpoch,
 } from "../lib/dynamicContextBudget.js"
 import {
   applyProactiveEventProposals,
@@ -126,6 +125,7 @@ import {
 } from "../lib/summarySegments.js"
 import {
   buildCachedPromptMessages,
+  buildContextualPromptMessage,
   buildPromptCacheUsageLog,
 } from "../lib/promptCaching.js"
 import {
@@ -3258,11 +3258,20 @@ const userMessageId = await saveUserMessage(
   selfCallHeaders,
 )
 // 2. history
-const historyCandidates = await getRecentMessages(
-  user_id,
-  cid,
-  CONTEXT_BUDGET.recentHistoryFetchMessages
-)
+const [historyCandidates, completedUserTurnsResult] = await Promise.all([
+  getRecentMessages(
+    user_id,
+    cid,
+    CONTEXT_BUDGET.recentHistoryFetchMessages
+  ),
+  supabase
+    .from("messages")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user_id)
+    .eq("conversation_id", cid)
+    .eq("role", "user")
+    .neq("id", userMessageId),
+])
 const userMessageCreatedAt = historyCandidates.find(
   (historyMessage) => historyMessage.id === userMessageId
 )?.created_at || new Date().toISOString()
@@ -3292,14 +3301,25 @@ const dynamicContextBudget = allocateDynamicContextBudget({
   expectsWebContext,
   totalChars: CONTEXT_BUDGET.dynamicContextChars,
 })
-const recentSelection = selectTokenAwareRecentHistory(historyCandidates, {
-  excludeMessageIds: [userMessageId],
-  tokenBudget: CONTEXT_BUDGET.recentHistoryTokens,
-  charBudget: dynamicContextBudget.recent,
-  maxMessages: CONTEXT_BUDGET.recentHistoryMessages,
-  maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
-})
-const history = recentSelection.messages
+const persistedHistoryCandidates = historyCandidates.filter(
+  item => item.id !== userMessageId
+)
+const recentSelection = buildDeterministicHistoryEpoch(
+  persistedHistoryCandidates,
+  {
+    completedUserTurns: completedUserTurnsResult.error
+      ? null
+      : completedUserTurnsResult.count,
+    epochUserTurns: CONTEXT_BUDGET.historyCacheEpochUserTurns,
+    tokenBudget: CONTEXT_BUDGET.recentHistoryTokens,
+    tailTokenAllowance: CONTEXT_BUDGET.historyCacheTailTokens,
+    baselineCharBudget: dynamicContextBudget.recent,
+    maxMessages: CONTEXT_BUDGET.recentHistoryMessages,
+    maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
+  }
+)
+const history = recentSelection.baselineMessages
+const promptHistory = recentSelection.messages
 console.log("RECENT HISTORY BUDGET:", {
   tokenBudget: recentSelection.tokenBudget,
   estimatedTokens: recentSelection.estimatedTokens,
@@ -3309,6 +3329,10 @@ console.log("RECENT HISTORY BUDGET:", {
   hardMaxTurns: recentSelection.maxTurns,
   selectedMessages: recentSelection.selectedMessages,
   selectedTurns: recentSelection.selectedTurns,
+  promptSelectedMessages: promptHistory.length,
+  cacheEpochPosition: recentSelection.epochPosition,
+  cacheEarlyRollover: recentSelection.earlyRollover,
+  cacheEnabled: recentSelection.cacheEnabled,
 })
 const activeConversationContextPrompt = trimText(
   formatActiveConversationContext(activeConversationContext, {
@@ -3393,27 +3417,18 @@ try {
     if (segments.length) {
       const selectedSummary = selectSummarySegmentsForPrompt(
         segments,
-        history.map(item => item.id),
-        dynamicContextBudget.summary
+        promptHistory.map(item => item.id),
+        CONTEXT_BUDGET.historyFoldSummaryChars
       ).content
-      summaryMemory = buildHistoricalSummaryView(
-        selectedSummary,
-        [
-          ...history,
-          ...(sharedContextPrompt ? [{ content: sharedContextPrompt }] : []),
-        ]
-      )
+      summaryMemory = selectedSummary
     } else {
       const rawSummary = normalizeAssistantOutput({
         role: "assistant",
         content: data?.summary || "",
       })
       summaryMemory = trimText(
-        buildHistoricalSummaryView(rawSummary, [
-          ...history,
-          ...(sharedContextPrompt ? [{ content: sharedContextPrompt }] : []),
-        ]),
-        dynamicContextBudget.summary
+        rawSummary,
+        CONTEXT_BUDGET.historyFoldSummaryChars
       );
     }
   } else if (data?.summary) {
@@ -3611,21 +3626,26 @@ Wife Observation Diary / 观察日记默认是小C写给她、写关于她的私
 Summary 是 recent raw window 之前的历史连续性背景，不是当前注意力列表；与 Recent Messages 仍有重叠的内容不能因此获得额外重要性。
 Stable Memory、Memory 与 Core Memory 都只是背景事实。只有当前消息自然关联时才使用，不要因为它们被注入就主动把旧话题带回来。`
 
-const dynamicPromptContext = joinContextBlocks([
-  environmentContext,
+const systemDynamicRules = joinContextBlocks([
   imageUnderstandingContext,
-  recentMessageLedger,
   webSearch
     ? buildOptionalContextSection(
-        "Web Search｜本轮联网结果使用方式",
+        "Web Search｜联网结果使用规则",
         "本轮已提供联网结果。只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答；不要输出搜索报告、来源清单或检索过程。"
       )
     : "",
+  attributionCorrectionContext,
+  diaryStyleContext,
+  buildGeneratedFileInstruction(generatedFileRequest),
+])
+
+const dynamicPromptContext = joinContextBlocks([
+  environmentContext,
+  recentMessageLedger,
   buildOptionalContextSection(
     "User Profile｜用户长期事实",
     stableMemory.join("\n")
   ),
-  buildOptionalContextSection("Summary｜长期摘要", summaryMemory),
   buildOptionalContextSection(
     "Memory｜相关长期记忆",
     trimList(dynamicMemory, CONTEXT_BUDGET.dynamicMemoryChars).join("\n")
@@ -3641,9 +3661,9 @@ const dynamicPromptContext = joinContextBlocks([
 
 ${diaryContext}`
     : "",
-  attributionCorrectionContext,
-  diaryStyleContext,
-  buildGeneratedFileInstruction(generatedFileRequest),
+  webSearch
+    ? buildOptionalContextSection("Web Search｜联网搜索结果", webSearch)
+    : "",
 ])
 
 const cachedPromptMessages = buildCachedPromptMessages({
@@ -3655,6 +3675,10 @@ ${systemPrompt}
 
 ${injectedPinMemory}`,
   fixedRules: fixedPromptRules,
+  systemDynamicRules,
+  foldedHistory: summaryMemory,
+  history: promptHistory,
+  historyCacheEnabled: recentSelection.cacheEnabled,
   dynamicContext: dynamicPromptContext,
 })
 
@@ -3666,24 +3690,6 @@ const currentUserPromptContent = formatUserVoiceForPrompt(
 
 const messages = [
   ...cachedPromptMessages,
-
-  // 保留历史，但去掉最后一条用户消息
-  // 因为最后一条要重新加入（可能带图片）
-  ...history.map(item => ({
-    role: item.role,
-    content: item.content,
-  })),
-
-  ...(webSearch
-    ? [
-        {
-          role: "system",
-          content: `【Web Search｜联网搜索】
-
-${webSearch}`
-        }
-      ]
-    : []),
 
   {
     role: "user",
@@ -3785,14 +3791,11 @@ if (fallbackSearchQuery) {
   if (fallbackWebSearch) {
     const searchedMessages = [
       ...messages.slice(0, -1),
-      {
-        role: "system",
-        content: `【Web Search｜联网搜索】
+      buildContextualPromptMessage(`【Web Search｜联网搜索结果】
 
 ${fallbackWebSearch}
 
-只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答。不要输出搜索报告、来源清单或检索过程。`
-      },
+只提取回答当前问题所需的事实，用小C平常聊天的口吻自然回答。不要输出搜索报告、来源清单或检索过程。`),
       messages[messages.length - 1]
     ]
 

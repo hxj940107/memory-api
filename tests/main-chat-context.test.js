@@ -60,8 +60,9 @@ const recent = [
   assert.match(chat, /content: historicalContent/)
   assert.doesNotMatch(chat, /content: formatTimestampedConversationMessage/)
   assert.match(chat, /buildRecentMessageLedger\(history\)/)
-  assert.match(chat, /\.\.\.history\.map\(item => \(\{[\s\S]*role: item\.role,[\s\S]*content: item\.content/)
-  assert.match(chat, /selectTokenAwareRecentHistory\(historyCandidates/)
+  assert.match(chat, /history: promptHistory/)
+  assert.match(chat, /buildDeterministicHistoryEpoch\(/)
+  assert.match(chat, /const history = recentSelection\.baselineMessages/)
 }
 
 console.log("main chat context tests passed")

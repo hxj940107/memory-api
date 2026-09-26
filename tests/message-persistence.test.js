@@ -84,7 +84,7 @@ test("chat requires a persisted user message id before loading history or callin
   const findExistingStart = source.indexOf("async function findExistingClientTurn")
   const saveUserSource = source.slice(saveUserStart, findExistingStart)
   const userSave = source.indexOf("const userMessageId = await saveUserMessage(")
-  const historyLoad = source.indexOf("const historyCandidates = await getRecentMessages(")
+  const historyLoad = source.indexOf("const [historyCandidates, completedUserTurnsResult] = await Promise.all([")
   const modelCall = source.indexOf("let llm = await callLLM(messages, selectedChatModel")
 
   assert.match(saveUserSource, /return requireSavedMessageId\(\{/)

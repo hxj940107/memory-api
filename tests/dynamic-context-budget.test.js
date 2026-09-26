@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import {
   allocateDynamicContextBudget,
+  buildDeterministicHistoryEpoch,
   selectTokenAwareRecentHistory,
 } from "../lib/dynamicContextBudget.js"
 import {
@@ -62,6 +63,49 @@ function message(id, role, content) {
 
 // 11, 12, 13. Deterministic scenarios shift allocations as intended.
 {
+  const first = Array.from({ length: 8 }, (_, index) =>
+    message(index + 1, index % 2 ? "assistant" : "user", `epoch-${index + 1}`)
+  )
+  const second = [
+    ...first,
+    message(9, "user", "epoch-9"),
+    message(10, "assistant", "epoch-10"),
+  ]
+  const n = buildDeterministicHistoryEpoch(first, {
+    completedUserTurns: 5,
+    epochUserTurns: 4,
+  })
+  const n1 = buildDeterministicHistoryEpoch(second, {
+    completedUserTurns: 6,
+    epochUserTurns: 4,
+  })
+  assert.deepEqual(
+    n1.messages.slice(0, n.messages.length).map(item => item.id),
+    n.messages.map(item => item.id)
+  )
+  assert.ok(n.baselineMessages.every(item => n.messages.some(next => next.id === item.id)))
+}
+
+{
+  const messages = [
+    message(1, "user", "甲".repeat(1200)),
+    message(2, "assistant", "乙".repeat(1200)),
+    message(3, "user", "丙".repeat(1200)),
+    message(4, "assistant", "丁".repeat(1200)),
+  ]
+  const result = buildDeterministicHistoryEpoch(messages, {
+    completedUserTurns: 3,
+    epochUserTurns: 4,
+    tokenBudget: 900,
+    tailTokenAllowance: 20,
+    baselineCharBudget: 2400,
+  })
+  assert.equal(result.earlyRollover, true)
+  assert.deepEqual(result.messages, result.baselineMessages)
+}
+
+// 11, 12, 13. Deterministic scenarios shift allocations as intended.
+{
   const casual = allocateDynamicContextBudget({ currentMessage: "今天午饭吃什么？" })
   const recall = allocateDynamicContextBudget({ currentMessage: "你还记得我们上次聊过的旅行吗？", hasMemoryHit: true })
   const waiting = allocateDynamicContextBudget({
@@ -97,4 +141,3 @@ function message(id, role, content) {
 }
 
 console.log("dynamic context budget tests passed")
-
