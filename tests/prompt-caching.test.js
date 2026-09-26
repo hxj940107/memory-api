@@ -150,7 +150,7 @@ import { MAIN_CHAT_FIXED_RULES } from "../lib/mainChatFixedRules.js"
   assert.match(dynamicSource, /joinContextBlocks\(\[/)
   assert.match(
     chat,
-    /const mainChatOptions = buildGeneratedFileChatOptions\(generatedFileRequest, cid\)/
+    /const generatedFileChatOptions = buildGeneratedFileChatOptions\(generatedFileRequest, cid\)/
   )
   assert.match(chat, /callLLM\(messages, selectedChatModel, mainChatOptions\)/)
   assert.match(chat, /callLLM\(searchedMessages, selectedChatModel, mainChatOptions\)/)

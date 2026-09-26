@@ -4,7 +4,8 @@ export type GeneratedAttachment = {
   mime_type: string;
   size: number;
   storage_path: string;
-  type: "generated_file";
+  type: "generated_file" | "generated_image";
+  display_url?: string;
 };
 
 export const normalizeGeneratedAttachments = (
@@ -21,7 +22,7 @@ export const normalizeGeneratedAttachments = (
     const size = Number(value.size);
 
     if (
-      value.type !== "generated_file" ||
+      !["generated_file", "generated_image"].includes(String(value.type)) ||
       typeof value.id !== "string" ||
       typeof value.name !== "string" ||
       typeof value.mime_type !== "string" ||
@@ -37,7 +38,10 @@ export const normalizeGeneratedAttachments = (
       mime_type: value.mime_type,
       size,
       storage_path: value.storage_path,
-      type: "generated_file" as const,
+      type: value.type as GeneratedAttachment["type"],
+      ...(typeof value.display_url === "string"
+        ? { display_url: value.display_url }
+        : {}),
     }];
   });
 };

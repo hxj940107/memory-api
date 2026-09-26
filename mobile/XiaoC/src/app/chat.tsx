@@ -190,6 +190,33 @@ type SignedAttachmentResponse = {
   expires_in: number;
 };
 
+const hydrateGeneratedImageAttachments = async (
+  messageId: string,
+  conversationId: string,
+  attachments: GeneratedAttachment[],
+) =>
+  Promise.all(
+    attachments.map(async (attachment) => {
+      if (attachment.type !== "generated_image" || attachment.display_url) {
+        return attachment;
+      }
+      try {
+        const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
+          type: "generated_file",
+          action: "sign_download",
+          user_id: APP_USER_ID,
+          conversation_id: conversationId,
+          message_id: messageId,
+          attachment_id: attachment.id,
+        });
+        return { ...attachment, display_url: signed.url };
+      } catch (error) {
+        console.log("Generated image signing failed:", error);
+        return attachment;
+      }
+    }),
+  );
+
 type MessageVoiceResponse = {
   url: string;
   expires_in: number;
@@ -1064,6 +1091,12 @@ export default function ChatScreen() {
           ? savedDiaryKeys.has(getDiaryEntryKey(diaryEntry))
           : false;
 
+        const attachments = await hydrateGeneratedImageAttachments(
+          String(item.id),
+          conversationIdRef.current || "",
+          normalizeGeneratedAttachments(item.metadata),
+        );
+
         return {
           id: String(item.id),
           cloudId: String(item.id),
@@ -1075,7 +1108,7 @@ export default function ChatScreen() {
           fileName: item.metadata?.fileName,
           fileMimeType: item.metadata?.fileMimeType,
           fileSize: item.metadata?.fileSize,
-          attachments: normalizeGeneratedAttachments(item.metadata),
+          attachments,
           text:
             treeholeDraft ||
             shouldHideImagePlaceholderText(
@@ -3172,9 +3205,47 @@ export default function ChatScreen() {
                           />
                         ) : (
                           <>
-                            {!!item.attachments?.length && (
+                            {!!item.attachments?.some(
+                              (attachment) =>
+                                attachment.type === "generated_image" &&
+                                attachment.display_url,
+                            ) && (
+                              <View style={styles.messageImageWrap}>
+                                {item.attachments
+                                  .filter(
+                                    (attachment) =>
+                                      attachment.type === "generated_image" &&
+                                      attachment.display_url,
+                                  )
+                                  .map((attachment) => (
+                                    <Pressable
+                                      key={attachment.id}
+                                      onPress={() =>
+                                        setPreviewImageUri(
+                                          attachment.display_url || null,
+                                        )
+                                      }
+                                    >
+                                      <ChatMessageImage
+                                        uri={attachment.display_url || ""}
+                                        multiple={false}
+                                        subdued={false}
+                                      />
+                                    </Pressable>
+                                  ))}
+                              </View>
+                            )}
+                            {!!item.attachments?.some(
+                              (attachment) =>
+                                attachment.type === "generated_file",
+                            ) && (
                               <View style={styles.generatedAttachmentList}>
-                                {item.attachments.map((attachment) => (
+                                {item.attachments
+                                  .filter(
+                                    (attachment) =>
+                                      attachment.type === "generated_file",
+                                  )
+                                  .map((attachment) => (
                                   <Pressable
                                     key={attachment.id}
                                     style={({ pressed }) => [

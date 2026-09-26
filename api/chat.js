@@ -156,6 +156,14 @@ import {
   parseGeneratedFileRequest,
 } from "../lib/generatedFiles.js"
 import {
+  buildImageToolResult,
+  buildMainChatImageToolOptions,
+  generateChatImage,
+  parseChatImageToolCall,
+  persistGeneratedChatImage,
+  resolveAuthorizedSourceImage,
+} from "../lib/chatImageGeneration.js"
+import {
   completeJudgePrefilterShadow,
   evaluateJudgePrefilterShadow,
 } from "../lib/judgePrefilterShadow.js"
@@ -1127,9 +1135,13 @@ async function getRecentMessages(user_id, conversation_id, limit = 20) {
       ? formatUserVoiceForPrompt(content, item.metadata?.userVoice)
       : content
 
+    const generatedImageContext = Array.isArray(item.metadata?.attachments) &&
+      item.metadata.attachments.some(attachment => attachment?.type === "generated_image")
+      ? `\n\n[小C在这条消息生成了一张图片；可编辑引用消息 ID: ${item.id}]`
+      : ""
     const historicalContent = item.metadata?.imageDescription
       ? `${modalityAwareContent}\n\n[图片背景信息]: ${item.metadata.imageDescription}`
-      : modalityAwareContent
+      : `${modalityAwareContent}${generatedImageContext}`
 
     return {
       id: item.id,
@@ -3823,7 +3835,11 @@ const imageDescriptionPromise = normalizedImageUrls.length > 0
       })
   : Promise.resolve("")
 
-const mainChatOptions = buildGeneratedFileChatOptions(generatedFileRequest, cid)
+const generatedFileChatOptions = buildGeneratedFileChatOptions(generatedFileRequest, cid)
+const mainChatOptions = buildMainChatImageToolOptions(
+  cid,
+  generatedFileChatOptions,
+)
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 const mainChatLlmCalls = [{
   request_purpose: "normal_chat",
@@ -3831,7 +3847,8 @@ const mainChatLlmCalls = [{
   usage: llm.usage || {},
 }]
 let reply = llm.reply
-const fallbackSearchQuery = !webSearch ? parseWebSearchRequest(reply) : ""
+const imageToolCall = parseChatImageToolCall(llm.raw?.choices?.[0]?.message)
+const fallbackSearchQuery = !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
 
 if (fallbackSearchQuery) {
   mainChatLlmCalls[0].request_purpose = "normal_chat_pre_web_search"
@@ -3874,6 +3891,82 @@ ${fallbackWebSearch}
 }
 
     let attachments = []
+    let imageGenerationUsage = null
+    if (imageToolCall) {
+      let toolResult
+      try {
+        if (imageToolCall.error) throw new Error(imageToolCall.error)
+        const sourceImage = imageToolCall.mode === "edit"
+          ? await resolveAuthorizedSourceImage({
+              supabase,
+              userId: user_id,
+              conversationId: cid,
+              currentUserMessageId: userMessageId,
+              sourceMessageId: imageToolCall.sourceMessageId,
+            })
+          : null
+        const generated = await generateChatImage({
+          instruction: imageToolCall.instruction,
+          sourceImage,
+        })
+        const attachment = await persistGeneratedChatImage({
+          supabase,
+          userId: user_id,
+          conversationId: cid,
+          generated,
+        })
+        attachments = [attachment]
+        imageGenerationUsage = {
+          request_purpose: "chat_image_generation",
+          model: AI_MODELS.imageGeneration,
+          mode: imageToolCall.mode,
+          count: 1,
+          prompt_tokens: Number(generated.usage?.prompt_tokens || 0),
+          completion_tokens: Number(generated.usage?.completion_tokens || 0),
+          total_tokens: Number(generated.usage?.total_tokens || 0),
+          cost: Number.isFinite(Number(generated.usage?.cost))
+            ? Number(generated.usage.cost)
+            : null,
+        }
+        console.log("IMAGE GENERATION USAGE:", imageGenerationUsage)
+        toolResult = buildImageToolResult({ ok: true, attachment })
+      } catch (error) {
+        console.error("CHAT IMAGE GENERATION FAILED:", {
+          code: error?.code || null,
+          message: trimText(error?.message, 240),
+        })
+        toolResult = buildImageToolResult({
+          ok: false,
+          error: error?.code || "image_generation_failed",
+        })
+      }
+
+      const toolFollowUpMessages = [
+        ...messages,
+        llm.raw.choices[0].message,
+        {
+          role: "tool",
+          tool_call_id: imageToolCall.id,
+          content: toolResult,
+        },
+      ]
+      try {
+        llm = await callLLM(toolFollowUpMessages, selectedChatModel, {
+          ...mainChatOptions,
+          tool_choice: "none",
+        })
+        mainChatLlmCalls.push({
+          request_purpose: "normal_chat_after_image_tool",
+          model: selectedChatModel,
+          usage: llm.usage || {},
+        })
+        reply = llm.reply || (attachments.length ? "画好了。" : "这次没画成功，我们晚一点再试。")
+      } catch (error) {
+        console.error("CHAT IMAGE TOOL FOLLOW-UP FAILED:", trimText(error?.message, 240))
+        reply = attachments.length ? "画好了。" : "这次没画成功，我们晚一点再试。"
+      }
+    }
+
     if (generatedFileRequest) {
       const generatedContent = reply
 
@@ -3954,6 +4047,7 @@ console.log("======================================\n")
           injected: Boolean(sharedContextPrompt),
         }),
         llmUsage: mainChatUsage,
+        ...(imageGenerationUsage ? { imageGenerationUsage } : {}),
       },
       selfCallHeaders,
     )
@@ -4290,6 +4384,17 @@ console.log("======================================\n")
       console.error("shared context batch update failed:", err)
     }))
 
+let responseAttachments = attachments
+if (attachments[0]?.type === "generated_image") {
+  const { data: signed } = await supabase.storage
+    .from("generated-files")
+    .createSignedUrl(attachments[0].storage_path, 5 * 60)
+  responseAttachments = [{
+    ...attachments[0],
+    ...(signed?.signedUrl ? { display_url: signed.signedUrl } : {}),
+  }]
+}
+
 return res.status(200).json({
   reply,
   conversation_id: cid,
@@ -4297,7 +4402,7 @@ return res.status(200).json({
   assistant_message_id: assistantMessageId,
   model: selectedChatModel,
   usage: llm.usage || {},
-  attachments,
+  attachments: responseAttachments,
 })
 
   } catch (e) {
