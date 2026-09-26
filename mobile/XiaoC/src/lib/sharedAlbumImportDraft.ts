@@ -2,6 +2,8 @@ export type SharedAlbumImportDraft = {
   uri: string;
   width?: number | null;
   height?: number | null;
+  successMessage?: string;
+  temporaryFileUri?: string;
 };
 
 let pendingDraft: SharedAlbumImportDraft | null = null;

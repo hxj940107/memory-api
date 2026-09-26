@@ -35,6 +35,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
+import * as MediaLibrary from "expo-media-library";
 import * as Haptics from "expo-haptics";
 import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
 import { audioSessionCoordinator } from "../lib/audioSessionCoordinator";
@@ -190,6 +191,11 @@ type ChatResponse = {
 type SignedAttachmentResponse = {
   url: string;
   expires_in: number;
+};
+
+type GeneratedImageContext = {
+  message: Message;
+  attachment: GeneratedAttachment;
 };
 
 const hydrateGeneratedImageAttachments = async (
@@ -883,6 +889,10 @@ export default function ChatScreen() {
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [previewGeneratedImage, setPreviewGeneratedImage] =
+    useState<GeneratedImageContext | null>(null);
+  const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
+  const feedbackToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [messageMenu, setMessageMenu] = useState<MessageMenuState>(null);
 
@@ -2241,57 +2251,142 @@ export default function ChatScreen() {
     }
   };
 
-  const saveGeneratedImage = async (
+  const showFeedbackToast = useCallback((message: string) => {
+    if (feedbackToastTimerRef.current) {
+      clearTimeout(feedbackToastTimerRef.current);
+    }
+    setFeedbackToast(message);
+    feedbackToastTimerRef.current = setTimeout(() => {
+      setFeedbackToast(null);
+      feedbackToastTimerRef.current = null;
+    }, 1800);
+  }, []);
+
+  useEffect(() => () => {
+    if (feedbackToastTimerRef.current) {
+      clearTimeout(feedbackToastTimerRef.current);
+    }
+  }, []);
+
+  const getGeneratedImageSignedUrl = async (
     message: Message,
     attachment: GeneratedAttachment,
   ) => {
-    const save = async () => {
-      try {
-        const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
-          type: "generated_file",
-          action: "sign_download",
-          user_id: APP_USER_ID,
-          conversation_id: conversationIdRef.current,
-          message_id: message.cloudId || message.id,
-          attachment_id: attachment.id,
-        });
-        const cacheDirectory = `${FileSystem.cacheDirectory || ""}generated-images/`;
-        await FileSystem.makeDirectoryAsync(cacheDirectory, {
-          intermediates: true,
-        });
-        const localUri = `${cacheDirectory}${getSafeDownloadFilename(attachment.name)}`;
-        await FileSystem.deleteAsync(localUri, { idempotent: true });
-        const downloaded = await FileSystem.downloadAsync(signed.url, localUri);
+    const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
+      type: "generated_file",
+      action: "sign_download",
+      user_id: APP_USER_ID,
+      conversation_id: conversationIdRef.current,
+      message_id: message.cloudId || message.id,
+      attachment_id: attachment.id,
+    });
+    return signed.url;
+  };
 
-        if (!(await Sharing.isAvailableAsync())) {
-          Alert.alert("图片已下载", downloaded.uri);
-          return;
-        }
-        await Sharing.shareAsync(downloaded.uri, {
-          mimeType: attachment.mime_type,
-          dialogTitle: "保存图片",
-          UTI: "public.image",
-        });
-      } catch (error) {
-        console.log("Generated image save failed:", error);
-        Alert.alert("暂时无法保存图片", "请稍后再试。");
+  const downloadGeneratedImage = async (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    const signedUrl = await getGeneratedImageSignedUrl(message, attachment);
+    const extension = attachment.mime_type.toLowerCase() === "image/jpeg"
+      || attachment.mime_type.toLowerCase() === "image/jpg"
+      ? "jpg"
+      : attachment.mime_type.toLowerCase() === "image/webp"
+        ? "webp"
+        : "png";
+    const cacheDirectory = `${FileSystem.cacheDirectory || ""}generated-images/`;
+    await FileSystem.makeDirectoryAsync(cacheDirectory, { intermediates: true });
+    const localUri = `${cacheDirectory}generated-${attachment.id}.${extension}`;
+    await FileSystem.deleteAsync(localUri, { idempotent: true });
+    try {
+      return await FileSystem.downloadAsync(signedUrl, localUri);
+    } catch (error) {
+      await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+      throw error;
+    }
+  };
+
+  const saveGeneratedImageLocally = async (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    let temporaryUri: string | null = null;
+    try {
+      if (!(await MediaLibrary.isAvailableAsync())) {
+        Alert.alert("暂时无法保存图片", "当前设备不支持系统相册保存。");
+        return;
       }
-    };
+      let permission = await MediaLibrary.getPermissionsAsync(true, ["photo"]);
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await MediaLibrary.requestPermissionsAsync(true, ["photo"]);
+      }
+      if (!permission.granted) {
+        Alert.alert("需要照片权限", "请在系统设置中允许小C保存图片后再试。");
+        return;
+      }
+
+      const downloaded = await downloadGeneratedImage(message, attachment);
+      temporaryUri = downloaded.uri;
+      await MediaLibrary.saveToLibraryAsync(downloaded.uri);
+      showFeedbackToast("保存成功");
+    } catch (error) {
+      console.log("Generated image local save failed:", error);
+      Alert.alert("暂时无法保存图片", "请稍后再试。");
+    } finally {
+      if (temporaryUri) {
+        await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => {});
+      }
+    }
+  };
+
+  const saveGeneratedImageToSharedAlbum = async (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    let temporaryUri: string | null = null;
+    try {
+      const downloaded = await downloadGeneratedImage(message, attachment);
+      temporaryUri = downloaded.uri;
+      stageSharedAlbumImport({
+        uri: downloaded.uri,
+        temporaryFileUri: downloaded.uri,
+        successMessage: "已保存至共享相册",
+      });
+      router.push("/album");
+    } catch (error) {
+      if (temporaryUri) {
+        await FileSystem.deleteAsync(temporaryUri, { idempotent: true }).catch(() => {});
+      }
+      console.log("Generated image shared album staging failed:", error);
+      Alert.alert("保存失败", "请稍后再试。");
+    }
+  };
+
+  const openGeneratedImageActions = (
+    message: Message,
+    attachment: GeneratedAttachment,
+  ) => {
+    const saveLocal = () => void saveGeneratedImageLocally(message, attachment);
+    const saveShared = () => void saveGeneratedImageToSharedAlbum(message, attachment);
 
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ["取消", "保存图片"],
+          options: ["取消", "保存至本地", "保存至共享相册"],
           cancelButtonIndex: 0,
         },
-        (buttonIndex) => buttonIndex === 1 && void save(),
+        (buttonIndex) => {
+          if (buttonIndex === 1) saveLocal();
+          if (buttonIndex === 2) saveShared();
+        },
       );
       return;
     }
 
     Alert.alert("图片", undefined, [
       { text: "取消", style: "cancel" },
-      { text: "保存图片", onPress: () => void save() },
+      { text: "保存至本地", onPress: saveLocal },
+      { text: "保存至共享相册", onPress: saveShared },
     ]);
   };
 
@@ -3146,8 +3241,10 @@ export default function ChatScreen() {
                                     <Pressable
                                       key={`${stableMessageId}_${imageIndex}`}
                                       onPress={() =>
-                                        item.status !== "sending" &&
-                                        setPreviewImageUri(imageUri)
+                                        item.status !== "sending" && (() => {
+                                          setPreviewGeneratedImage(null);
+                                          setPreviewImageUri(imageUri);
+                                        })()
                                       }
                                       onLongPress={() =>
                                         openImageMenu(
@@ -3329,12 +3426,18 @@ export default function ChatScreen() {
                                     <GeneratedImagePressable
                                       key={attachment.id}
                                       onOpen={() =>
-                                        setPreviewImageUri(
-                                          attachment.display_url || null,
-                                        )
+                                        (() => {
+                                          setPreviewGeneratedImage({
+                                            message: item,
+                                            attachment,
+                                          });
+                                          setPreviewImageUri(
+                                            attachment.display_url || null,
+                                          );
+                                        })()
                                       }
                                       onSave={() =>
-                                        saveGeneratedImage(item, attachment)
+                                        openGeneratedImageActions(item, attachment)
                                       }
                                     >
                                       <ChatMessageImage
@@ -3595,7 +3698,10 @@ export default function ChatScreen() {
                   style={styles.attachmentPreview}
                 >
                   <Pressable
-                    onPress={() => setPreviewImageUri(selectedImage.uri)}
+                    onPress={() => {
+                      setPreviewGeneratedImage(null);
+                      setPreviewImageUri(selectedImage.uri);
+                    }}
                   >
                     <Image
                       source={{ uri: selectedImage.uri }}
@@ -3783,7 +3889,17 @@ export default function ChatScreen() {
         <ImagePreviewModal
           visible={!!previewImageUri}
           images={previewImageUri ? [{ uri: previewImageUri }] : []}
-          onClose={() => setPreviewImageUri(null)}
+          feedbackMessage={feedbackToast}
+          onLongPressImage={previewGeneratedImage
+            ? () => openGeneratedImageActions(
+                previewGeneratedImage.message,
+                previewGeneratedImage.attachment,
+              )
+            : undefined}
+          onClose={() => {
+            setPreviewImageUri(null);
+            setPreviewGeneratedImage(null);
+          }}
         />
 
         <Modal
@@ -3924,12 +4040,34 @@ export default function ChatScreen() {
             </View>
           </View>
         </Modal>
+
+        {!!feedbackToast && (
+          <View pointerEvents="none" style={styles.feedbackToast}>
+            <Text style={styles.feedbackToastText}>{feedbackToast}</Text>
+          </View>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  feedbackToast: {
+    position: "absolute",
+    alignSelf: "center",
+    bottom: 104,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 18,
+    backgroundColor: "rgba(32,32,34,0.88)",
+  },
+
+  feedbackToastText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+
   menuButton: {
     width: 44,
 

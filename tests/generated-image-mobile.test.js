@@ -39,8 +39,23 @@ test("history metadata preserves MIME for restored image classification", () => 
   assert.equal(isImageAttachment(restored[0]), true)
 })
 
+test("SDK 54 media library dependency and iOS permission config are present", () => {
+  const packageJson = JSON.parse(fs.readFileSync(new URL("../mobile/XiaoC/package.json", import.meta.url), "utf8"))
+  const appJson = JSON.parse(fs.readFileSync(new URL("../mobile/XiaoC/app.json", import.meta.url), "utf8"))
+  const mediaPlugin = appJson.expo.plugins.find(
+    (plugin) => Array.isArray(plugin) && plugin[0] === "expo-media-library",
+  )
+
+  assert.equal(packageJson.dependencies["expo-media-library"], "~18.2.1")
+  assert.ok(mediaPlugin)
+  assert.match(mediaPlugin[1].savePhotosPermission, /保存到系统相册/)
+  assert.deepEqual(mediaPlugin[1].granularPermissions, ["photo"])
+})
+
 test("chat wires inline render, history signing, preview, and long-press save", () => {
   const chat = fs.readFileSync(new URL("../mobile/XiaoC/src/app/chat.tsx", import.meta.url), "utf8")
+  const preview = fs.readFileSync(new URL("../mobile/XiaoC/src/components/ImagePreviewModal.tsx", import.meta.url), "utf8")
+  const album = fs.readFileSync(new URL("../mobile/XiaoC/src/app/album.tsx", import.meta.url), "utf8")
 
   assert.match(chat, /isImageAttachment\(attachment\) &&\s*attachment\.display_url/)
   assert.match(chat, /hydrateGeneratedImageAttachments/)
@@ -51,8 +66,25 @@ test("chat wires inline render, history signing, preview, and long-press save", 
   assert.match(chat, /pressRetentionOffset=\{20\}/)
   assert.match(chat, /onLongPress=\{\(\) => \{\s*longPressHandledRef\.current = true;\s*onSave\(\)/)
   assert.match(chat, /if \(longPressHandledRef\.current\) \{[\s\S]*return;[\s\S]*onOpen\(\)/)
-  assert.match(chat, /onSave=\{\(\) =>\s*saveGeneratedImage\(item, attachment\)/)
-  assert.match(chat, /options: \["取消", "保存图片"\]/)
-  assert.match(chat, /Sharing\.shareAsync/)
+  assert.match(chat, /onSave=\{\(\) =>\s*openGeneratedImageActions\(item, attachment\)/)
+  assert.match(chat, /options: \["取消", "保存至本地", "保存至共享相册"\]/)
+  assert.match(chat, /MediaLibrary\.getPermissionsAsync\(true, \["photo"\]\)/)
+  assert.match(chat, /MediaLibrary\.requestPermissionsAsync\(true, \["photo"\]\)/)
+  assert.match(chat, /MediaLibrary\.saveToLibraryAsync\(downloaded\.uri\)/)
+  assert.match(chat, /showFeedbackToast\("保存成功"\)/)
+  assert.match(chat, /Alert\.alert\("需要照片权限"/)
+  assert.match(chat, /stageSharedAlbumImport\(\{[\s\S]*successMessage: "已保存至共享相册"/)
+  assert.match(album, /showFeedbackToast\(successMessage\)/)
   assert.match(chat, /preserveAspectRatio/)
+
+  const localSaveStart = chat.indexOf("const saveGeneratedImageLocally")
+  const sharedSaveStart = chat.indexOf("const saveGeneratedImageToSharedAlbum")
+  assert.ok(localSaveStart > 0 && sharedSaveStart > localSaveStart)
+  assert.doesNotMatch(chat.slice(localSaveStart, sharedSaveStart), /Sharing\.shareAsync/)
+
+  assert.match(preview, /onLongPressImage\?:/)
+  assert.match(preview, /Gesture\.LongPress\(\)/)
+  assert.match(preview, /Gesture\.Race\(pinch, longPress, tap\)/)
+  assert.match(preview, /\.enabled\(Boolean\(onLongPressImage\)\)/)
+  assert.match(chat, /onLongPressImage=\{previewGeneratedImage/)
 })

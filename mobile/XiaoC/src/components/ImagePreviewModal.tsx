@@ -26,9 +26,21 @@ type Props = {
   images: PreviewImage[];
   initialIndex?: number;
   onClose: () => void;
+  onLongPressImage?: (image: PreviewImage, index: number) => void;
+  feedbackMessage?: string | null;
 };
 
-function PreviewPage({ image, onClose }: { image: PreviewImage; onClose: () => void }) {
+function PreviewPage({
+  image,
+  index,
+  onClose,
+  onLongPressImage,
+}: {
+  image: PreviewImage;
+  index: number;
+  onClose: () => void;
+  onLongPressImage?: (image: PreviewImage, index: number) => void;
+}) {
   const screen = Dimensions.get("window");
   const ratio =
     Number(image.width) > 0 && Number(image.height) > 0
@@ -62,7 +74,15 @@ function PreviewPage({ image, onClose }: { image: PreviewImage; onClose: () => v
     .onEnd((_event, success) => {
       if (success) onClose();
     });
-  const previewGesture = Gesture.Exclusive(pinch, tap);
+  const longPress = Gesture.LongPress()
+    .enabled(Boolean(onLongPressImage))
+    .minDuration(450)
+    .maxDistance(20)
+    .runOnJS(true)
+    .onEnd((_event, success) => {
+      if (success) onLongPressImage?.(image, index);
+    });
+  const previewGesture = Gesture.Race(pinch, longPress, tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -91,6 +111,8 @@ export function ImagePreviewModal({
   images,
   initialIndex = 0,
   onClose,
+  onLongPressImage,
+  feedbackMessage,
 }: Props) {
   const screenWidth = Dimensions.get("window").width;
 
@@ -115,8 +137,22 @@ export function ImagePreviewModal({
           })}
           keyExtractor={(item, index) => `${item.uri}-${index}`}
           showsHorizontalScrollIndicator={false}
-          renderItem={({ item }) => <PreviewPage image={item} onClose={onClose} />}
+          renderItem={({ item, index }) => (
+            <PreviewPage
+              image={item}
+              index={index}
+              onClose={onClose}
+              onLongPressImage={onLongPressImage}
+            />
+          )}
         />
+        {!!feedbackMessage && (
+          <View pointerEvents="none" style={styles.feedbackToast}>
+            <Animated.Text style={styles.feedbackToastText}>
+              {feedbackMessage}
+            </Animated.Text>
+          </View>
+        )}
       </View>
     </Modal>
   );
@@ -138,5 +174,19 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     height: "100%",
+  },
+  feedbackToast: {
+    position: "absolute",
+    alignSelf: "center",
+    bottom: 72,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  feedbackToastText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

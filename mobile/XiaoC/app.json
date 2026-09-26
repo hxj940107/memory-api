@@ -49,6 +49,14 @@
         }
       ],
       [
+        "expo-media-library",
+        {
+          "photosPermission": "允许小C访问照片，用来保存和管理你主动选择的图片。",
+          "savePhotosPermission": "允许小C将你选择的图片保存到系统相册。",
+          "granularPermissions": ["photo"]
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",

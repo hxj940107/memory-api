@@ -1,9 +1,10 @@
 import { Image } from "expo-image";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { router, useFocusEffect } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -91,6 +92,26 @@ export default function AlbumScreen() {
   const [relations, setRelations] = useState<string[]>([]);
   const [accessScope, setAccessScope] = useState<"shared" | "private">("shared");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
+  const feedbackToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importedTemporaryFileRef = useRef<string | null>(null);
+  const importedSuccessMessageRef = useRef<string | null>(null);
+
+  const showFeedbackToast = useCallback((message: string) => {
+    if (feedbackToastTimerRef.current) clearTimeout(feedbackToastTimerRef.current);
+    setFeedbackToast(message);
+    feedbackToastTimerRef.current = setTimeout(() => {
+      setFeedbackToast(null);
+      feedbackToastTimerRef.current = null;
+    }, 1800);
+  }, []);
+
+  const cleanupImportedTemporaryFile = useCallback(async () => {
+    const uri = importedTemporaryFileRef.current;
+    importedTemporaryFileRef.current = null;
+    importedSuccessMessageRef.current = null;
+    if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+  }, []);
 
   const availableCategories = useMemo(
     () => [...new Set(assets.flatMap(getAssetCategories))],
@@ -126,6 +147,11 @@ export default function AlbumScreen() {
     );
   }, [availableCategories]);
 
+  useEffect(() => () => {
+    if (feedbackToastTimerRef.current) clearTimeout(feedbackToastTimerRef.current);
+    void cleanupImportedTemporaryFile();
+  }, [cleanupImportedTemporaryFile]);
+
   const toggleCategoryFilter = (category: string) => {
     setSelectedCategories(current =>
       current.includes(category)
@@ -150,6 +176,8 @@ export default function AlbumScreen() {
     if (!importedImage) return;
 
     resetEditor();
+    importedTemporaryFileRef.current = importedImage.temporaryFileUri || null;
+    importedSuccessMessageRef.current = importedImage.successMessage || null;
     setPickedImage({
       uri: importedImage.uri,
       width: importedImage.width || 1,
@@ -157,6 +185,12 @@ export default function AlbumScreen() {
     });
     setEditorVisible(true);
   }, [resetEditor]));
+
+  const closeEditor = useCallback(() => {
+    setEditorVisible(false);
+    resetEditor();
+    void cleanupImportedTemporaryFile();
+  }, [cleanupImportedTemporaryFile, resetEditor]);
 
   const openNewAsset = () => {
     resetEditor();
@@ -197,6 +231,7 @@ export default function AlbumScreen() {
     const asset = result.canceled ? null : result.assets[0];
 
     if (asset?.uri) {
+      await cleanupImportedTemporaryFile();
       setPickedImage({
         uri: asset.uri,
         width: asset.width || 1,
@@ -282,8 +317,11 @@ export default function AlbumScreen() {
         setAssets(current => [response.asset, ...current]);
       }
 
+      const successMessage = importedSuccessMessageRef.current;
+      await cleanupImportedTemporaryFile();
       setEditorVisible(false);
       resetEditor();
+      if (successMessage) showFeedbackToast(successMessage);
     } catch (error) {
       Alert.alert("保存失败", error instanceof Error ? error.message : "请稍后再试");
     } finally {
@@ -383,10 +421,10 @@ export default function AlbumScreen() {
         )}
       </ScrollView>
 
-      <Modal visible={editorVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEditorVisible(false)}>
+      <Modal visible={editorVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={closeEditor}>
         <SafeAreaView style={styles.editor}>
           <View style={styles.editorHeader}>
-            <Pressable onPress={() => setEditorVisible(false)}><Text style={styles.cancel}>取消</Text></Pressable>
+            <Pressable onPress={closeEditor}><Text style={styles.cancel}>取消</Text></Pressable>
             <Text style={styles.editorTitle}>{editingAsset ? "照片设置" : "添加照片"}</Text>
             <Pressable disabled={saving} onPress={saveAsset}><Text style={styles.save}>{saving ? "保存中" : "保存"}</Text></Pressable>
           </View>
@@ -490,11 +528,18 @@ export default function AlbumScreen() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+      {!!feedbackToast && (
+        <View pointerEvents="none" style={styles.feedbackToast}>
+          <Text style={styles.feedbackToastText}>{feedbackToast}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  feedbackToast: { position: "absolute", alignSelf: "center", bottom: 42, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 18, backgroundColor: "rgba(32,32,34,0.88)" },
+  feedbackToastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "500" },
   screen: { flex: 1, backgroundColor: "#F7F7F8" },
   header: { height: 48, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
