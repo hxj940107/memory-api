@@ -2097,6 +2097,7 @@ async function getAvailableMomentImages(user_id) {
           : ["earlyMorning", "morning", "afternoon", "evening", "night", "lateNight"],
         weather,
         keywords,
+        relations,
       }
     })
   const libraryImages = MOMENT_IMAGE_LIBRARY

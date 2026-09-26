@@ -256,3 +256,120 @@ test("rejects obvious unsupported weather and time conflicts", () => {
     false,
   )
 })
+
+test("uses explicit album entity relations as animal subject grounding", () => {
+  const images = [{
+    id: "named-pet",
+    description: "a small dog resting at home",
+    timePeriods: ["daytime"],
+    keywords: ["dog", "pet", "狗"],
+    relations: ["Mochi"],
+  }]
+
+  assert.equal(
+    isMomentImageCompatible(
+      "named-pet",
+      "A quiet afternoon.",
+      14,
+      images,
+      "Mochi is sleeping today.",
+    ),
+    true,
+  )
+})
+
+test("keeps animal subject protection without generic or entity grounding", () => {
+  const images = [{
+    id: "named-pet",
+    description: "a small dog resting at home",
+    timePeriods: ["daytime"],
+    keywords: ["狗", "宠物"],
+    relations: ["Mochi"],
+  }]
+
+  assert.equal(isMomentImageCompatible(
+    "named-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "The room is peaceful today.",
+  ), false)
+  assert.equal(isMomentImageCompatible(
+    "named-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "小狗今天在睡觉。",
+  ), true)
+})
+
+test("entity grounding does not bypass time or weather protection", () => {
+  const images = [
+    {
+      id: "night-pet",
+      description: "a small dog at night",
+      timePeriods: ["night"],
+      keywords: ["狗"],
+      relations: ["Mochi"],
+    },
+    {
+      id: "rainy-pet",
+      description: "a small dog outside in heavy rain",
+      timePeriods: ["daytime"],
+      weather: "rain",
+      keywords: ["狗"],
+      relations: ["Mochi"],
+    },
+  ]
+
+  assert.equal(isMomentImageCompatible(
+    "night-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "Mochi is sleeping today.",
+  ), false)
+  assert.equal(isMomentImageCompatible(
+    "rainy-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "Mochi is sleeping today.",
+  ), false)
+})
+
+test("relation grounding requires the matching safe entity label", () => {
+  const images = [{
+    id: "named-pet",
+    description: "a small dog resting at home",
+    timePeriods: ["daytime"],
+    keywords: ["狗"],
+    relations: ["Mochi"],
+  }]
+
+  assert.equal(isMomentImageCompatible(
+    "named-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "Nori is sleeping today.",
+  ), false)
+})
+
+test("short relation labels cannot pass through substring matches", () => {
+  const images = [{
+    id: "short-label-pet",
+    description: "a small dog resting at home",
+    timePeriods: ["daytime"],
+    keywords: ["狗"],
+    relations: ["Al"],
+  }]
+
+  assert.equal(isMomentImageCompatible(
+    "short-label-pet",
+    "A quiet afternoon.",
+    14,
+    images,
+    "Always calm today.",
+  ), false)
+})
