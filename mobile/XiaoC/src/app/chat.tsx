@@ -653,6 +653,44 @@ function ChatMessageImage({
   );
 }
 
+function GeneratedImagePressable({
+  children,
+  onOpen,
+  onSave,
+}: {
+  children: React.ReactNode;
+  onOpen: () => void;
+  onSave: () => void;
+}) {
+  const longPressHandledRef = useRef(false);
+
+  return (
+    <Pressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel="小C生成的图片"
+      delayLongPress={450}
+      hitSlop={4}
+      pressRetentionOffset={20}
+      onPressIn={() => {
+        longPressHandledRef.current = false;
+      }}
+      onLongPress={() => {
+        longPressHandledRef.current = true;
+        onSave();
+      }}
+      onPress={() => {
+        if (longPressHandledRef.current) {
+          longPressHandledRef.current = false;
+          return;
+        }
+        onOpen();
+      }}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
 function TreeholeDraftCard({
   draft,
   saveStatus,
@@ -3288,14 +3326,14 @@ export default function ChatScreen() {
                                       attachment.display_url,
                                   )
                                   .map((attachment) => (
-                                    <Pressable
+                                    <GeneratedImagePressable
                                       key={attachment.id}
-                                      onPress={() =>
+                                      onOpen={() =>
                                         setPreviewImageUri(
                                           attachment.display_url || null,
                                         )
                                       }
-                                      onLongPress={() =>
+                                      onSave={() =>
                                         saveGeneratedImage(item, attachment)
                                       }
                                     >
@@ -3305,7 +3343,7 @@ export default function ChatScreen() {
                                         subdued={false}
                                         preserveAspectRatio
                                       />
-                                    </Pressable>
+                                    </GeneratedImagePressable>
                                   ))}
                               </View>
                             )}
