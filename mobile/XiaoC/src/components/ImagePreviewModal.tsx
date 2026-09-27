@@ -17,6 +17,7 @@ import Animated, {
 
 export type PreviewImage = {
   uri: string;
+  cacheKey?: string;
   width?: number | null;
   height?: number | null;
 };
@@ -99,7 +100,12 @@ function PreviewPage({
             animatedStyle,
           ]}
         >
-          <Image source={{ uri: image.uri }} style={styles.image} contentFit="contain" />
+          <Image
+            source={{ uri: image.uri, cacheKey: image.cacheKey }}
+            cachePolicy="memory-disk"
+            style={styles.image}
+            contentFit="contain"
+          />
         </Animated.View>
       </GestureDetector>
     </View>

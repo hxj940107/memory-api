@@ -18,6 +18,7 @@ import {
   RefreshControl,
   type GestureResponderEvent,
 } from "react-native";
+import { Image as ExpoImage } from "expo-image";
 
 import Animated, {
   useSharedValue,
@@ -193,6 +194,59 @@ type SignedAttachmentResponse = {
   expires_in: number;
 };
 
+const generatedImageHydrationPromises = new Map<string, Promise<string>>();
+
+const getGeneratedImageCacheUri = (attachment: GeneratedAttachment) => {
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!cacheDirectory) return null;
+
+  const extension = attachment.mime_type.toLowerCase() === "image/jpeg"
+    || attachment.mime_type.toLowerCase() === "image/jpg"
+    ? "jpg"
+    : attachment.mime_type.toLowerCase() === "image/webp"
+      ? "webp"
+      : "png";
+  const safeIdentity = attachment.id.replace(/[^a-zA-Z0-9._-]/g, "-");
+  return `${cacheDirectory}generated-image-list/${safeIdentity}.${extension}`;
+};
+
+const ensureGeneratedImageCache = async ({
+  attachment,
+  getSignedUrl,
+}: {
+  attachment: GeneratedAttachment;
+  getSignedUrl: () => Promise<string>;
+}) => {
+  const localUri = getGeneratedImageCacheUri(attachment);
+  if (!localUri) return getSignedUrl();
+
+  const existing = await FileSystem.getInfoAsync(localUri);
+  if (existing.exists) return localUri;
+
+  const pending = generatedImageHydrationPromises.get(localUri);
+  if (pending) return pending;
+
+  const hydration = (async () => {
+    await FileSystem.makeDirectoryAsync(
+      `${FileSystem.cacheDirectory}generated-image-list/`,
+      { intermediates: true },
+    );
+    const signedUrl = await getSignedUrl();
+    const downloaded = await FileSystem.downloadAsync(signedUrl, localUri);
+    return downloaded.uri;
+  })();
+  generatedImageHydrationPromises.set(localUri, hydration);
+
+  try {
+    return await hydration;
+  } catch (error) {
+    await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+    throw error;
+  } finally {
+    generatedImageHydrationPromises.delete(localUri);
+  }
+};
+
 type GeneratedImageContext = {
   message: Message;
   attachment: GeneratedAttachment;
@@ -205,19 +259,26 @@ const hydrateGeneratedImageAttachments = async (
 ) =>
   Promise.all(
     attachments.map(async (attachment) => {
-      if (!isImageAttachment(attachment) || attachment.display_url) {
+      if (!isImageAttachment(attachment)) {
         return attachment;
       }
       try {
-        const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
-          type: "generated_file",
-          action: "sign_download",
-          user_id: APP_USER_ID,
-          conversation_id: conversationId,
-          message_id: messageId,
-          attachment_id: attachment.id,
+        const displayUrl = await ensureGeneratedImageCache({
+          attachment,
+          getSignedUrl: async () => {
+            if (attachment.display_url) return attachment.display_url;
+            const signed = await postJson<SignedAttachmentResponse>("/api/memory", {
+              type: "generated_file",
+              action: "sign_download",
+              user_id: APP_USER_ID,
+              conversation_id: conversationId,
+              message_id: messageId,
+              attachment_id: attachment.id,
+            });
+            return signed.url;
+          },
         });
-        return { ...attachment, display_url: signed.url };
+        return { ...attachment, display_url: displayUrl };
       } catch (error) {
         console.log("Generated image signing failed:", error);
         return attachment;
@@ -618,11 +679,13 @@ function ChatMessageImage({
   multiple,
   subdued,
   preserveAspectRatio = false,
+  cacheKey,
 }: {
   uri: string;
   multiple: boolean;
   subdued: boolean;
   preserveAspectRatio?: boolean;
+  cacheKey?: string;
 }) {
   const [aspectRatio, setAspectRatio] = useState(1);
   const maxWidth = 240;
@@ -634,27 +697,43 @@ function ChatMessageImage({
       }
     : null;
 
+  const imageStyle = [
+    styles.messageImage,
+    !multiple && (preservedSize || { aspectRatio }),
+    multiple && styles.messageImageGridItem,
+    subdued && styles.messageImageSending,
+  ];
+  const handleLoad = (width?: number, height?: number) => {
+    if (width && height) {
+      setAspectRatio(
+        preserveAspectRatio
+          ? width / height
+          : Math.min(Math.max(width / height, 0.72), 1.5),
+      );
+    }
+  };
+
+  if (cacheKey) {
+    return (
+      <ExpoImage
+        source={{ uri, cacheKey }}
+        cachePolicy="memory-disk"
+        contentFit={preserveAspectRatio ? "contain" : "cover"}
+        onLoad={(event) => handleLoad(event.source.width, event.source.height)}
+        style={imageStyle}
+      />
+    );
+  }
+
   return (
     <Image
       source={{ uri }}
       resizeMode={preserveAspectRatio ? "contain" : "cover"}
       onLoad={(event) => {
         const { width, height } = event.nativeEvent.source;
-
-        if (width && height) {
-          setAspectRatio(
-            preserveAspectRatio
-              ? width / height
-              : Math.min(Math.max(width / height, 0.72), 1.5),
-          );
-        }
+        handleLoad(width, height);
       }}
-      style={[
-        styles.messageImage,
-        !multiple && (preservedSize || { aspectRatio }),
-        multiple && styles.messageImageGridItem,
-        subdued && styles.messageImageSending,
-      ]}
+      style={imageStyle}
     />
   );
 }
@@ -2122,12 +2201,19 @@ export default function ChatScreen() {
         setIsTyping(false);
         return;
       }
+      const assistantAttachments = assistantCloudId
+        ? await hydrateGeneratedImageAttachments(
+            assistantCloudId,
+            data.conversation_id || conversationIdRef.current || "",
+            data.attachments || [],
+          )
+        : data.attachments || [];
       const assistantMessage: Message = {
         id: assistantCloudId || createLocalMessageId(),
         cloudId: assistantCloudId || undefined,
         role: "assistant",
         text: treeholeDraft ? "" : data.reply || "小C暂时没有回复。",
-        attachments: data.attachments || [],
+        attachments: assistantAttachments,
         treeholeDraft: treeholeDraft || undefined,
         createdAt: new Date().toISOString(),
         status: "sent",
@@ -3442,6 +3528,7 @@ export default function ChatScreen() {
                                     >
                                       <ChatMessageImage
                                         uri={attachment.display_url || ""}
+                                        cacheKey={`generated-image:${attachment.storage_path}`}
                                         multiple={false}
                                         subdued={false}
                                         preserveAspectRatio
@@ -3888,7 +3975,14 @@ export default function ChatScreen() {
 
         <ImagePreviewModal
           visible={!!previewImageUri}
-          images={previewImageUri ? [{ uri: previewImageUri }] : []}
+          images={previewImageUri ? [{
+            uri: previewImageUri,
+            ...(previewGeneratedImage
+              ? {
+                  cacheKey: `generated-image:${previewGeneratedImage.attachment.storage_path}`,
+                }
+              : {}),
+          }] : []}
           feedbackMessage={feedbackToast}
           onLongPressImage={previewGeneratedImage
             ? () => openGeneratedImageActions(
