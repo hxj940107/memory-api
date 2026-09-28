@@ -94,6 +94,10 @@ import {
   buildBp1CacheKeepaliveSuffix,
   getBp1CacheKeepaliveDueAt,
 } from "../lib/cacheKeepalive.js"
+import {
+  capInactivityOpportunityAtCeiling,
+  getInactivityCeilingAt,
+} from "../lib/inactivityReachOut.js"
 import { MAIN_CHAT_FIXED_RULES } from "../lib/mainChatFixedRules.js"
 import {
   LEGACY_CORE_MEMORY_BUCKET_IDS,
@@ -743,14 +747,14 @@ async function getInactivityReachOutMode(user_id) {
   return normalizeInactivityReachOutMode(data?.inactivity_reach_out_mode)
 }
 
-function getInactivityReachOutDueAt(lastConversationState = "open", mode = "normal") {
+function getInactivityReachOutDueAt(lastConversationState = "open", mode = "normal", anchorAt = new Date()) {
   const delayMinutes = getInactivityReachOutDelayMinutes(mode, lastConversationState)
 
   if (delayMinutes === null) return null
 
-  return deferOutOfQuietHours(
+  return capInactivityOpportunityAtCeiling(deferOutOfQuietHours(
     new Date(Date.now() + delayMinutes * 60 * 1000)
-  )
+  ), anchorAt)
 }
 
 async function enqueueInactivityReachOutTask({
@@ -783,7 +787,19 @@ async function enqueueInactivityReachOutTask({
     return null
   }
 
-  const dueAt = getInactivityReachOutDueAt(lastConversationState, reachOutMode)
+  let silenceAnchorAt = scheduledAt
+  const silenceAnchorMessageId = assistant_message_id || user_message_id
+  if (assistant_message_id) {
+    const { data: anchorMessage, error: anchorError } = await supabase
+      .from("messages")
+      .select("created_at")
+      .eq("user_id", user_id)
+      .eq("id", assistant_message_id)
+      .maybeSingle()
+    if (anchorError) throw anchorError
+    if (anchorMessage?.created_at) silenceAnchorAt = anchorMessage.created_at
+  }
+  const dueAt = getInactivityReachOutDueAt(lastConversationState, reachOutMode, silenceAnchorAt)
 
   const { data, error } = await supabase
     .from("xiaoc_proactive_tasks")
@@ -807,6 +823,11 @@ async function enqueueInactivityReachOutTask({
           reach_out_mode: reachOutMode,
           attempt_index: 1,
           silence_root_user_message_id: user_message_id,
+          silence_anchor_message_id: silenceAnchorMessageId,
+          silence_anchor_at: silenceAnchorAt,
+          silence_ceiling_at: getInactivityCeilingAt(silenceAnchorAt),
+          prior_decline_count: 0,
+          reconsideration_count: 0,
           previous_proactive_message_ids: [],
         },
         completed_at: null,

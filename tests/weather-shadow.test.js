@@ -143,7 +143,7 @@ test("same weather process has a stable daily signature", () => {
 
 test("weather wins before inactivity only when it passes live boundaries", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
-  assert.match(source, /weather_shadow_check: 2,\s+inactivity_reach_out: 3/)
+  assert.match(source, /weather_shadow_check: 3,\s+inactivity_reach_out: 4/)
   assert.match(source, /本轮由天气主动联系完成联系，避免同一时段重复发送/)
   assert.match(source, /finalSignal\.significant && finalSignature === signalSignature/)
   assert.match(source, /user_returned_during_generation/)

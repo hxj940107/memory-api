@@ -48,11 +48,12 @@ import {
   truncateDiarySentence,
 } from "../lib/diaryWriting.js"
 import {
-  canContinueInactivityChain,
+  capInactivityOpportunityAtCeiling,
+  getInactivityCeilingAt,
   getInactivityAttemptIndex,
-  getInactivityAttemptLimit,
-  getNextInactivityDelayMinutes,
-  hasUserRepliedToInactivityTask,
+  getInactivitySilenceState,
+  hasConversationAdvancedSinceInactivityAnchor,
+  planInactivityReconsideration,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
 import {
@@ -1785,6 +1786,7 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
   const localTime = getMomentLocalTime(now)
   const timeContext = getInactivityTimeContext(now)
   const attemptIndex = getInactivityAttemptIndex(task)
+  const silenceState = getInactivitySilenceState(task, now)
   const contextMessages = recentContext.messages.length
     ? formatTimedInactivityMessages(recentContext.messages, trimText)
     : formatTimedInactivityMessages(
@@ -1866,6 +1868,14 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 - 每次都从当前时间和关系中重新形成联系动机。此前主动消息是你自己已经说过的话，不能换一种句式重复其内容、问题、动机或结构。
 - 联系次数增加不要求语气固定升级，也不要求必须发送。是否联系、是否引用旧话题以及最终表达继续由你独立判断。
 
+【当前沉默窗口】
+- 双方最后一条真实消息距今约 ${silenceState.silence_duration_minutes} 分钟。
+- 此前你在本窗口暂缓联系 ${silenceState.prior_decline_count} 次，当前是第 ${silenceState.reconsideration_count + 1} 次重新判断。
+- 12 小时是关系连续性的最大安静窗口，不是固定打卡时间；越接近这个窗口，重新自然靠近她的必要性越高。
+${silenceState.ceiling_contact_required
+  ? "- 当前已到必须自然重新建立联系的最终机会。本次 should_send 必须为 true，并由你根据关系和上下文写出自然内容；仍然禁止固定问候、打卡话术或施压。"
+  : "- 当前仍在自主判断阶段；如果此刻没有自然动机，可以 should_send=false，系统会在沉默继续时稍后让你重新判断。"}
+
 要求：
 - 只输出一个 JSON 对象，不要代码块，不要解释。
 - 中文，短句，1 句为主，最多 2 句。
@@ -1919,6 +1929,9 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 时段要求：${timeContext.guidance}
 最近对话状态：${recentContext.state === "conversation_end" ? "已明确结束，需要生成新的主动意图" : "没有明确结束，但也不要机械续接上一句话"}
 同一沉默阶段联系序号：${attemptIndex}
+当前沉默分钟数：${silenceState.silence_duration_minutes}
+此前暂缓次数：${silenceState.prior_decline_count}
+是否已到最终联系机会：${silenceState.ceiling_contact_required ? "是" : "否"}
 沉默起点消息：${payload.silence_root_user_message_id || payload.user_message_id || task.source_id || "未知"}
 
 最近聊天上下文：
@@ -2743,6 +2756,7 @@ async function executeAutonomousTreeholeUpdate(task) {
 async function validateInactivityReachOutTask(task) {
   const payload = task.payload || {}
   const scheduledAt = payload.scheduled_at || task.created_at || task.due_at
+  const silenceState = getInactivitySilenceState(task)
   const { data: state, error: stateError } = await supabase
     .from("user_state")
     .select("inactivity_reach_out_mode")
@@ -2759,29 +2773,18 @@ async function validateInactivityReachOutTask(task) {
     return { allowed: false, reason: "用户已关闭主动联系" }
   }
 
-  const attemptIndex = getInactivityAttemptIndex(task)
-  if (attemptIndex > getInactivityAttemptLimit(reachOutMode)) {
-    return { allowed: false, reason: "当前主动联系频率不允许继续本次沉默阶段" }
-  }
-  if (
-    attemptIndex > 1
-    && (!payload.continuation_of_task_id || !payload.silence_root_user_message_id)
-  ) {
-    return { allowed: false, reason: "连续主动联系缺少沉默阶段来源" }
-  }
-
-  const { data: latestUserMessage, error: latestUserError } = await supabase
+  const { data: latestMessage, error: latestMessageError } = await supabase
     .from("messages")
     .select("id,created_at")
     .eq("user_id", task.user_id)
-    .eq("role", "user")
+    .in("role", ["user", "assistant"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  if (latestUserError) throw latestUserError
-  if (hasUserRepliedToInactivityTask(task, latestUserMessage)) {
-    return { allowed: false, reason: "用户已经回来聊天" }
+  if (latestMessageError) throw latestMessageError
+  if (hasConversationAdvancedSinceInactivityAnchor(task, latestMessage)) {
+    return { allowed: false, reason: "对话已有新的消息，旧沉默窗口失效" }
   }
 
   const { data: newerMoment, error: momentError } = await supabase
@@ -2793,7 +2796,9 @@ async function validateInactivityReachOutTask(task) {
     .maybeSingle()
 
   if (momentError) throw momentError
-  if (newerMoment) return { allowed: false, reason: "用户刚发布了朋友圈" }
+  if (newerMoment && !silenceState.ceiling_contact_required) {
+    return { allowed: false, deferred: true, reason: "用户刚发布了朋友圈" }
+  }
 
   const { data: higherPriority, error: priorityError } = await supabase
     .from("xiaoc_proactive_tasks")
@@ -2806,7 +2811,9 @@ async function validateInactivityReachOutTask(task) {
     .maybeSingle()
 
   if (priorityError) throw priorityError
-  if (higherPriority) return { allowed: false, reason: "已有更高优先级的主动关心" }
+  if (higherPriority && !silenceState.ceiling_contact_required) {
+    return { allowed: false, deferred: true, reason: "已有更高优先级的主动关心" }
+  }
 
   return { allowed: true }
 }
@@ -2857,18 +2864,23 @@ async function enqueueNextInactivityReachOutTask({
   conversationId,
 }) {
   const mode = await getCurrentInactivityReachOutMode(task.user_id)
-  if (!canContinueInactivityChain(task, mode)) return null
-
-  const currentAttempt = getInactivityAttemptIndex(task)
-  const nextAttempt = currentAttempt + 1
-  const delayMinutes = getNextInactivityDelayMinutes(nextAttempt)
-  if (!delayMinutes) return null
+  if (mode === "off") return null
 
   const scheduledAt = new Date().toISOString()
-  const rawDueAt = new Date(Date.now() + delayMinutes * 60 * 1000)
-  const dueAt = isProactiveQuietHours(rawDueAt)
+  const { data: anchorMessage, error: anchorError } = await supabase
+    .from("messages")
+    .select("created_at")
+    .eq("user_id", task.user_id)
+    .eq("id", messageId)
+    .maybeSingle()
+  if (anchorError) throw anchorError
+  const silenceAnchorAt = anchorMessage?.created_at || scheduledAt
+  const delayMinutes = getInactivityReachOutDelayMinutes(mode, "open")
+  const rawDueAt = new Date(new Date(silenceAnchorAt).getTime() + delayMinutes * 60 * 1000)
+  const quietAdjustedDueAt = isProactiveQuietHours(rawDueAt)
     ? getNextProactiveMorning(rawDueAt)
     : rawDueAt.toISOString()
+  const dueAt = capInactivityOpportunityAtCeiling(quietAdjustedDueAt, silenceAnchorAt)
   const previousMessageIds = Array.from(new Set([
     ...(task.payload?.previous_proactive_message_ids || []).map(String),
     String(messageId),
@@ -2896,9 +2908,14 @@ async function enqueueNextInactivityReachOutTask({
         ...(task.payload || {}),
         scheduled_at: scheduledAt,
         reach_out_mode: mode,
-        attempt_index: nextAttempt,
+        attempt_index: 1,
         silence_root_user_message_id: rootUserMessageId,
         user_message_id: rootUserMessageId,
+        silence_anchor_message_id: String(messageId),
+        silence_anchor_at: silenceAnchorAt,
+        silence_ceiling_at: getInactivityCeilingAt(silenceAnchorAt),
+        prior_decline_count: 0,
+        reconsideration_count: 0,
         continuation_of_task_id: task.id,
         previous_proactive_message_ids: previousMessageIds,
       },
@@ -3980,12 +3997,30 @@ async function executeProactiveTask(task) {
     const validation = await validateInactivityReachOutTask(task)
 
     if (!validation.allowed) {
+      if (validation.deferred) {
+        const reconsideration = planInactivityReconsideration(task)
+        return {
+          deferred: true,
+          dueAt: reconsideration.due_at,
+          reason: validation.reason,
+          payload: {
+            ...(task.payload || {}),
+            reconsideration_count: Math.max(
+              Number(task.payload?.reconsideration_count || 0) + 1,
+              reconsideration.reconsideration_count,
+            ),
+            silence_ceiling_at: reconsideration.ceiling_at,
+          },
+        }
+      }
       return { skipped: true, reason: validation.reason }
     }
   }
 
   const cooldown = await getProactiveMessageCooldown(task)
-  if (cooldown) {
+  const ceilingContactRequired = task.type === "inactivity_reach_out"
+    && getInactivitySilenceState(task).ceiling_contact_required
+  if (cooldown && !ceilingContactRequired) {
     return { deferred: true, ...cooldown }
   }
 
@@ -4008,13 +4043,32 @@ async function executeProactiveTask(task) {
       })
   const content = generation.content
   if (task.type === "inactivity_reach_out" && generation.skipped) {
+    const reconsideration = planInactivityReconsideration(task)
     return {
-      skipped: true,
+      deferred: true,
+      dueAt: reconsideration.due_at,
       reason: generation.diagnostics?.skip_reason || "inactivity_generation_declined",
       payload: {
         ...(task.payload || {}),
+        prior_decline_count: reconsideration.prior_decline_count,
+        reconsideration_count: reconsideration.reconsideration_count,
+        silence_ceiling_at: reconsideration.ceiling_at,
         inactivity_generation: generation.diagnostics,
       },
+    }
+  }
+  if (task.type === "inactivity_reach_out") {
+    const { data: latestMessage, error: latestMessageError } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("user_id", task.user_id)
+      .in("role", ["user", "assistant"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (latestMessageError) throw latestMessageError
+    if (hasConversationAdvancedSinceInactivityAnchor(task, latestMessage)) {
+      return { skipped: true, reason: "生成期间对话已有新的消息，旧沉默窗口失效" }
     }
   }
   const conversationId = await getLastConversationId(task.user_id)
@@ -4119,19 +4173,30 @@ async function checkPendingProactiveTasks() {
 
   const quietHourExempt = pending.filter(item =>
     [PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
+    || (
+      item.type === "inactivity_reach_out"
+      && getInactivitySilenceState(item, now).ceiling_contact_required
+    )
   )
   const quietDeferred = pending.filter(item =>
-    ![PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
+    !quietHourExempt.some(exempt => exempt.id === item.id)
   )
   if (isProactiveQuietHours(now) && quietDeferred.length) {
     const nextDueAt = getNextProactiveMorning(now)
-    const { error: deferError } = await supabase
-      .from("xiaoc_proactive_tasks")
-      .update({ due_at: nextDueAt, updated_at: now.toISOString() })
-      .in("id", quietDeferred.map((item) => item.id))
-      .eq("status", "pending")
-
-    if (deferError) throw deferError
+    for (const deferredTask of quietDeferred) {
+      const dueAt = deferredTask.type === "inactivity_reach_out"
+        ? capInactivityOpportunityAtCeiling(
+            nextDueAt,
+            getInactivitySilenceState(deferredTask, now).anchor_at,
+          )
+        : nextDueAt
+      const { error: deferError } = await supabase
+        .from("xiaoc_proactive_tasks")
+        .update({ due_at: dueAt, updated_at: now.toISOString() })
+        .eq("id", deferredTask.id)
+        .eq("status", "pending")
+      if (deferError) throw deferError
+    }
 
     taskCounts.processed += quietDeferred.length
     for (const task of quietDeferred) {

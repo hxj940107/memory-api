@@ -7,11 +7,14 @@ import {
   normalizeInactivityReachOutMode,
 } from "../lib/aiConfig.js"
 import {
-  canContinueInactivityChain,
+  INACTIVITY_MAX_SILENCE_MS,
+  capInactivityOpportunityAtCeiling,
+  getInactivityCeilingAt,
+  getInactivitySilenceState,
   getInactivityAttemptIndex,
-  getInactivityAttemptLimit,
-  getNextInactivityDelayMinutes,
+  hasConversationAdvancedSinceInactivityAnchor,
   hasUserRepliedToInactivityTask,
+  planInactivityReconsideration,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
 
@@ -103,22 +106,45 @@ test("inactivity generation varies natural companion approaches without performi
   assert.doesNotMatch(memorySource, /return "突然有点想你了，想来找你待一会儿"/)
 })
 
-test("silence continuation has bounded mode-aware attempts and no daily quota", () => {
+test("model decline schedules another bounded reconsideration instead of ending lifecycle", () => {
   const memorySource = readFileSync("api/memory.js", "utf8")
+  const anchorAt = "2026-09-28T00:00:00.000Z"
+  const task = { payload: { silence_anchor_at: anchorAt, prior_decline_count: 0 } }
+  const plan = planInactivityReconsideration(task, {
+    now: new Date("2026-09-28T04:00:00.000Z"),
+  })
 
-  assert.equal(getInactivityAttemptLimit("frequent"), 3)
-  assert.equal(getInactivityAttemptLimit("normal"), 2)
-  assert.equal(getInactivityAttemptLimit("relaxed"), 1)
-  assert.equal(getInactivityAttemptLimit("off"), 0)
-  assert.equal(getInactivityAttemptIndex({ payload: {} }), 1)
-  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 1 } }, "frequent"), true)
-  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 3 } }, "frequent"), false)
-  assert.equal(getNextInactivityDelayMinutes(2, () => 0), 60)
-  assert.equal(getNextInactivityDelayMinutes(2, () => 0.999999), 120)
-  assert.equal(getNextInactivityDelayMinutes(3, () => 0), 120)
-  assert.equal(getNextInactivityDelayMinutes(3, () => 0.999999), 180)
-  assert.match(memorySource, /async function enqueueNextInactivityReachOutTask/)
-  assert.doesNotMatch(memorySource, /今天主动靠近次数已达上限/)
+  assert.equal(plan.prior_decline_count, 1)
+  assert.equal(plan.reconsideration_count, 1)
+  assert.equal(plan.ceiling_contact_required, false)
+  assert.equal(plan.due_at, "2026-09-28T07:00:00.000Z")
+  assert.match(memorySource, /generation\.skipped[\s\S]*planInactivityReconsideration/)
+  assert.match(memorySource, /deferred: true,[\s\S]*dueAt: reconsideration\.due_at/)
+})
+
+test("continuous declines converge on the 12-hour contact deadline", () => {
+  const anchorAt = "2026-09-28T00:00:00.000Z"
+  const deadline = capInactivityOpportunityAtCeiling(
+    "2026-09-29T00:00:00.000Z",
+    anchorAt,
+  )
+  assert.equal(INACTIVITY_MAX_SILENCE_MS, 12 * 60 * 60 * 1000)
+  assert.equal(getInactivityCeilingAt(anchorAt), "2026-09-28T12:00:00.000Z")
+  assert.equal(deadline, "2026-09-28T11:40:00.000Z")
+
+  const nearCeilingTask = {
+    payload: {
+      silence_anchor_at: anchorAt,
+      prior_decline_count: 3,
+      reconsideration_count: 3,
+    },
+  }
+  const state = getInactivitySilenceState(
+    nearCeilingTask,
+    new Date("2026-09-28T11:40:00.000Z"),
+  )
+  assert.equal(state.ceiling_contact_required, true)
+  assert.equal(state.prior_decline_count, 3)
 })
 
 test("a newer user message closes the previous silence episode", () => {
@@ -150,15 +176,16 @@ test("existing cooldown and frequency gates remain effective after the first Jud
     }, task),
     true,
   )
-  assert.equal(canContinueInactivityChain({ payload: { attempt_index: 3 } }, "frequent"), false)
 })
 
 test("quiet hours still defer due inactivity tasks before execution", () => {
   const chatSource = readFileSync("api/chat.js", "utf8")
   const memorySource = readFileSync("api/memory.js", "utf8")
 
-  assert.match(chatSource, /return deferOutOfQuietHours\(/)
+  assert.match(chatSource, /deferOutOfQuietHours\(/)
   assert.match(memorySource, /if \(isProactiveQuietHours\(now\) && quietDeferred\.length\)/)
+  assert.match(memorySource, /ceiling_contact_required/)
+  assert.match(memorySource, /capInactivityOpportunityAtCeiling/)
 })
 
 test("a continuation keeps the silence root so any later user reply cancels it", () => {
@@ -169,19 +196,51 @@ test("a continuation keeps the silence root so any later user reply cancels it",
       attempt_index: 2,
       silence_root_user_message_id: "silence-root-user-message",
       user_message_id: "silence-root-user-message",
+      silence_anchor_message_id: "first-proactive-message",
       continuation_of_task_id: "first-inactivity-task",
       previous_proactive_message_ids: ["first-proactive-message"],
     },
   }
 
   assert.equal(
-    hasUserRepliedToInactivityTask(task, { id: "silence-root-user-message" }),
+    hasConversationAdvancedSinceInactivityAnchor(task, { id: "first-proactive-message" }),
     false,
   )
   assert.equal(
-    hasUserRepliedToInactivityTask(task, { id: "user-returned" }),
+    hasConversationAdvancedSinceInactivityAnchor(task, { id: "user-returned" }),
     true,
   )
+})
+
+test("a sent proactive message resets the silence clock and starts another lifecycle", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(memorySource, /silence_anchor_message_id: String\(messageId\)/)
+  assert.match(memorySource, /silence_anchor_at: silenceAnchorAt/)
+  assert.match(memorySource, /silence_ceiling_at: getInactivityCeilingAt\(silenceAnchorAt\)/)
+  assert.match(memorySource, /prior_decline_count: 0/)
+  assert.match(memorySource, /reconsideration_count: 0/)
+})
+
+test("new conversation activity invalidates an old task before and after generation", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+  const task = { payload: { silence_anchor_message_id: "old-anchor" } }
+
+  assert.equal(hasConversationAdvancedSinceInactivityAnchor(task, { id: "new-message" }), true)
+  assert.match(memorySource, /生成期间对话已有新的消息，旧沉默窗口失效/)
+  assert.match(memorySource, /\.eq\("status", "pending"\)[\s\S]*\.select\("id"\)/)
+})
+
+test("autonomy remains before the ceiling while explicit opt-out remains hard", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(memorySource, /如果此刻没有自然动机，可以 should_send=false/)
+  assert.match(memorySource, /当前已到必须自然重新建立联系的最终机会/)
+  assert.match(memorySource, /newerMoment && !silenceState\.ceiling_contact_required/)
+  assert.match(memorySource, /higherPriority && !silenceState\.ceiling_contact_required/)
+  assert.match(memorySource, /cooldown && !ceilingContactRequired/)
+  assert.match(memorySource, /reachOutMode === "off"/)
+  assert.match(memorySource, /用户已关闭主动联系/)
 })
 
 test("event follow-up substitutes for one inactivity contact without double advancing on retry", () => {
