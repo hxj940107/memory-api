@@ -51,8 +51,10 @@ import {
   capInactivityOpportunityAtCeiling,
   getInactivityCeilingAt,
   getInactivityAttemptIndex,
+  getInactivityReconciliationSource,
   getInactivitySilenceState,
   hasConversationAdvancedSinceInactivityAnchor,
+  planInactivityLifecycleRecovery,
   planInactivityReconsideration,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
@@ -2930,6 +2932,162 @@ async function enqueueNextInactivityReachOutTask({
   return data
 }
 
+async function reconcileInactivityLifecycle({
+  userId,
+  now = new Date(),
+}) {
+  const mode = await getCurrentInactivityReachOutMode(userId)
+  if (mode === "off") {
+    return { recovered: false, reason: "hard_opt_out" }
+  }
+
+  const { data: latestMessage, error: latestMessageError } = await supabase
+    .from("messages")
+    .select("id,user_id,conversation_id,role,content,metadata,created_at")
+    .eq("user_id", userId)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (latestMessageError) throw latestMessageError
+  if (!latestMessage?.id || !latestMessage?.conversation_id || !latestMessage?.created_at) {
+    return { recovered: false, reason: "no_successful_chat_message" }
+  }
+
+  const { data: recentTasks, error: recentTasksError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .select("id,user_id,conversation_id,type,source_type,source_id,status,due_at,payload,last_error,created_at,updated_at")
+    .eq("user_id", userId)
+    .eq("conversation_id", latestMessage.conversation_id)
+    .eq("type", "inactivity_reach_out")
+    .order("created_at", { ascending: false })
+    .limit(20)
+  if (recentTasksError) throw recentTasksError
+
+  const latestMessageId = String(latestMessage.id)
+  const taskMatchesLatestMessage = (task) => String(
+    task?.payload?.silence_anchor_message_id
+    || task?.payload?.assistant_message_id
+    || (latestMessage.role === "user" ? task?.payload?.user_message_id : "")
+    || (task?.source_type === "proactive_message" ? task?.source_id : "")
+    || ""
+  ) === latestMessageId
+  const matchingTasks = (recentTasks || []).filter(taskMatchesLatestMessage)
+  const activeTask = matchingTasks.find(task =>
+    ["pending", "processing"].includes(task.status)
+    && String(task.payload?.silence_anchor_message_id || "") === latestMessageId
+    && Boolean(task.payload?.silence_anchor_at)
+  )
+  if (activeTask) {
+    return { recovered: false, reason: "active_lifecycle_exists", task_id: activeTask.id }
+  }
+
+  const source = getInactivityReconciliationSource(latestMessage)
+  if (!source) return { recovered: false, reason: "missing_reconciliation_identity" }
+
+  const delayMinutes = getInactivityReachOutDelayMinutes(mode, "open")
+  const recovery = planInactivityLifecycleRecovery({
+    anchorAt: latestMessage.created_at,
+    now,
+    delayMinutes,
+  })
+  if (!recovery) return { recovered: false, reason: "invalid_silence_anchor" }
+
+  let dueAt = recovery.due_at
+  if (!recovery.ceiling_contact_required && isProactiveQuietHours(new Date(dueAt))) {
+    dueAt = capInactivityOpportunityAtCeiling(
+      getNextProactiveMorning(new Date(dueAt)),
+      latestMessage.created_at,
+    )
+  }
+
+  const previousTask = matchingTasks[0] || null
+  const previousGeneration = previousTask?.payload?.inactivity_generation || null
+  const previousDeclines = Math.max(
+    0,
+    Number(previousTask?.payload?.prior_decline_count || 0),
+    previousTask?.last_error === "model_declined"
+      || previousGeneration?.skip_reason === "model_declined"
+      ? 1
+      : 0,
+  )
+  const rootUserMessageId = String(
+    latestMessage.role === "user"
+      ? latestMessage.id
+      : latestMessage.metadata?.replyToUserMessageId
+        || previousTask?.payload?.silence_root_user_message_id
+        || previousTask?.payload?.user_message_id
+        || latestMessage.id
+  )
+  const reconciledAt = new Date(now).toISOString()
+  const { data: recoveredTask, error: recoverError } = await supabase
+    .from("xiaoc_proactive_tasks")
+    .upsert({
+      user_id: userId,
+      type: "inactivity_reach_out",
+      source_type: source.source_type,
+      source_id: source.source_id,
+      status: "pending",
+      due_at: dueAt,
+      conversation_id: latestMessage.conversation_id,
+      reason: "当前沉默窗口缺少有效主动联系生命周期，已从最后一条真实消息恢复。",
+      payload: {
+        scheduled_at: latestMessage.created_at,
+        reach_out_mode: mode,
+        attempt_index: 1,
+        silence_root_user_message_id: rootUserMessageId,
+        user_message_id: rootUserMessageId,
+        ...(latestMessage.role === "assistant"
+          ? { assistant_message_id: latestMessageId }
+          : {}),
+        user_message: latestMessage.role === "user"
+          ? trimText(latestMessage.content, 600)
+          : "",
+        assistant_reply: latestMessage.role === "assistant"
+          ? trimText(latestMessage.content, 500)
+          : "",
+        last_conversation_state: "open",
+        silence_anchor_message_id: latestMessageId,
+        silence_anchor_at: latestMessage.created_at,
+        silence_ceiling_at: recovery.ceiling_at,
+        prior_decline_count: previousDeclines,
+        reconsideration_count: Math.max(
+          0,
+          Number(previousTask?.payload?.reconsideration_count || 0),
+        ),
+        lifecycle_reconciled_at: reconciledAt,
+        lifecycle_reconciliation_count: Math.max(
+          0,
+          Number(previousTask?.payload?.lifecycle_reconciliation_count || 0),
+        ) + 1,
+        reconciled_from_terminal_task_id: previousTask?.id || null,
+        previous_proactive_message_ids: Array.isArray(previousTask?.payload?.previous_proactive_message_ids)
+          ? previousTask.payload.previous_proactive_message_ids
+          : [],
+      },
+      completed_at: null,
+      message_id: null,
+      last_error: null,
+      updated_at: reconciledAt,
+    }, { onConflict: "user_id,type,source_type,source_id" })
+    .select("id,status,due_at,payload")
+    .single()
+  if (recoverError) throw recoverError
+
+  return {
+    recovered: true,
+    reason: recovery.ceiling_contact_required
+      ? "ceiling_recovery"
+      : "missing_active_lifecycle",
+    task_id: recoveredTask.id,
+    due_at: recoveredTask.due_at,
+    anchor_message_id: latestMessageId,
+    anchor_at: latestMessage.created_at,
+    ceiling_at: recovery.ceiling_at,
+  }
+}
+
 async function consumePendingInactivityWithProactiveMessage({
   ownerTask,
   messageId,
@@ -4155,6 +4313,20 @@ async function checkPendingProactiveTasks() {
     }
   }
 
+  let inactivityReconciliation
+  try {
+    inactivityReconciliation = await reconcileInactivityLifecycle({
+      userId: APP_USER.defaultUserId,
+      now,
+    })
+  } catch (error) {
+    console.error("inactivity lifecycle reconciliation failed:", error)
+    inactivityReconciliation = {
+      failed: true,
+      error: trimText(error?.message || "inactivity reconciliation failed", 180),
+    }
+  }
+
   const { data: pending, error } = await supabase
     .from("xiaoc_proactive_tasks")
     .select("id,user_id,conversation_id,type,source_type,source_id,status,due_at,reason,payload,created_at")
@@ -4169,7 +4341,15 @@ async function checkPendingProactiveTasks() {
   }
 
   if (error) throw error
-  if (!pending?.length) return { checked: 0, completed: 0, deferred: 0, failed: 0, reconciliation, task_counts: taskCounts }
+  if (!pending?.length) return {
+    checked: 0,
+    completed: 0,
+    deferred: 0,
+    failed: 0,
+    reconciliation,
+    inactivity_reconciliation: inactivityReconciliation,
+    task_counts: taskCounts,
+  }
 
   const quietHourExempt = pending.filter(item =>
     [PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
@@ -4204,7 +4384,16 @@ async function checkPendingProactiveTasks() {
     }
 
     if (!quietHourExempt.length) {
-      return { checked: pending.length, completed: 0, deferred: quietDeferred.length, failed: 0, nextDueAt, reconciliation, task_counts: taskCounts }
+      return {
+        checked: pending.length,
+        completed: 0,
+        deferred: quietDeferred.length,
+        failed: 0,
+        nextDueAt,
+        reconciliation,
+        inactivity_reconciliation: inactivityReconciliation,
+        task_counts: taskCounts,
+      }
     }
   }
 
@@ -4358,7 +4547,15 @@ async function checkPendingProactiveTasks() {
     }
   }
 
-  return { checked: pending.length, completed, deferred, failed, reconciliation, task_counts: taskCounts }
+  return {
+    checked: pending.length,
+    completed,
+    deferred,
+    failed,
+    reconciliation,
+    inactivity_reconciliation: inactivityReconciliation,
+    task_counts: taskCounts,
+  }
 }
 
 function normalizeMomentCandidateText(value) {

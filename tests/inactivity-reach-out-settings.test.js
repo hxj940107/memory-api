@@ -10,10 +10,12 @@ import {
   INACTIVITY_MAX_SILENCE_MS,
   capInactivityOpportunityAtCeiling,
   getInactivityCeilingAt,
+  getInactivityReconciliationSource,
   getInactivitySilenceState,
   getInactivityAttemptIndex,
   hasConversationAdvancedSinceInactivityAnchor,
   hasUserRepliedToInactivityTask,
+  planInactivityLifecycleRecovery,
   planInactivityReconsideration,
   shouldApplyProactiveCooldown,
 } from "../lib/inactivityReachOut.js"
@@ -145,6 +147,62 @@ test("continuous declines converge on the 12-hour contact deadline", () => {
   )
   assert.equal(state.ceiling_contact_required, true)
   assert.equal(state.prior_decline_count, 3)
+})
+
+test("missing lifecycle recovery preserves the original message anchor and ceiling", () => {
+  const anchorAt = "2026-09-28T00:00:00.000Z"
+  const sixHourRecovery = planInactivityLifecycleRecovery({
+    anchorAt,
+    now: new Date("2026-09-28T06:00:00.000Z"),
+    delayMinutes: 180,
+  })
+
+  assert.equal(sixHourRecovery.due_at, "2026-09-28T06:00:00.000Z")
+  assert.equal(sixHourRecovery.ceiling_at, "2026-09-28T12:00:00.000Z")
+  assert.equal(sixHourRecovery.ceiling_contact_required, false)
+
+  const overdueRecovery = planInactivityLifecycleRecovery({
+    anchorAt,
+    now: new Date("2026-09-28T16:00:00.000Z"),
+    delayMinutes: 180,
+  })
+  assert.equal(overdueRecovery.due_at, "2026-09-28T16:00:00.000Z")
+  assert.equal(overdueRecovery.ceiling_at, "2026-09-28T12:00:00.000Z")
+  assert.equal(overdueRecovery.ceiling_contact_required, true)
+})
+
+test("reconciliation uses the same deterministic task identity as normal message paths", () => {
+  assert.deepEqual(
+    getInactivityReconciliationSource({
+      id: "assistant-message",
+      role: "assistant",
+      metadata: { replyToUserMessageId: "user-message" },
+    }),
+    { source_type: "message", source_id: "user-message" },
+  )
+  assert.deepEqual(
+    getInactivityReconciliationSource({
+      id: "proactive-message",
+      role: "assistant",
+      metadata: { proactive: true },
+    }),
+    { source_type: "proactive_message", source_id: "proactive-message" },
+  )
+})
+
+test("worker reconciliation restores only a missing current silence lifecycle", () => {
+  const memorySource = readFileSync("api/memory.js", "utf8")
+
+  assert.match(memorySource, /async function reconcileInactivityLifecycle/)
+  assert.match(memorySource, /reason: "active_lifecycle_exists"/)
+  assert.match(memorySource, /latestMessage\.conversation_id/)
+  assert.match(memorySource, /silence_anchor_message_id: latestMessageId/)
+  assert.match(memorySource, /silence_anchor_at: latestMessage\.created_at/)
+  assert.match(memorySource, /silence_ceiling_at: recovery\.ceiling_at/)
+  assert.match(memorySource, /reconciled_from_terminal_task_id/)
+  assert.match(memorySource, /onConflict: "user_id,type,source_type,source_id"/)
+  assert.match(memorySource, /await reconcileInactivityLifecycle\(\{/)
+  assert.match(memorySource, /reason: "hard_opt_out"/)
 })
 
 test("a newer user message closes the previous silence episode", () => {
