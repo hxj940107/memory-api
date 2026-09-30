@@ -7,6 +7,18 @@ const sql = readFileSync(
   "utf8",
 )
 
+const questionContractMigration = readFileSync(
+  new URL("../supabase_xiaoc_memory_capture_question_contract.sql", import.meta.url),
+  "utf8",
+)
+
+function captureVerifiedDefinition(source) {
+  const start = source.indexOf("create or replace function public.xiaoc_memory_capture_verified")
+  const end = source.indexOf("$$;", start)
+  assert.ok(start >= 0 && end > start)
+  return source.slice(start, end + 3).replace(/\r\n/g, "\n").trim()
+}
+
 const tables = [
   "memory_items",
   "memory_provenance",
@@ -74,4 +86,35 @@ test("M2B does not add runtime API code or seed business data", () => {
   const firstProtectedFunction = sql.indexOf("create or replace function public.xiaoc_memory_capture_verified")
   assert.ok(firstProtectedFunction > 0)
   assert.doesNotMatch(sql.slice(0, firstProtectedFunction), /insert into public\.memory_items\b/i)
+})
+
+test("verified capture evidence types align across table, canonical RPC, and migration", () => {
+  const allowedTypes = ["assertion", "confirmation", "correction", "question", "other"]
+  for (const source of [sql, questionContractMigration]) {
+    for (const evidenceType of allowedTypes) assert.match(source, new RegExp(`'${evidenceType}'`))
+    assert.match(source, /p_evidence_type is null or p_evidence_type not in \(/)
+    assert.match(source, /raise exception 'unsupported evidence type'/)
+    assert.doesNotMatch(source, /question-only evidence is not admissible/)
+  }
+  assert.match(sql, /evidence_type in \('assertion', 'confirmation', 'correction', 'question', 'other'\)/)
+  assert.equal(captureVerifiedDefinition(questionContractMigration), captureVerifiedDefinition(sql))
+})
+
+test("question contract migration changes only the verified capture function and preserves protections", () => {
+  assert.equal((questionContractMigration.match(/create or replace function/g) || []).length, 1)
+  assert.match(questionContractMigration, /^begin;/)
+  assert.match(questionContractMigration, /commit;\s*$/)
+  assert.match(questionContractMigration, /security definer/)
+  assert.match(questionContractMigration, /set search_path = public, extensions, pg_catalog/)
+  assert.match(questionContractMigration, /v_message\.user_id <> p_user_id/)
+  assert.match(questionContractMigration, /v_message\.role <> 'user'/)
+  assert.match(questionContractMigration, /v_message\.conversation_id is distinct from p_source_conversation_id/)
+  assert.match(questionContractMigration, /position\(p_evidence_text in v_message\.content\) = 0/)
+  assert.match(questionContractMigration, /on conflict \(user_id, operation_type, idempotency_key\) do nothing/)
+  assert.match(questionContractMigration, /'xiaoc_native'/)
+  assert.match(questionContractMigration, /'verified_user'/)
+  assert.match(questionContractMigration, /'active'/)
+  assert.match(questionContractMigration, /'native_verified'/)
+  assert.match(questionContractMigration, /perform public\.xiaoc_memory_finish_operation/)
+  assert.doesNotMatch(questionContractMigration, /\b(?:alter|drop|truncate)\s+table\b/i)
 })

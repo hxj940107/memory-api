@@ -83,8 +83,32 @@ test("judge save=false returns without a grounding call", async () => {
     },
   })
   assert.equal(result.save, false)
+  assert.equal(result.model_save, false)
   assert.equal(result.category, "casual_chat")
   assert.equal(calls, 1)
+})
+
+test("raw model save=true remains observable when temporal grounding rejects it", async () => {
+  const evidence = "我一直使用纸质日历，这样可以吗？"
+  const result = await judgeMemory(evidence, {
+    allowedUserSources: [{ id: currentMessageId, role: "user", content: evidence }],
+    fetchImpl: async () => modelResponse({
+      save: true,
+      category: "personal_fact",
+      memory_type: "stable_fact",
+      content: "她从某个精确日期开始一直使用纸质日历。",
+      source_role: "user",
+      source_message_id: currentMessageId,
+      evidence_text: evidence,
+      evidence_type: "question",
+      temporal: { event_time: null, valid_from: null, valid_until: null },
+    }),
+    groundingVerifier: async () => ({ supported: false, reason_code: "UNSUPPORTED_TEMPORAL" }),
+  })
+  assert.equal(result.save, false)
+  assert.equal(result.model_save, true)
+  assert.equal(result.reason, "unsupported_canonical")
+  assert.equal(result.validation_reason, "UNSUPPORTED_TEMPORAL")
 })
 
 test("faithful paraphrase is admitted only with explicit semantic grounding verification", () => {
@@ -239,31 +263,39 @@ test("judge prompt delegates transient, third-party and turn-only rejection to s
   assert.match(prompt, /不是关键词过滤器/)
 })
 
-test("owner, exact evidence, conversation and question protections remain fail closed", () => {
+test("owner, conversation and exact evidence protections remain fail closed while questions are allowed", () => {
   const cases = [
     [captureContext({ requestedUserId: "other" }), "OWNER_MISMATCH"],
     [captureContext({ sourceConversationId: "other" }), "CONVERSATION_MISMATCH"],
-    [captureContext({ sourceMessage: "不同原文" }), "PROVENANCE_MISMATCH"],
-    [captureContext({
-      sourceMessage: "我是否长期坚持木雕？",
-      judgeResult: groundedJudgeResult({
-        provenance: {
-          source_role: "user",
-          source_message_id: currentMessageId,
-          evidence_text: "我是否长期坚持木雕？",
-          evidence_type: "question",
-        },
-      }),
-    }), "PROVENANCE_MISMATCH"],
+    [captureContext({ sourceMessage: "不同原文" }), "EVIDENCE_NOT_EXACT_SUBSTRING"],
   ]
   for (const [context, reason] of cases) {
     assert.equal(validateXiaoCMemoryNativeCaptureInput(context).reasonCode, reason)
   }
+
+  for (const punctuation of ["?", "？"]) {
+    const evidence = `我一直使用纸质日历，这样可以吗${punctuation}`
+    const result = validateXiaoCMemoryNativeCaptureInput(captureContext({
+      sourceMessage: evidence,
+      currentMessage: evidence,
+      judgeResult: groundedJudgeResult({
+        content: "她一直使用纸质日历。",
+        provenance: {
+          source_role: "user",
+          source_message_id: currentMessageId,
+          evidence_text: evidence,
+          evidence_type: "question",
+        },
+      }),
+    }))
+    assert.equal(result.eligible, true)
+    assert.equal(result.input.p_evidence_type, "question")
+  }
 })
 
-test("provenance validator rejects ambiguous temporal metadata without inventing a date", () => {
+test("temporal validation distinguishes malformed format and reversed range", () => {
   const source = { id: currentMessageId, role: "user", content: "我准备参加明年的社区演出" }
-  const result = validateUserMemoryProvenance({
+  const baseResult = {
     save: true,
     category: "meaningful_experience",
     memory_type: "temporal_plan",
@@ -272,8 +304,22 @@ test("provenance validator rejects ambiguous temporal metadata without inventing
     source_message_id: currentMessageId,
     evidence_text: source.content,
     evidence_type: "assertion",
+  }
+  const malformed = validateUserMemoryProvenance({
+    ...baseResult,
     temporal: { event_time: "明年", valid_from: null, valid_until: null },
   }, [source])
-  assert.equal(result.save, false)
-  assert.equal(result.reason, "invalid_temporal_metadata")
+  assert.equal(malformed.save, false)
+  assert.equal(malformed.reason, "temporal_format_invalid")
+
+  const reversed = validateUserMemoryProvenance({
+    ...baseResult,
+    temporal: {
+      event_time: null,
+      valid_from: "2027-02-02T09:00:00+08:00",
+      valid_until: "2027-02-01T09:00:00+08:00",
+    },
+  }, [source])
+  assert.equal(reversed.save, false)
+  assert.equal(reversed.reason, "temporal_range_invalid")
 })

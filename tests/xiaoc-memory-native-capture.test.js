@@ -102,7 +102,7 @@ test("each supported category retains owner, message, conversation, provenance, 
       [{ currentMessage: `前缀${evidenceText}后缀`, judgeResult: {
         ...context.judgeResult,
         provenance: { ...context.judgeResult.provenance, evidence_text: `${evidenceText.slice(0, 2)}不存在的中间段` },
-      } }, "PROVENANCE_MISMATCH"],
+      } }, "EVIDENCE_NOT_EXACT_SUBSTRING"],
       [{ judgeResult: { ...context.judgeResult, grounding: null } }, "GROUNDING_NOT_VERIFIED"],
     ]
     for (const [override, reason] of invalidCases) {
@@ -121,13 +121,42 @@ test("identity, provenance, ambiguity, category and grounding violations fail cl
     [{ currentMessageId: "local-id", sourceMessageId: "local-id", judgeResult: { ...base.judgeResult, provenance: { ...base.judgeResult.provenance, source_message_id: "local-id" } } }, "PERSISTED_MESSAGE_REQUIRED"],
     [{ sourceMessageId: "20000000-0000-4000-8000-000000000002" }, "PERSISTED_MESSAGE_REQUIRED"],
     [{ sourceConversationId: "other" }, "CONVERSATION_MISMATCH"],
-    [{ judgeResult: { ...base.judgeResult, category: "unsupported" } }, "UNSUPPORTED_CATEGORY"],
-    [{ judgeResult: { ...base.judgeResult, provenance: { ...base.judgeResult.provenance, source_role: "assistant" } } }, "PROVENANCE_MISMATCH"],
-    [{ judgeResult: { ...base.judgeResult, provenance: { ...base.judgeResult.provenance, evidence_type: "question", evidence_text: "我去过冰岛吗？" } }, currentMessage: "我去过冰岛吗？" }, "PROVENANCE_MISMATCH"],
+    [{ judgeResult: { ...base.judgeResult, category: "unsupported" } }, "CATEGORY_INVALID"],
+    [{ judgeResult: { ...base.judgeResult, memory_type: "unsupported" } }, "MEMORY_TYPE_INVALID"],
+    [{ judgeResult: { ...base.judgeResult, provenance: { ...base.judgeResult.provenance, source_role: "assistant" } } }, "SOURCE_ROLE_INVALID"],
+    [{ judgeResult: { ...base.judgeResult, provenance: { ...base.judgeResult.provenance, evidence_type: "invented_type" } } }, "EVIDENCE_TYPE_INVALID"],
     [{ judgeResult: { ...base.judgeResult, grounding: null } }, "GROUNDING_NOT_VERIFIED"],
-    [{ judgeResult: { ...base.judgeResult, temporal: { event_time: "not-a-time", valid_from: null, valid_until: null } } }, "TEMPORAL_METADATA_INVALID"],
+    [{ judgeResult: { ...base.judgeResult, temporal: { event_time: "not-a-time", valid_from: null, valid_until: null } } }, "TEMPORAL_FORMAT_INVALID"],
+    [{ judgeResult: { ...base.judgeResult, temporal: {
+      event_time: null,
+      valid_from: "2027-02-02T09:00:00+08:00",
+      valid_until: "2027-02-01T09:00:00+08:00",
+    } } }, "TEMPORAL_RANGE_INVALID"],
   ]
   for (const [override, reason] of cases) assert.equal(validateXiaoCMemoryNativeCaptureInput({ ...base, ...override }).reasonCode, reason)
+})
+
+test("question and trailing question-mark evidence remain eligible when provenance is exact", () => {
+  for (const evidenceType of ["question", "other"]) {
+    for (const punctuation of ["?", "？"]) {
+      const evidenceText = `我一直使用纸质日历，这样可以吗${punctuation}`
+      const result = validateXiaoCMemoryNativeCaptureInput({
+        ...base,
+        currentMessage: evidenceText,
+        judgeResult: {
+          ...base.judgeResult,
+          content: "她一直使用纸质日历。",
+          provenance: {
+            ...base.judgeResult.provenance,
+            evidence_text: evidenceText,
+            evidence_type: evidenceType,
+          },
+        },
+      })
+      assert.equal(result.eligible, true)
+      assert.equal(result.input.p_evidence_type, evidenceType)
+    }
+  }
 })
 
 test("RPC success and idempotent duplicate-success are safe and use the exact same key", async () => {

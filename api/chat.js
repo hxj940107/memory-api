@@ -48,7 +48,10 @@ import {
   buildImageUnderstandingContext,
   normalizeImageKinds,
 } from "../lib/imageUnderstanding.js"
-import { judgeMemory } from "../lib/memoryJudge.js"
+import {
+  isMemoryJudgeValidationRejectionReason,
+  judgeMemory,
+} from "../lib/memoryJudge.js"
 import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
@@ -4316,11 +4319,8 @@ console.log("======================================\n")
             embeddingProvider: memoryEmbeddingProvider,
           })
         } else {
-          const validationRejected = [
-            "invalid_source_provenance",
-            "invalid_temporal_metadata",
-            "unsupported_canonical",
-          ].includes(judgeResult.reason)
+          const validationRejected = isMemoryJudgeValidationRejectionReason(judgeResult.reason)
+            || judgeResult.reason === "unsupported_canonical"
           const categoryCode = String(judgeResult.category || "UNSPECIFIED")
             .toUpperCase()
             .replace(/[^A-Z0-9_]/g, "_")
