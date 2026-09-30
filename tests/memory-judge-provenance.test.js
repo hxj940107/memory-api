@@ -111,7 +111,7 @@ test("invalid provenance stops before Ombre persistence and consolidation", () =
 
   assert.match(memoryWrite, /if \(judgeResult\.save\) \{[\s\S]*saveLongTermMemory/)
   assert.match(memoryWrite, /if \(judgeResult\.save\) \{[\s\S]*consolidateStableMemory/)
-  assert.match(memoryWrite, /else if \(judgeResult\.reason\)[\s\S]*MEMORY SKIPPED/)
+  assert.match(memoryWrite, /if \(judgeResult\.save\) \{[\s\S]*\} else \{[\s\S]*MEMORY SKIPPED/)
   assert.doesNotMatch(memoryWrite, /sourceMessageId: userMessageId/)
 })
 

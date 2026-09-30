@@ -39,7 +39,7 @@ import {
   normalizeCacheText,
   normalizeInactivityReachOutMode,
   isXiaoCMemorySemanticRetrievalEnabled,
-  shouldRunMemoryJudge,
+  evaluateMemoryJudgePrecheck,
   trimList,
   trimText
 } from "../lib/aiConfig.js"
@@ -53,6 +53,7 @@ import { normalizeAssistantOutput } from "../lib/assistantOutput.js"
 import { formatUserVoiceForPrompt, normalizeUserVoiceAsset } from "../lib/userVoice.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
+import { writeXiaoCMemoryCaptureStageAudit } from "../lib/xiaocMemoryObservationAudit.js"
 import { createXiaoCMemoryEmbeddingProvider } from "../lib/xiaocMemoryEmbedding.js"
 import {
   assertOmbreAuthority,
@@ -4208,25 +4209,38 @@ console.log("======================================\n")
     ]
 
     waitUntil((async () => {
+      const captureStartedAt = Date.now()
       try {
-        const judgeResult = (
-          !diaryStyleContext &&
-          !attributionCorrectionContext &&
-          normalizedImageUrls.length === 0 &&
-          shouldRunMemoryJudge(message)
+        const semanticPrecheck = evaluateMemoryJudgePrecheck(message)
+        const precheck = diaryStyleContext
+          ? { eligible: false, reason: "PRECHECK_DIARY_CONTEXT" }
+          : attributionCorrectionContext
+            ? { eligible: false, reason: "PRECHECK_ATTRIBUTION_CONTEXT" }
+            : normalizedImageUrls.length > 0
+              ? { eligible: false, reason: "PRECHECK_IMAGE_TURN" }
+              : semanticPrecheck
+
+        if (!precheck.eligible) {
+          await writeXiaoCMemoryCaptureStageAudit({
+            client: supabase,
+            userId: user_id,
+            messageId: userMessageId,
+            outcome: "skipped",
+            reasonCode: precheck.reason,
+            totalLatencyMs: Date.now() - captureStartedAt,
+          })
+          return
+        }
+
+        const judgeResult = await judgeMemory(
+          message,
+          {
+            previousContent: lastUserMessage?.content || "",
+            assistantContext: reply,
+            allowedUserSources: allowedMemoryUserSources,
+            referenceTime: userMessageCreatedAt || new Date().toISOString(),
+          }
         )
-            ? await judgeMemory(
-              message,
-              {
-                previousContent: lastUserMessage?.content || "",
-                assistantContext: reply,
-                allowedUserSources: allowedMemoryUserSources,
-              }
-            )
-          : {
-              save: false,
-              content: ""
-            }
 
         if (judgeResult.save) {
           if (memoryAuthorityMode === MEMORY_AUTHORITY_MODE.OMBRE_AUTHORITATIVE) {
@@ -4285,6 +4299,9 @@ console.log("======================================\n")
               console.error("hold-hook failed:", err)
             }
           }
+          const nativeSource = allowedMemoryUserSources.find(source => (
+            source.id === judgeResult.provenance?.source_message_id
+          ))
           await runXiaoCMemoryNativeCapture({
             client: supabase,
             trustedUserId: user_id,
@@ -4294,18 +4311,56 @@ console.log("======================================\n")
             currentConversationId: cid,
             sourceConversationId: cid,
             currentMessage: message,
+            sourceMessage: nativeSource?.content || "",
             judgeResult,
             embeddingProvider: memoryEmbeddingProvider,
           })
-        } else if (judgeResult.reason) {
-          console.warn("MEMORY SKIPPED:", {
-            userMessageId,
-            conversationId: cid,
-            reason: judgeResult.reason,
+        } else {
+          const validationRejected = [
+            "invalid_source_provenance",
+            "invalid_temporal_metadata",
+            "unsupported_canonical",
+          ].includes(judgeResult.reason)
+          const categoryCode = String(judgeResult.category || "UNSPECIFIED")
+            .toUpperCase()
+            .replace(/[^A-Z0-9_]/g, "_")
+            .slice(0, 40)
+          const validationCode = String(judgeResult.validation_reason || judgeResult.reason || "UNKNOWN")
+            .toUpperCase()
+            .replace(/[^A-Z0-9_]/g, "_")
+            .slice(0, 50)
+          await writeXiaoCMemoryCaptureStageAudit({
+            client: supabase,
+            userId: user_id,
+            messageId: userMessageId,
+            outcome: validationRejected ? "skipped" : "empty",
+            reasonCode: validationRejected
+              ? `VALIDATION_${validationCode}`.slice(0, 80)
+              : `JUDGE_SAVE_FALSE_${categoryCode}`.slice(0, 80),
+            totalLatencyMs: Date.now() - captureStartedAt,
+            eligibleOpportunity: true,
+            sampled: true,
           })
+          if (judgeResult.reason) {
+            console.warn("MEMORY SKIPPED:", {
+              userMessageId,
+              conversationId: cid,
+              reason: judgeResult.reason,
+            })
+          }
         }
       } catch (err) {
         console.error("memory judge task failed:", err)
+        await writeXiaoCMemoryCaptureStageAudit({
+          client: supabase,
+          userId: user_id,
+          messageId: userMessageId,
+          outcome: "failure",
+          errorCode: String(err?.code || "JUDGE_ERROR").slice(0, 80),
+          totalLatencyMs: Date.now() - captureStartedAt,
+          eligibleOpportunity: true,
+          sampled: true,
+        })
       }
     })())
 
