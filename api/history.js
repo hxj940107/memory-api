@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { requireRequestIdentity } from "../lib/requestIdentity.js"
+import { getLatestHistoryMessage } from "../lib/latestHistory.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -201,6 +202,12 @@ export default async function handler(req, res) {
 
     if (before_id && !isValidMessageId(before_id)) {
       return res.status(400).json({ error: "invalid before_id" })
+    }
+
+    if (action === "latest") {
+      return res.status(200).json(
+        await getLatestHistoryMessage(supabase, user_id, conversation_id)
+      )
     }
 
     if (action === "search") {

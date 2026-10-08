@@ -41,6 +41,7 @@ import * as Haptics from "expo-haptics";
 import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
 import { audioSessionCoordinator } from "../lib/audioSessionCoordinator";
 import { classifyChatDeliveryFailure } from "../lib/chatDeliveryError";
+import { startHistoryPolling } from "../lib/historyPolling";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -1990,12 +1991,15 @@ export default function ChatScreen() {
     }
   };
 
+  const historySyncFocusedRef = useRef(false);
   const refreshIfCloudHistoryChanged = async () => {
     const id = conversationIdRef.current;
 
     if (
       !id ||
       historyLocationModeRef.current ||
+      !historySyncFocusedRef.current ||
+      AppState.currentState !== "active" ||
       historyRefreshInFlightRef.current
     )
       return;
@@ -2003,13 +2007,18 @@ export default function ChatScreen() {
     historyRefreshInFlightRef.current = true;
 
     try {
-      const latest = await apiJson<HistoryItem[]>("/api/history", {
+      const latest = await apiJson<Pick<HistoryItem, "id" | "created_at">[]>("/api/history", {
         query: {
           user_id: APP_USER_ID,
           conversation_id: id,
-          limit: 1,
+          action: "latest",
         },
       });
+      if (
+        conversationIdRef.current !== id ||
+        !historySyncFocusedRef.current ||
+        AppState.currentState !== "active"
+      ) return;
       const latestCloudId = latest[0]?.id ? String(latest[0].id) : null;
 
       if (latestCloudId && latestCloudId !== latestCloudMessageIdRef.current) {
@@ -2027,6 +2036,7 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      historySyncFocusedRef.current = true;
       const routeKey = `${incomingConversationId || "last"}:${shouldStartNewChat ? "new" : "restore"}:${targetMessageId || "latest"}`;
       const routeChanged = lastRestoreRouteKeyRef.current !== routeKey;
       const isInitialRestore =
@@ -2035,19 +2045,14 @@ export default function ChatScreen() {
       lastRestoreRouteKeyRef.current = routeKey;
       restoreConversation({ silent: !isInitialRestore });
 
-      const appStateSubscription = AppState.addEventListener(
-        "change",
-        (state) => {
-          if (state === "active") {
-            refreshIfCloudHistoryChanged();
-          }
-        },
-      );
-      const refreshTimer = setInterval(refreshIfCloudHistoryChanged, 30_000);
+      const stopPolling = startHistoryPolling({
+        appState: AppState,
+        refresh: refreshIfCloudHistoryChanged,
+      });
 
       return () => {
-        appStateSubscription.remove();
-        clearInterval(refreshTimer);
+        historySyncFocusedRef.current = false;
+        stopPolling();
       };
     }, [incomingConversationId, shouldStartNewChat, targetMessageId]),
   );
