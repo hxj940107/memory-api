@@ -21,6 +21,7 @@ import {
   assignMomentMaterialAliases,
   formatMomentMaterialsForPrompt,
   getMessageNarrativePermission,
+  getAlbumNarrativePermission,
   selectRetainedMomentMaterials,
 } from "../lib/momentMaterials.js"
 import fs from "fs"
@@ -116,6 +117,8 @@ import {
 } from "../lib/memoryContextGateway.js"
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
+import { resolveMomentImageIdentity } from "../lib/momentImageIdentity.js"
+import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum } from "../lib/sharedAlbumChat.js"
 import {
   allocateDynamicContextBudget,
   buildDeterministicHistoryEpoch,
@@ -2036,7 +2039,7 @@ function hasUnsupportedMomentWeather(text, sourceText) {
     !weatherPattern.test(String(sourceText || ""))
 }
 
-async function getAvailableMomentImages(user_id) {
+async function getAvailableMomentImages(user_id, selectedAlbum = null) {
   const [momentResult, albumResult] = await Promise.all([
     supabase
       .from("moment_entries")
@@ -2046,13 +2049,7 @@ async function getAvailableMomentImages(user_id) {
       .not("image_key", "is", null)
       .order("created_at", { ascending: false })
       .limit(8),
-    supabase
-      .from("album_assets")
-      .select("id,description,category,categories,time_periods,weather,relations,aspect_ratio,last_used_at")
-      .eq("user_id", user_id)
-      .eq("access_scope", "shared")
-      .eq("enabled", true)
-      .is("archived_at", null)
+    sharedAlbumQuery(supabase, user_id)
       .order("last_used_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: false })
       .limit(8),
@@ -2101,8 +2098,8 @@ async function getAvailableMomentImages(user_id) {
     一起出门: ["一起", "出门", "散步", "旅行"],
     共同回忆: ["以前", "记得", "回忆", "那次", "一起"],
   }
-  const albumImages = (albumResult.data || [])
-    .filter(item => !recentAlbumIds.has(Number(item.id)))
+  const albumImages = (selectedAlbum ? [selectedAlbum] : albumResult.data || [])
+    .filter(item => selectedAlbum || !recentAlbumIds.has(Number(item.id)))
     .map(item => {
       const categories = [...new Set([
         ...(Array.isArray(item.categories) ? item.categories : []),
@@ -2324,6 +2321,7 @@ async function maybeCreateMoment({
   attributionCorrectionContext,
   normalizedImageUrls,
   hasFileText,
+  selectedAlbum = null,
 }) {
   let auditId = null
 
@@ -2385,6 +2383,12 @@ async function maybeCreateMoment({
       })
     }
     const sourceMaterials = assignMomentMaterialAliases(retainedMaterials)
+    if (selectedAlbum) sourceMaterials.push({ alias: `album-${selectedAlbum.id}`, messageId: null,
+      createdAt: selectedAlbum.created_at, text: selectedAlbum.description || selectedAlbum.category || "",
+      description: selectedAlbum.description, categories: selectedAlbum.categories, relations: selectedAlbum.relations,
+      timePeriods: selectedAlbum.time_periods, weather: selectedAlbum.weather,
+      materialType: "album_image", sourceType: "album_asset", sourceRef: `album-${selectedAlbum.id}`,
+      narrativePermission: getAlbumNarrativePermission(selectedAlbum) })
     const currentSourceMaterial = sourceMaterials.find(
       item => item.messageId === String(user_message_id)
     ) || null
@@ -2445,7 +2449,7 @@ async function maybeCreateMoment({
     }
   }
 
-  const availableMomentImages = await getAvailableMomentImages(user_id)
+  const availableMomentImages = await getAvailableMomentImages(user_id, selectedAlbum)
   const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
   const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
   const momentEnvironment = buildEnvironmentContext(USER_TIMEZONE)
@@ -2653,7 +2657,7 @@ ${momentImageCatalog}
 
 {
   "shouldPost": true,
-  "source_message_id": "选中的素材别名",
+  "source_message_id": "选中的生活素材别名，只用于正文来源，不是图片 ID",
   "material_scope": "shared_life / xiaoc_independent / xiaoc_thought",
   "narrative_permission": "shared_life / user_with_third_party / xiaoc_independent / uncertain",
   "coverage": "fresh_unshared / mentioned_not_explored / fully_discussed",
@@ -2661,7 +2665,7 @@ ${momentImageCatalog}
   "audience_fit": "public_share / private_only / not_worth_posting",
   "expression_mode": "new_event / retrospective_scene / new_reaction",
   "text": "动态正文",
-  "image": "匹配的素材 id，或者 null",
+  "image": "仅限配图素材库列出的 album-数字或图片库 ID，或者 null；不得填写 mN/uN 生活素材别名",
   "priority": 2,
   "share_mode": "immediate 或 delayed",
   "event_time": "带时区的 ISO 时间，例如 2026-08-16T21:00:00+08:00"
@@ -2680,6 +2684,7 @@ ${context}
 仍在有效期内、可供本次 consideration 选择的真实生活素材：
 
 ${retainedMaterialContext}
+${selectedAlbum ? `她明确要求使用已查询的真实相册照片发朋友圈。source_message_id 和 image 均使用 album-${selectedAlbum.id}；权限以该真实素材标签为准。事实只能来自该相册描述/标签，不能声称亲眼看过原图或亲自拍摄。仍须通过所有发布判断。` : ""}
 
 她刚刚说：
 ${currentSourceMaterial ? `[${currentSourceMaterial.alias}] user_message_id=${currentSourceMaterial.messageId}` : "[current source unavailable]"}
@@ -2705,6 +2710,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     }
   ]
 
+    if (selectedAlbum) momentMessages[0].content += `\n本次是明确授权的相册发布：相册 metadata 是真实事实来源，不是虚构图片。source_message_id=image=album-${selectedAlbum.id}；narrative_permission=${getAlbumNarrativePermission(selectedAlbum)}，material_scope=${getAlbumNarrativePermission(selectedAlbum) === "shared_life" ? "shared_life" : "xiaoc_independent"}。未看过原图，只依据描述/标签，不得虚构视觉细节。其余公开、grounding、compatibility 规则继续生效。`
     await updateMomentAudit(auditId, { model_called: true })
 
     const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
@@ -2766,7 +2772,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return null
     }
 
-    const selectedSource = resolveMomentSourceMaterial(
+    const selectedSource = (selectedAlbum ? sourceMaterials.find(item => item.sourceRef === `album-${selectedAlbum.id}`) : null) || resolveMomentSourceMaterial(
       sourceMaterials,
       candidate.sourceMessageId,
     ) || (isManualMomentRequest
@@ -2796,7 +2802,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       })
       return null
     }
-    if (candidate.materialScope !== "shared_life") {
+    if (candidate.materialScope !== (selectedAlbum && getAlbumNarrativePermission(selectedAlbum) !== "shared_life" ? "xiaoc_independent" : "shared_life")) {
       await completeMomentAudit(auditId, {
         model_should_post: true,
         requested_image_id: requestedImageId,
@@ -2909,6 +2915,10 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
     }
 
     let imageValidationResult = requestedImageId ? "accepted" : "not_requested"
+    candidate.image = await resolveMomentImageIdentity({ reference: candidate.image,
+      materials: sourceMaterials, images: availableMomentImages, owner: user_id, client: supabase })
+    if (requestedImageId && !candidate.image) imageValidationResult = "rejected"
+    if (selectedAlbum && candidate.image !== `album-${selectedAlbum.id}`) throw new Error("ALBUM_SELECTION_NOT_HONORED")
 
     if (candidate.image && !isMomentImageCompatible(
       candidate.image,
@@ -2941,6 +2951,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       image_resolution_result: imageResolutionResult,
       resolved_image_key: candidate.image,
     })
+    if (selectedAlbum && !candidate.image) throw new Error("SELECTED_ALBUM_IMAGE_REJECTED")
 
     if (!isManualMomentRequest) {
       const saveResult = await saveMomentCandidate({
@@ -2960,6 +2971,9 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
       return saveResult.candidateId
     }
 
+  if (selectedAlbum && !(await readSharedAlbum(supabase, user_id, { assetId: selectedAlbum.id, limit: 1 })).length) {
+    throw new Error("ALBUM_AUTHORIZATION_REVOKED")
+  }
   const { data, error } = await supabase
     .from("moment_entries")
     .insert({
@@ -3873,6 +3887,32 @@ const mainChatLlmCalls = [{
   usage: llm.usage || {},
 }]
 let reply = llm.reply
+let selectedChatAlbum = null
+const albumSeen = new Map()
+let albumMessages = messages
+for (let step = 0; step < 3; step++) {
+  const rawMessage = llm.raw?.choices?.[0]?.message
+  const calls = rawMessage?.tool_calls || []
+  const albumCall = calls.find(call => call.function?.name === "shared_album")
+  if (!albumCall) break
+  const results = []
+  for (const call of calls) {
+    let result
+    try {
+      if (call.function?.name !== "shared_album") throw new Error("USE_REAL_ALBUM_TOOL_NOT_GENERATION")
+      const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
+        args: JSON.parse(call.function.arguments || "{}"), seen: albumSeen })
+      if (executed.selected) selectedChatAlbum = executed.selected
+      result = executed.result
+    } catch (error) { result = { ok: false, error: error.message, published: false } }
+    results.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) })
+  }
+  albumMessages = [...albumMessages, rawMessage, ...results]
+  llm = await callLLM(albumMessages, selectedChatModel, { ...mainChatOptions,
+    tool_choice: step === 2 || selectedChatAlbum ? "none" : "auto" })
+  mainChatLlmCalls.push({ request_purpose: "normal_chat_after_album_tool", model: selectedChatModel, usage: llm.usage || {} })
+  reply = llm.reply
+}
 const imageToolCall = parseChatImageToolCall(llm.raw?.choices?.[0]?.message)
 const fallbackSearchQuery = !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
 
@@ -3922,6 +3962,7 @@ ${fallbackWebSearch}
       let toolResult
       try {
         if (imageToolCall.error) throw new Error(imageToolCall.error)
+        if (isRealAlbumRequest(message)) throw Object.assign(new Error("Use real shared-album photos, not image generation"), { code: "REAL_ALBUM_REQUEST_NOT_GENERATION" })
         const sourceImage = imageToolCall.mode === "edit"
           ? await resolveAuthorizedSourceImage({
               supabase,
@@ -3968,7 +4009,7 @@ ${fallbackWebSearch}
       }
 
       const toolFollowUpMessages = [
-        ...messages,
+        ...albumMessages,
         llm.raw.choices[0].message,
         {
           role: "tool",
@@ -3989,7 +4030,7 @@ ${fallbackWebSearch}
         reply = llm.reply || (attachments.length ? "画好了。" : "这次没画成功，我们晚一点再试。")
       } catch (error) {
         console.error("CHAT IMAGE TOOL FOLLOW-UP FAILED:", trimText(error?.message, 240))
-        reply = attachments.length ? "画好了。" : "这次没画成功，我们晚一点再试。"
+        reply = attachments.length ? "画好了。" : isRealAlbumRequest(message) ? "这次没有成功读取真实相册，我不会用生成图片代替。" : "这次没画成功，我们晚一点再试。"
       }
     }
 
@@ -4372,7 +4413,7 @@ console.log("======================================\n")
       }
     })())
 
-    waitUntil(
+    if (!isRealAlbumRequest(message) || (selectedChatAlbum && mayPublishAlbum(message))) waitUntil(
       maybeCreateMoment({
         user_id,
         conversation_id: cid,
@@ -4387,6 +4428,7 @@ console.log("======================================\n")
         attributionCorrectionContext,
         normalizedImageUrls,
         hasFileText,
+        selectedAlbum: mayPublishAlbum(message) ? selectedChatAlbum : null,
       })
         .catch(err => {
           console.error("moment auto-create failed:", err)
