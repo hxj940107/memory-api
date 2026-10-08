@@ -244,7 +244,7 @@ test("chat rendering uses stable ids for messages and split bubbles", () => {
   assert.match(source, /key=\{`\$\{stableMessageId\}_user_segment_\$\{segmentIndex\}`\}/)
   assert.match(source, /getUserBubbleSegments\(item\.text\)\.map/)
   assert.doesNotMatch(source, /segments\.slice\(2\)\.join/)
-  assert.match(source, /setInterval\(refreshIfCloudHistoryChanged, 30_000\)/)
+  assert.match(source, /startHistoryPolling\(\{\s*appState: AppState,\s*refresh: refreshIfCloudHistoryChanged/)
   assert.match(source, /silent\s*\? mergeCloudMessages\(current, restoredMessages\)/)
   assert.doesNotMatch(source, /id: createLocalMessageId\(\),\s*\n\s*cloudId: item\.id/)
   assert.match(source, /const clientMessageId = messageToSend\.clientId \|\| messageToSend\.id/)
