@@ -67,6 +67,7 @@ import {
   parseInactivityGeneration,
   validateInactivityGeneration,
 } from "../lib/inactivityGeneration.js"
+import { reevaluateExpiredMemoryEvents } from "../lib/memoryEventCapture.js"
 import {
   getMomentCandidateAdmission,
   isInvalidMomentText,
@@ -5931,11 +5932,15 @@ export default async function handler(req, res) {
           checkPendingMomentCandidates(),
         ])
         const autonomousMoment = await checkAutonomousMomentConsideration()
+        const memoryEvents = await reevaluateExpiredMemoryEvents({ client: supabase,
+          userId: APP_USER.defaultUserId,
+          embeddingProvider: createXiaoCMemoryEmbeddingProvider({ env: process.env }) })
+          .catch(error => ({ failed: true, error_code: String(error?.code || "MEMORY_EVENT_REEVALUATION_FAILED").slice(0, 80) }))
         const memoryEmbeddings = isXiaoCMemorySemanticRetrievalEnabled(process.env)
           ? await reconcileMissingNativeEmbeddings({ client: supabase, provider: createXiaoCMemoryEmbeddingProvider({ env: process.env }), userId: APP_USER.defaultUserId, limit: 3 })
             .catch(error => ({ failed: true, error_code: String(error?.code || error?.message || "EMBEDDING_RECONCILE_FAILED").split(":")[0].slice(0, 80) }))
           : { skipped: true, reason: "FLAG_OFF" }
-        result = { proactive, momentCandidates, autonomousMoment, memoryEmbeddings }
+        result = { proactive, momentCandidates, autonomousMoment, memoryEmbeddings, memoryEvents }
       } catch (error) {
         workerError = error
       }

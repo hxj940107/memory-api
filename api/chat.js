@@ -115,6 +115,7 @@ import {
   selectStableMemoryContext,
 } from "../lib/memoryContextGateway.js"
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
+import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
 import {
   allocateDynamicContextBudget,
   buildDeterministicHistoryEpoch,
@@ -4214,6 +4215,13 @@ console.log("======================================\n")
     waitUntil((async () => {
       const captureStartedAt = Date.now()
       try {
+        if (memoryAuthorityMode === MEMORY_AUTHORITY_MODE.OWNED_AUTHORITATIVE
+          && !diaryStyleContext && !attributionCorrectionContext) {
+          await runMemoryEventCapture({ client: supabase, userId: user_id,
+            conversationId: cid, currentMessageId: userMessageId,
+            embeddingProvider: memoryEmbeddingProvider })
+          return
+        }
         const semanticPrecheck = evaluateMemoryJudgePrecheck(message)
         const precheck = diaryStyleContext
           ? { eligible: false, reason: "PRECHECK_DIARY_CONTEXT" }
