@@ -3547,7 +3547,7 @@ async function reconcileExistingProactiveAttentionWakeups({
   ).toISOString()
   const { data: messages, error: messagesError } = await supabase
     .from("messages")
-    .select("id,conversation_id,metadata,created_at")
+    .select("id,conversation_id,created_at,proactiveAttentionCandidates:metadata->proactiveAttentionCandidates")
     .eq("user_id", userId)
     .eq("role", "assistant")
     .gte("created_at", cutoff)
@@ -3559,14 +3559,14 @@ async function reconcileExistingProactiveAttentionWakeups({
   const latestSnapshots = new Map()
   for (const message of messages || []) {
     if (latestSnapshots.has(message.conversation_id)) continue
-    if (!Array.isArray(message.metadata?.proactiveAttentionCandidates)) continue
+    if (!Array.isArray(message.proactiveAttentionCandidates)) continue
     latestSnapshots.set(message.conversation_id, message)
   }
 
   const candidates = []
   for (const [conversationId, message] of latestSnapshots) {
     for (const candidate of normalizeProactiveAttentionCandidates(
-      message.metadata.proactiveAttentionCandidates
+      message.proactiveAttentionCandidates
     )) {
       candidates.push({ candidate, conversationId, snapshotMessageId: message.id })
     }
