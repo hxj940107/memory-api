@@ -118,7 +118,7 @@ import {
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
 import { resolveMomentImageIdentity } from "../lib/momentImageIdentity.js"
-import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum } from "../lib/sharedAlbumChat.js"
+import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
 import {
   allocateDynamicContextBudget,
   buildDeterministicHistoryEpoch,
@@ -3880,6 +3880,10 @@ const mainChatOptions = buildMainChatImageToolOptions(
   cid,
   generatedFileChatOptions,
 )
+if (isRealAlbumRequest(message)) {
+  mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
+  messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 获取本次授权候选，再按需 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
+}
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 const mainChatLlmCalls = [{
   request_purpose: "normal_chat",
@@ -3903,8 +3907,12 @@ for (let step = 0; step < 3; step++) {
       const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
         args: JSON.parse(call.function.arguments || "{}"), seen: albumSeen })
       if (executed.selected) selectedChatAlbum = executed.selected
-      result = executed.result
-    } catch (error) { result = { ok: false, error: error.message, published: false } }
+      result = albumReplyState({ result: executed.result, selected: executed.selected,
+        publishRequested: mayPublishAlbum(message) })
+    } catch (error) {
+      selectedChatAlbum = null
+      result = albumReplyState({ result: { ok: false, error: error.message }, publishRequested: false })
+    }
     results.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) })
   }
   albumMessages = [...albumMessages, rawMessage, ...results]
@@ -3914,7 +3922,7 @@ for (let step = 0; step < 3; step++) {
   reply = llm.reply
 }
 const imageToolCall = parseChatImageToolCall(llm.raw?.choices?.[0]?.message)
-const fallbackSearchQuery = !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
+const fallbackSearchQuery = !isRealAlbumRequest(message) && !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
 
 if (fallbackSearchQuery) {
   mainChatLlmCalls[0].request_purpose = "normal_chat_pre_web_search"
