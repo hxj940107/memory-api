@@ -74,4 +74,10 @@ test("sync keeps in-flight protection and ignores responses for changed chat or 
   const second = refresh(); ctx.conversationIdRef.current = "new-chat"; release([{ id: "new" }]); await second; assert.equal(restores, 1)
   const third = refresh(); ctx.historySyncFocusedRef.current = false; release([{ id: "new" }]); await third; assert.equal(restores, 1)
   ctx.historySyncFocusedRef.current = true; ctx.AppState.currentState = "background"; await refresh(); assert.equal(requests, 3)
+  ctx.AppState.currentState = "active"
+  const concurrentSend = refresh()
+  ctx.latestCloudMessageIdRef.current = "sent-reply"
+  release([{ id: "sent-reply" }]); await concurrentSend
+  assert.equal(restores, 1)
+  assert.equal(ctx.historyRefreshInFlightRef.current, false)
 })
