@@ -255,11 +255,11 @@ test("capture audit distinguishes precheck, judge false, validation, and persist
   ])
 })
 
-test("judge prompt delegates transient, third-party and turn-only rejection to semantic judgment", () => {
+test("restored judge prompt retains the historical save and exclusion standards", () => {
   const prompt = buildMemoryJudgePrompt({ message: "虚构输入" })
-  assert.match(prompt, /third_party_trivia/)
-  assert.match(prompt, /turn_only_instruction/)
-  assert.match(prompt, /transient_state/)
+  assert.match(prompt, /不要保存：[\s\S]*临时情绪/)
+  assert.match(prompt, /如果是项目开发信息，默认不要进入私人长期记忆/)
+  assert.match(prompt, /值得保存：[\s\S]*长期习惯/)
   assert.match(prompt, /不是关键词过滤器/)
 })
 
