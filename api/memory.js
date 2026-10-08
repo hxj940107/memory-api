@@ -2935,15 +2935,16 @@ async function enqueueNextInactivityReachOutTask({
 async function reconcileInactivityLifecycle({
   userId,
   now = new Date(),
+  snapshotAttempt = 0,
 }) {
   const mode = await getCurrentInactivityReachOutMode(userId)
   if (mode === "off") {
     return { recovered: false, reason: "hard_opt_out" }
   }
 
-  const { data: latestMessage, error: latestMessageError } = await supabase
+  const { data: latestMessageIdentity, error: latestMessageError } = await supabase
     .from("messages")
-    .select("id,user_id,conversation_id,role,content,metadata,created_at")
+    .select("id,conversation_id,role,created_at")
     .eq("user_id", userId)
     .in("role", ["user", "assistant"])
     .order("created_at", { ascending: false })
@@ -2951,6 +2952,7 @@ async function reconcileInactivityLifecycle({
     .limit(1)
     .maybeSingle()
   if (latestMessageError) throw latestMessageError
+  let latestMessage = latestMessageIdentity
   if (!latestMessage?.id || !latestMessage?.conversation_id || !latestMessage?.created_at) {
     return { recovered: false, reason: "no_successful_chat_message" }
   }
@@ -2981,6 +2983,46 @@ async function reconcileInactivityLifecycle({
   )
   if (activeTask) {
     return { recovered: false, reason: "active_lifecycle_exists", task_id: activeTask.id }
+  }
+
+  // Recovery alone needs text and source identity; historical images stay in the DB.
+  const { data: recoveryMessage, error: recoveryMessageError } = await supabase
+    .from("messages")
+    .select("id,conversation_id,role,content,created_at,proactive:metadata->proactive,replyToUserMessageId:metadata->replyToUserMessageId")
+    .eq("user_id", userId)
+    .eq("id", latestMessage.id)
+    .eq("conversation_id", latestMessage.conversation_id)
+    .maybeSingle()
+  if (recoveryMessageError) throw recoveryMessageError
+  const { data: currentAnchor, error: currentAnchorError } = await supabase
+    .from("messages")
+    .select("id,conversation_id,role,created_at")
+    .eq("user_id", userId)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (currentAnchorError) throw currentAnchorError
+  if (
+    !recoveryMessage ||
+    currentAnchor?.id !== latestMessage.id ||
+    currentAnchor?.conversation_id !== latestMessage.conversation_id ||
+    currentAnchor?.created_at !== latestMessage.created_at ||
+    currentAnchor?.role !== latestMessage.role
+  ) {
+    // Retry once immediately rather than restoring a task anchored to an old message.
+    if (snapshotAttempt < 1) return reconcileInactivityLifecycle({
+      userId, now, snapshotAttempt: snapshotAttempt + 1,
+    })
+    return { recovered: false, reason: "conversation_advanced_during_reconciliation" }
+  }
+  latestMessage = {
+    ...recoveryMessage,
+    metadata: {
+      proactive: recoveryMessage.proactive,
+      replyToUserMessageId: recoveryMessage.replyToUserMessageId,
+    },
   }
 
   const source = getInactivityReconciliationSource(latestMessage)
