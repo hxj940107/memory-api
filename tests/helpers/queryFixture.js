@@ -5,7 +5,7 @@ export function queryFixture(tables, { beforeRead = () => {} } = {}) {
     reads,
     from(table) {
       const filters = [], orders = []
-      let fields = "*", limit = Infinity, offset = 0
+      let fields = "*", limit = Infinity, offset = 0, head = false
       const execute = () => {
         beforeRead({ table, fields, reads })
         let rows = (tables[table] || []).filter(row => filters.every(fn => fn(row)))
@@ -16,6 +16,7 @@ export function queryFixture(tables, { beforeRead = () => {} } = {}) {
           }
           return 0
         }).slice(offset, offset + limit)
+        const count = rows.length
         const data = rows.map(row => fields === "*" ? { ...row } : Object.fromEntries(
           fields.split(",").map(field => {
             const [alias, expression] = field.trim().includes(":") ? field.trim().split(":") : [null, field.trim()]
@@ -25,14 +26,16 @@ export function queryFixture(tables, { beforeRead = () => {} } = {}) {
           })
         ))
         reads.push({ table, fields, data })
-        return { data, error: null }
+        return { data: head ? null : data, error: null, count }
       }
       const q = {
-        select(value) { fields = value; return q },
+        select(value, options = {}) { fields = value; head = options.head === true; return q },
         eq(key, value) { filters.push(row => row[key] === value); return q },
         is(key, value) { filters.push(row => row[key] === value); return q },
         in(key, values) { filters.push(row => values.includes(row[key])); return q },
         gte(key, value) { filters.push(row => row[key] >= value); return q },
+        gt(key, value) { filters.push(row => row[key] > value); return q },
+        lt(key, value) { filters.push(row => row[key] < value); return q },
         order(key, { ascending = true } = {}) { orders.push([key, ascending]); return q },
         limit(value) { limit = value; return q },
         range(start, end) { offset = start; limit = end - start + 1; return q },

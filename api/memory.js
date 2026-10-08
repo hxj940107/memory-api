@@ -1218,7 +1218,7 @@ async function enqueueMomentForXiaoC({ user_id, moment_id, text }) {
 async function getRecentMomentChatContext(user_id) {
   const { data, error } = await supabase
     .from("messages")
-    .select("role,content,metadata,created_at")
+    .select("role,content,created_at,imageDescription:metadata->imageDescription")
     .eq("user_id", user_id)
     .in("role", ["user", "assistant"])
     .order("created_at", { ascending: false })
@@ -1229,8 +1229,7 @@ async function getRecentMomentChatContext(user_id) {
   return (data || [])
     .reverse()
     .map((message) => {
-      const metadata = message.metadata || {}
-      const imageContext = metadata.imageDescription
+      const imageContext = message.imageDescription
       const content = [
         trimText(normalizeAssistantOutput(message), 220),
         imageContext ? `[图片背景信息] ${trimText(imageContext, 180)}` : "",
@@ -2148,7 +2147,7 @@ async function loadWeatherShadowRecentContext(userId) {
   ).toISOString()
   const { data, error } = await supabase
     .from("messages")
-    .select("id,role,content,created_at,metadata")
+    .select("id,role,content,created_at")
     .eq("user_id", userId)
     .in("role", ["user", "assistant"])
     .gte("created_at", cutoff)
@@ -2476,7 +2475,7 @@ async function getAutonomousTreeholeContext(user_id) {
   const [messagesResult, entriesResult] = await Promise.all([
     supabase
       .from("messages")
-      .select("id,role,content,metadata,created_at")
+      .select("id,role,content,created_at,imageDescription:metadata->imageDescription")
       .eq("user_id", user_id)
       .in("role", ["user", "assistant"])
       .order("created_at", { ascending: false })
@@ -2507,8 +2506,7 @@ async function getAutonomousTreeholeContext(user_id) {
   const formattedMessages = [...newMessages]
     .reverse()
     .map((message) => {
-      const metadata = message.metadata || {}
-      const imageContext = metadata.imageDescription
+      const imageContext = message.imageDescription
       const content = trimText(normalizeAssistantOutput(message), 700)
       return {
         id: String(message.id || ""),
@@ -4872,7 +4870,7 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       .gt("expires_at", now.toISOString()),
     supabase
       .from("messages")
-      .select("id,conversation_id,role,content,created_at,metadata")
+      .select("id,conversation_id,role,content,created_at,imageDescription:metadata->imageDescription")
       .eq("user_id", userId)
       .eq("role", "user")
       .gte("created_at", materialSince)
@@ -4924,7 +4922,10 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
   let prompt
   try {
     materials = assignMomentMaterialAliases([
-      ...selectRetainedMomentMaterials(messageResult.data || [], { now, maxMaterials: 8 }),
+      ...selectRetainedMomentMaterials((messageResult.data || []).map(message => ({
+        ...message,
+        metadata: { imageDescription: message.imageDescription },
+      })), { now, maxMaterials: 8 }),
       ...buildAlbumMomentMaterials(albumResult.data || [], { maxMaterials: 6 }),
     ])
     prompt = buildAutonomousMomentPrompt({

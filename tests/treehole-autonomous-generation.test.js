@@ -45,7 +45,7 @@ test("treehole narration centers XiaoC's private reaction instead of event summa
 test("treehole context preserves message identity and rejects ungrounded speaker attribution", () => {
   const source = fs.readFileSync("api/memory.js", "utf8")
 
-  assert.match(source, /\.select\("id,role,content,metadata,created_at"\)/)
+  assert.match(source, /\.select\("id,role,content,created_at,imageDescription:metadata->imageDescription"\)/)
   assert.match(source, /\[message_id=\$\{String\(message\.id \|\| ""\)\}\]/)
   assert.match(source, /\[role=\$\{message\.role\}\]/)
   assert.match(source, /source_evidence/)
