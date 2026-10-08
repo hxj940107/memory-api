@@ -118,6 +118,7 @@ import {
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
 import { resolveMomentImageIdentity } from "../lib/momentImageIdentity.js"
+import { authorizeChatImage, assertChatImageAuthorization } from "../lib/chatImageAuthorization.js"
 import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
 import {
   allocateDynamicContextBudget,
@@ -3289,6 +3290,8 @@ export default async function handler(req, res) {
     } = req.body
 
     const cid = conversation_id || `chat_${Date.now()}`
+    const requestSourceMode = isRealAlbumRequest(message) ? "real_album_source" : "ordinary"
+    const imageAuthorization = authorizeChatImage(message, requestSourceMode)
     const generatedFileRequest = parseGeneratedFileRequest(message)
     const diaryTriggerAt = new Date()
     const selectedChatModel = normalizeChatModel(model)
@@ -3879,8 +3882,10 @@ const generatedFileChatOptions = buildGeneratedFileChatOptions(generatedFileRequ
 const mainChatOptions = buildMainChatImageToolOptions(
   cid,
   generatedFileChatOptions,
+  imageAuthorization,
 )
-if (isRealAlbumRequest(message)) {
+if (requestSourceMode === "real_album_source") {
+  mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")
   mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
   messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 获取本次授权候选，再按需 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
 }
@@ -3922,7 +3927,7 @@ for (let step = 0; step < 3; step++) {
   reply = llm.reply
 }
 const imageToolCall = parseChatImageToolCall(llm.raw?.choices?.[0]?.message)
-const fallbackSearchQuery = !isRealAlbumRequest(message) && !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
+const fallbackSearchQuery = requestSourceMode !== "real_album_source" && !imageToolCall && !webSearch ? parseWebSearchRequest(reply) : ""
 
 if (fallbackSearchQuery) {
   mainChatLlmCalls[0].request_purpose = "normal_chat_pre_web_search"
@@ -3970,7 +3975,8 @@ ${fallbackWebSearch}
       let toolResult
       try {
         if (imageToolCall.error) throw new Error(imageToolCall.error)
-        if (isRealAlbumRequest(message)) throw Object.assign(new Error("Use real shared-album photos, not image generation"), { code: "REAL_ALBUM_REQUEST_NOT_GENERATION" })
+        if (requestSourceMode === "real_album_source") throw Object.assign(new Error("Use real shared-album photos, not image generation"), { code: "REAL_ALBUM_REQUEST_NOT_GENERATION" })
+        assertChatImageAuthorization(imageAuthorization, imageToolCall.mode, requestSourceMode)
         const sourceImage = imageToolCall.mode === "edit"
           ? await resolveAuthorizedSourceImage({
               supabase,
@@ -3981,6 +3987,8 @@ ${fallbackWebSearch}
             })
           : null
         const generated = await generateChatImage({
+          sourceMode: requestSourceMode,
+          authorization: imageAuthorization,
           instruction: imageToolCall.instruction,
           sourceImage,
         })
@@ -4421,7 +4429,7 @@ console.log("======================================\n")
       }
     })())
 
-    if (!isRealAlbumRequest(message) || (selectedChatAlbum && mayPublishAlbum(message))) waitUntil(
+    if (requestSourceMode !== "real_album_source" || (selectedChatAlbum && mayPublishAlbum(message))) waitUntil(
       maybeCreateMoment({
         user_id,
         conversation_id: cid,

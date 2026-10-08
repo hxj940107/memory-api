@@ -1,7 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
+import { readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState, assertImageCreationSource } from "../lib/sharedAlbumChat.js"
+import { generateChatImage } from "../lib/chatImageGeneration.js"
 import { buildMainChatImageToolOptions } from "../lib/chatImageGeneration.js"
 const photos = [
   { id: 1, user_id: "fixture", access_scope: "shared", enabled: true, archived_at: null, description: "A fictional lake" },
@@ -37,7 +38,7 @@ test("real-photo routing and publish intent are distinct", () => {
   assert.equal(mayPublishAlbum("从共享相册挑一张"),false)
   assert.equal(mayPublishAlbum("选一张真实照片发朋友圈"),true)
   assert.equal(mayPublishAlbum("挑一张，先不要发朋友圈"),false)
-  assert.deepEqual(buildMainChatImageToolOptions("fixture").tools.map(t=>t.function.name),["create_chat_image","shared_album"])
+  assert.deepEqual(buildMainChatImageToolOptions("fixture").tools.map(t=>t.function.name),["shared_album"])
 })
 test("chat integration preserves compatibility and verifies authorization before publication", () => {
   const code=readFileSync("api/chat.js","utf8")
@@ -46,6 +47,39 @@ test("chat integration preserves compatibility and verifies authorization before
   assert.ok(code.includes('SELECTED_ALBUM_IMAGE_REJECTED'))
   assert.ok(code.includes('selectedChatAlbum && mayPublishAlbum(message)'))
   assert.ok(code.includes('isMomentImageCompatible('))
+})
+
+test("real album source survives every provider attempt, including failure and empty results", async () => {
+  for (const text of ["从共享相册挑一张喜欢的照片", "从共享相册选照片发朋友圈", "查看共享相册中的真实照片", "使用共享相册照片"]) {
+    assert.equal(isRealAlbumRequest(text), true)
+    const mode = isRealAlbumRequest(text) ? "real_album_source" : "ordinary"
+    let calls = 0
+    for (let retry = 0; retry < 3; retry++) {
+      await assert.rejects(generateChatImage({ instruction: "fixture", sourceMode: mode,
+        sourceImage: retry === 1 ? "https://example.invalid/fixture" : null,
+        fetchImpl: async () => { calls++; throw new Error("must not run") } }), { code: "REAL_ALBUM_REQUEST_NOT_GENERATION" })
+    }
+    assert.equal(calls, 0)
+    assert.throws(() => assertImageCreationSource(mode))
+  }
+})
+
+test("ordinary mentions and explicit artwork do not activate real source mode", () => {
+  for (const text of ["共享相册挺好用", "今天整理了相册", "帮我画一张虚构海岛照片", "生成一个共享相册界面", "编辑我刚发的图片"]) {
+    assert.equal(isRealAlbumRequest(text), false)
+    assert.doesNotThrow(() => assertImageCreationSource("ordinary"))
+  }
+})
+
+test("no fake album attachment when real photo display is unsupported; model options remain restricted", () => {
+  const result = albumReplyState({ result: { ok: true, photos: [] }, publishRequested: false })
+  assert.equal(result.chat_image_display, "unsupported_no_attachment")
+  assert.equal(result.attachments, undefined)
+  assert.match(result.photo_truth_contract, /not original pixels/)
+  const code = readFileSync("api/chat.js", "utf8")
+  assert.ok(code.includes('const requestSourceMode = isRealAlbumRequest(message)'))
+  assert.ok(code.includes('mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")'))
+  assert.ok(code.includes('sourceMode: requestSourceMode'))
 })
 
 test("tool reply exposes query success separately from pending or absent publication", () => {
