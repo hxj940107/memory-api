@@ -22,6 +22,7 @@ import {
   formatMomentMaterialsForPrompt,
   getMessageNarrativePermission,
   getAlbumNarrativePermission,
+  buildAlbumMomentMaterials,
   selectRetainedMomentMaterials,
 } from "../lib/momentMaterials.js"
 import fs from "fs"
@@ -118,6 +119,7 @@ import {
 import { consolidateStableMemory } from "../lib/stableMemoryConsolidation.js"
 import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
 import { resolveMomentImageIdentity } from "../lib/momentImageIdentity.js"
+import { MOMENT_NARRATION_CONTRACT } from "../lib/momentNarration.js"
 import { authorizeChatImage, assertChatImageAuthorization } from "../lib/chatImageAuthorization.js"
 import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
 import {
@@ -2384,12 +2386,12 @@ async function maybeCreateMoment({
       })
     }
     const sourceMaterials = assignMomentMaterialAliases(retainedMaterials)
-    if (selectedAlbum) sourceMaterials.push({ alias: `album-${selectedAlbum.id}`, messageId: null,
-      createdAt: selectedAlbum.created_at, text: selectedAlbum.description || selectedAlbum.category || "",
-      description: selectedAlbum.description, categories: selectedAlbum.categories, relations: selectedAlbum.relations,
-      timePeriods: selectedAlbum.time_periods, weather: selectedAlbum.weather,
-      materialType: "album_image", sourceType: "album_asset", sourceRef: `album-${selectedAlbum.id}`,
-      narrativePermission: getAlbumNarrativePermission(selectedAlbum) })
+    if (selectedAlbum) {
+      const material = buildAlbumMomentMaterials([selectedAlbum], { maxMaterials: 1 })[0]
+      if (!material) throw new Error("ALBUM_MATERIAL_UNAVAILABLE")
+      sourceMaterials.push({ ...material, alias: material.sourceRef, messageId: null,
+        createdAt: null, text: material.description })
+    }
     const currentSourceMaterial = sourceMaterials.find(
       item => item.messageId === String(user_message_id)
     ) || null
@@ -2712,6 +2714,7 @@ ${isManualMomentRequest ? "她明确让小C发一条朋友圈。" : "自然低�
   ]
 
     if (selectedAlbum) momentMessages[0].content += `\n本次是明确授权的相册发布：相册 metadata 是真实事实来源，不是虚构图片。source_message_id=image=album-${selectedAlbum.id}；narrative_permission=${getAlbumNarrativePermission(selectedAlbum)}，material_scope=${getAlbumNarrativePermission(selectedAlbum) === "shared_life" ? "shared_life" : "xiaoc_independent"}。未看过原图，只依据描述/标签，不得虚构视觉细节。其余公开、grounding、compatibility 规则继续生效。`
+    momentMessages[0].content += MOMENT_NARRATION_CONTRACT
     await updateMomentAudit(auditId, { model_called: true })
 
     const result = await callLLM(momentMessages, AI_MODELS.memoryJudge, {
