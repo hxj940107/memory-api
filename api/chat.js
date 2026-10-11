@@ -3462,7 +3462,7 @@ const recentSelection = buildDeterministicHistoryEpoch(
     maxTurns: CONTEXT_BUDGET.recentHistoryTurns,
   }
 )
-const history = recentSelection.baselineMessages
+const history = recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")
 const promptHistory = recentSelection.messages
 console.log("RECENT HISTORY BUDGET:", {
   tokenBudget: recentSelection.tokenBudget,

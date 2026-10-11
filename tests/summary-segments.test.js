@@ -49,7 +49,7 @@ function message(id, role, content) {
   )
 }
 
-// 7. A segment overlapping raw recent is omitted from prompt injection.
+// 7. Partial overlap preserves the whole summary; raw evidence takes priority.
 {
   const result = selectSummarySegmentsForPrompt([{
     id: "overlap",
@@ -59,7 +59,8 @@ function message(id, role, content) {
     covered_until: "2026-08-21T00:00:11.000Z",
     created_at: "2026-08-22T00:00:00.000Z",
   }], ["11"], 1000)
-  assert.equal(result.content, "")
+  assert.ok(result.content.includes("不能与 recent 重复加权"))
+  assert.deepEqual(result.partialOverlapIds, ["overlap"])
 }
 
 // 9. A one-off assistant joke/error is not promoted as summary evidence.
