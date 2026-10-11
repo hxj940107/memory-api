@@ -47,7 +47,7 @@ test("message relationship semantics preserve explicit third parties", () => {
 test("album metadata separates shared-life, independent and uncertain permission", () => {
   assert.equal(getAlbumNarrativePermission({ relations: ["小天使"] }), "shared_life")
   assert.equal(getAlbumNarrativePermission({ relations: ["小C"] }), "xiaoc_independent")
-  assert.equal(getAlbumNarrativePermission({ description: "城市里的天空" }), "xiaoc_independent")
+  assert.equal(getAlbumNarrativePermission({ description: "城市里的天空" }), "shared_life")
   assert.equal(getAlbumNarrativePermission({}), "uncertain")
 })
 
