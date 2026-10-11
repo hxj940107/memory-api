@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs"
 import vm from "node:vm"
 import { getLatestHistoryMessage } from "../lib/latestHistory.js"
 import { startHistoryPolling } from "../mobile/XiaoC/src/lib/historyPolling.ts"
+import { createLatestHistoryReader } from "../mobile/XiaoC/src/lib/historyLatest.ts"
+import { requireRequestIdentity as enforceRequestIdentity } from "../lib/requestIdentity.js"
 import { queryFixture } from "./helpers/queryFixture.js"
 
-function historyHandler(client, allowed = true) {
+function historyHandler(client, allowed = true, identityOptions = null) {
   const source = readFileSync("api/history.js", "utf8")
     .replace(/^import .*\n/gm, "")
     .replace(/const supabase = createClient\([\s\S]*?\)\n/, "")
@@ -14,6 +16,7 @@ function historyHandler(client, allowed = true) {
   return vm.runInNewContext(`${source}\nhandler`, {
     supabase: client, getLatestHistoryMessage,
     requireRequestIdentity: async (_req, res) => {
+      if (identityOptions) return enforceRequestIdentity(_req, res, identityOptions)
       if (!allowed) res.status(401).json({ error: "Unauthorized" })
       return allowed
     }, console,
@@ -48,6 +51,28 @@ test("latest is bounded, owner scoped, deterministic and excludes a large pictur
   assert.equal(denied.reads.length, 0)
 })
 
+test("latest runs through the real identity guard before any message read", async () => {
+  const owner = "94000000-0000-4000-8000-000000000001"
+  const token = "fixture-app-token-" + "a".repeat(40)
+  const options = {
+    env: { PRIVATE_IDENTITY_APP_TOKEN_FALLBACK_ENABLED: "true", XIAOC_APP_TOKEN: token, XIAOC_PRIVATE_AUTH_USER_UUID: owner },
+    serviceClient: queryFixture({ companion_instances: [{ user_id: owner, lifecycle_status: "active" }] }),
+  }
+  for (const [query, headers, expected] of [
+    [{ user_id: "user", conversation_id: "c", action: "latest" }, {}, 401],
+    [{ user_id: "other-owner", conversation_id: "c", action: "latest" }, { "x-xiaoc-app-token": token }, 403],
+    [{ user_id: "user", user_uuid: owner, conversation_id: "c", action: "latest" }, { "x-xiaoc-app-token": token }, 400],
+    [{ user_id: "user", conversation_id: "c", action: "latest" }, { "x-xiaoc-app-token": token }, 200],
+  ]) {
+    const db = queryFixture({ messages: [{ id: "m", user_id: "user", conversation_id: "c", created_at: "2026-10-08T07:00:00Z" }] })
+    let status
+    const res = { status(value) { status = value; return this }, json() {} }
+    await historyHandler(db, true, options)({ method: "GET", url: "/api/history", query, headers }, res)
+    assert.equal(status, expected)
+    assert.equal(db.reads.length, expected === 200 ? 1 : 0)
+  }
+})
+
 test("one timer survives foreground changes, stops in background and is removed on blur", () => {
   const timers = new Map(); let next = 1, listener, refreshed = 0
   const appState = { currentState: "active", addEventListener(_name, fn) { listener = fn; return { remove() { listener = null } } } }
@@ -68,6 +93,7 @@ test("sync keeps in-flight protection and ignores responses for changed chat or 
   const fn = section.replace("const refreshIfCloudHistoryChanged =", "const refresh =").replace(/apiJson<Pick<HistoryItem, "id" \| "created_at">\[\]>/, "apiJson")
   let release, requests = 0, restores = 0
   const ctx = { conversationIdRef: { current: "c" }, historyLocationModeRef: { current: false }, historySyncFocusedRef: { current: true }, historyRefreshInFlightRef: { current: false }, AppState: { currentState: "active" }, APP_USER_ID: "user", latestCloudMessageIdRef: { current: "old" }, skipNextMessageAutoScrollRef: { current: false }, console, apiJson: async (_path, opts) => { assert.equal(opts.query.action, "latest"); requests++; return new Promise(resolve => { release = resolve }) }, restoreConversation: async () => restores++ }
+  ctx.latestHistoryReaderRef = { current: createLatestHistoryReader() }
   const refresh = vm.runInNewContext(`${fn}\nrefresh`, ctx)
   const first = refresh(); await refresh(); assert.equal(requests, 1)
   release([{ id: "proactive" }]); await first; assert.equal(restores, 1)

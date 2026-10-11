@@ -569,7 +569,11 @@ declare
   v_content_hash text;
   v_evidence_hash text;
 begin
-  if p_evidence_type = 'question' then raise exception 'question-only evidence is not admissible'; end if;
+  if p_evidence_type is null or p_evidence_type not in (
+    'assertion', 'confirmation', 'correction', 'question', 'other'
+  ) then
+    raise exception 'unsupported evidence type';
+  end if;
   select id, user_id, conversation_id, role, content, created_at into v_message
   from public.messages where id = p_source_message_id;
   if not found or v_message.user_id <> p_user_id or v_message.role <> 'user'

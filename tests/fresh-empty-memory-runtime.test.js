@@ -14,6 +14,7 @@ import {
   hashCoreMemorySnapshot,
 } from "../lib/coreMemorySnapshot.js"
 import { runXiaoCMemoryNativeCapture } from "../lib/xiaocMemoryNativeCapture.js"
+import { XIAOC_MEMORY_GROUNDING_POLICY_VERSION } from "../lib/memoryJudge.js"
 import { runXiaoCMemoryShadowRead } from "../lib/xiaocMemoryShadowRead.js"
 
 test("memory authority mode is explicit, backwards compatible, and fail closed", () => {
@@ -185,7 +186,10 @@ test("owned corpus can grow from zero through existing gates and remains Shadow-
     judgeResult: {
       save: true,
       category: "meaningful_experience",
+      memory_type: "meaningful_experience",
       content: "她去过冰岛看极光",
+      temporal: { event_time: null, valid_from: null, valid_until: null },
+      grounding: { verified: true, policy_version: XIAOC_MEMORY_GROUNDING_POLICY_VERSION },
       provenance: {
         source_role: "user",
         source_message_id: messageId,

@@ -58,7 +58,10 @@ test("worker wiring keeps ordinary ticks and publishing deterministic", () => {
   const autonomous = source.slice(autonomousStart, publishStart)
   const publish = source.slice(publishStart, publishEnd)
   const handlerStart = source.indexOf('type === "xiaoc_background_check"')
-  const handler = source.slice(handlerStart, handlerStart + 1800)
+  const handlerEnd = source.indexOf('    if (req.method === "GET" && type === "xiaoc_proactive_check")', handlerStart)
+  assert.ok(handlerStart >= 0, "background worker branch must exist")
+  assert.ok(handlerEnd > handlerStart, "next route must delimit the background worker branch")
+  const handler = source.slice(handlerStart, handlerEnd)
 
   assert.equal((autonomous.match(/callSmallLLM\(/g) || []).length, 1)
   assert.equal((publish.match(/callSmallLLM\(/g) || []).length, 0)

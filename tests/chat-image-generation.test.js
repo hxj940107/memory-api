@@ -12,6 +12,7 @@ import {
   resolveAuthorizedSourceImage,
 } from "../lib/chatImageGeneration.js"
 import { AI_ENDPOINTS, AI_MODELS, CHAT_IMAGE_POLICY } from "../lib/aiConfig.js"
+import { authorizeChatImage } from "../lib/chatImageAuthorization.js"
 
 const toolMessage = (args) => ({
   tool_calls: [{
@@ -64,6 +65,7 @@ test("image provider configuration is centralized and always requests one image"
 test("successful provider output is decoded once and persisted without base64 metadata", async () => {
   let providerCalls = 0
   const generated = await generateChatImage({
+    authorization: authorizeChatImage("Draw a fictional lighthouse"),
     instruction: "A small lighthouse on a foggy coast",
     fetchImpl: async (url, options) => {
       providerCalls += 1
@@ -101,6 +103,7 @@ test("successful provider output is decoded once and persisted without base64 me
 test("provider failures are not retried", async () => {
   let calls = 0
   await assert.rejects(generateChatImage({
+    authorization: authorizeChatImage("Draw a fictional landscape"),
     instruction: "A fictional landscape",
     fetchImpl: async () => {
       calls += 1

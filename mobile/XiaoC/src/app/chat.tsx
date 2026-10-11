@@ -42,6 +42,7 @@ import { Audio as ExpoAVAudio, type AVPlaybackStatus } from "expo-av";
 import { audioSessionCoordinator } from "../lib/audioSessionCoordinator";
 import { classifyChatDeliveryFailure } from "../lib/chatDeliveryError";
 import { startHistoryPolling } from "../lib/historyPolling";
+import { createLatestHistoryReader } from "../lib/historyLatest";
 
 import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 
@@ -1992,6 +1993,7 @@ export default function ChatScreen() {
   };
 
   const historySyncFocusedRef = useRef(false);
+  const latestHistoryReaderRef = useRef(createLatestHistoryReader());
   const refreshIfCloudHistoryChanged = async () => {
     const id = conversationIdRef.current;
 
@@ -2007,13 +2009,15 @@ export default function ChatScreen() {
     historyRefreshInFlightRef.current = true;
 
     try {
-      const latest = await apiJson<Pick<HistoryItem, "id" | "created_at">[]>("/api/history", {
-        query: {
-          user_id: APP_USER_ID,
-          conversation_id: id,
-          action: "latest",
-        },
-      });
+      const latest = await latestHistoryReaderRef.current((action) =>
+        apiJson<Pick<HistoryItem, "id" | "created_at">[]>("/api/history", {
+          query: {
+            user_id: APP_USER_ID,
+            conversation_id: id,
+            ...(action === "latest" ? { action: "latest" } : { limit: 1 }),
+          },
+        }),
+      );
       if (
         conversationIdRef.current !== id ||
         !historySyncFocusedRef.current ||
