@@ -6,7 +6,7 @@ import { validateXiaoCMemoryNativeCaptureInput, runXiaoCMemoryNativeCapture } fr
 import { selectMemoryEventWindow, runMemoryEventCapture, reevaluateExpiredMemoryEvents, MEMORY_EVENT_WINDOW } from "../lib/memoryEventCapture.js"
 
 const ids = [1, 2, 3, 4, 5].map(n => `50000000-0000-4000-8000-${String(n).padStart(12, "0")}`)
-const env = { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true" }
+const env = { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true", XIAOC_MEMORY_EVENT_REEVALUATION_ENABLED: "true" }
 const at = "2026-01-01T10:00:00Z"
 const message = (index, content, role = "user", extra = {}) => ({ id: ids[index], user_id: "fictional-owner",
   conversation_id: "fictional-chat", role, content, created_at: `2026-01-01T10:0${index}:00Z`, ...extra })
@@ -46,10 +46,23 @@ function fixtureClient(messages) {
     },
     async rpc(name, input) {
       writes.push({ name, input })
-      if (name === "xiaoc_memory_event_claim_expired") {
-        const due = [...events.values()].filter(event => event.status === "deferred")
-        for (const event of due) event.status = "evaluating"
-        return { data: due }
+      if (name === "xiaoc_memory_event_claim_expired_v2") {
+        for (const event of events.values()) {
+          if ((event.status === "evaluating" && event.lease_until <= Date.now())
+            || (event.status === "deferred" && event.attempts >= 2)) event.status = "closed"
+        }
+        const due = [...events.values()].filter(event => event.status === "deferred" && (event.attempts || 0) < 2).slice(0, 3)
+        for (const event of due) Object.assign(event, { status: "evaluating", attempts: (event.attempts || 0) + 1,
+          updated_at: new Date().toISOString(), lease_until: Date.now() + 300000 })
+        return { data: due.map(event => ({ ...event })) }
+      }
+      if (name === "xiaoc_memory_event_finish_expired_v2") {
+        const event = events.get(input.p_event_start_message_id)
+        if (!event) return { error: new Error("missing") }
+        if (["closed", "captured"].includes(event.status)) return { data: event.status }
+        if (event.updated_at !== input.p_expected_updated_at) return { data: "superseded" }
+        event.status = "closed"
+        return { data: "closed" }
       }
       const key = input.p_event_start_message_id
       if (name === "xiaoc_memory_event_decide") {
@@ -214,6 +227,97 @@ test("multiple event expiry workers claim one bounded reevaluation", async () =>
   const run = async () => { calls++ }
   await Promise.all([1, 2].map(() => reevaluateExpiredMemoryEvents({ client, env, userId: "fictional-owner", run })))
   assert.equal(calls, 1)
+})
+
+test("background kill switch is default off before any DB or paid work, immediate capture stays enabled", async () => {
+  for (const value of [undefined, "false", "TRUE"]) {
+    let calls = 0
+    const result = await reevaluateExpiredMemoryEvents({ client: { rpc() { calls++; throw new Error("must not call") } },
+      userId: "fictional-owner", env: { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true", XIAOC_MEMORY_EVENT_REEVALUATION_ENABLED: value },
+      run: async () => { calls++ } })
+    assert.equal(result.reason, "REEVALUATION_DISABLED")
+    assert.equal(calls, 0)
+  }
+  const client = fixtureClient([announcement])
+  let judged = 0
+  await runMemoryEventCapture({ client, env: { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true" },
+    userId: "fictional-owner", conversationId: "fictional-chat", currentMessageId: announcement.id,
+    judge: async () => { judged++; return { save: false } } })
+  assert.equal(judged, 1)
+  const immediate = fixtureClient([announcement, reveal])
+  await runMemoryEventCapture({ client: immediate, env: { XIAOC_MEMORY_NATIVE_CAPTURE_ENABLED: "true" },
+    userId: "fictional-owner", conversationId: "fictional-chat", currentMessageId: reveal.id,
+    judge: async () => grounded(saved()) })
+  assert.equal(immediate.memories.size, 1)
+})
+
+test("old exhausted and abandoned events exit, batches stay at three and reenable cannot loop", async () => {
+  const client = fixtureClient([announcement, reveal])
+  for (let i = 0; i < 6; i++) client.events.set(`root-${i}`, {
+    user_id: "fictional-owner", conversation_id: "fictional-chat", event_start_message_id: `root-${i}`,
+    last_message_id: announcement.id, status: "deferred", attempts: i === 0 ? 2 : 0 })
+  client.events.set("abandoned", { status: "evaluating", lease_until: 0, attempts: 1 })
+  let calls = 0
+  const run = async () => { calls++; throw new Error("mock judge/capture failure") }
+  await reevaluateExpiredMemoryEvents({ client, env, userId: "fictional-owner", run })
+  assert.equal(calls, 3)
+  assert.equal(client.events.get("root-0").status, "closed")
+  assert.equal(client.events.get("abandoned").status, "closed")
+  for (let i = 0; i < 10; i++) await reevaluateExpiredMemoryEvents({ client, env, userId: "fictional-owner", run })
+  assert.equal(calls, 5)
+  assert.ok([...client.events.values()].every(event => event.status === "closed"))
+})
+
+test("void/silent finish cannot be reported as a successful close", async () => {
+  const event = { conversation_id: "fictional-chat", event_start_message_id: announcement.id,
+    last_message_id: announcement.id, attempts: 1, updated_at: at }
+  const client = { rpc: async name => ({ data: name.includes("claim") ? [event] : null }) }
+  await assert.rejects(reevaluateExpiredMemoryEvents({ client, env, userId: "fictional-owner", run: async () => {} }),
+    /EVENT_EXPIRY_CLOSE_NOT_CONFIRMED/)
+})
+
+test("missing v2 SQL contract fails before Judge", async () => {
+  let calls = 0
+  await assert.rejects(reevaluateExpiredMemoryEvents({ client: { rpc: async () => ({ error: new Error("RPC missing") }) },
+    env, userId: "fictional-owner", run: async () => { calls++ } }), /RPC missing/)
+  assert.equal(calls, 0)
+})
+
+test("expired root outside window closes without Judge despite stale message cursor", async () => {
+  const client = fixtureClient([reveal])
+  const event = { user_id: "fictional-owner", conversation_id: "fictional-chat", event_start_message_id: announcement.id,
+    last_message_id: announcement.id, status: "evaluating", updated_at: at, attempts: 1 }
+  client.events.set(announcement.id, { ...event })
+  let calls = 0
+  await runMemoryEventCapture({ client, env, userId: "fictional-owner", conversationId: "fictional-chat",
+    expiredEvent: event, judge: async () => { calls++; throw new Error("must not run") } })
+  assert.equal(calls, 0)
+  assert.equal(client.events.get(announcement.id).status, "closed")
+})
+
+test("hardening SQL bounds claims, never requeues leases, and protects terminal/newer state", () => {
+  const sql = readFileSync("supabase_xiaoc_memory_event_reevaluation_hardening.sql", "utf8")
+  assert.match(sql, /expires_at <= now\(\) and attempts < 2/)
+  assert.match(sql, /limit 3 for update skip locked/)
+  assert.match(sql, /attempts = e.attempts \+ 1/)
+  assert.doesNotMatch(sql, /set status = 'deferred'/)
+  assert.match(sql, /status = 'deferred' and attempts >= 2/)
+  assert.match(sql, /v_event.updated_at is distinct from p_expected_updated_at then return 'superseded'/)
+  assert.match(sql, /v_event.status in \('closed', 'captured'\) then return v_event.status/)
+  assert.match(sql, /revoke all[\s\S]*from public, anon, authenticated/)
+  assert.doesNotMatch(sql, /(?:delete from|update|truncate) public.memory_items/i)
+})
+
+test("old conversation with no new messages expires by wall clock without paid reevaluation", async () => {
+  const client = fixtureClient([announcement, reveal])
+  const event = { user_id: "fictional-owner", conversation_id: "fictional-chat", event_start_message_id: announcement.id,
+    last_message_id: announcement.id, status: "evaluating", updated_at: at, attempts: 1, created_at: at }
+  client.events.set(announcement.id, { ...event })
+  let calls = 0
+  await runMemoryEventCapture({ client, env, userId: "fictional-owner", conversationId: "fictional-chat",
+    expiredEvent: event, now: new Date("2026-01-02T10:00:00Z"), judge: async () => { calls++ } })
+  assert.equal(calls, 0)
+  assert.equal(client.events.get(announcement.id).status, "closed")
 })
 
 test("migration retains old RPC, atomic writer, exact provenance, permission and race guards", () => {
