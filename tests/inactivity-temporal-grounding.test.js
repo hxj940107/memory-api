@@ -11,7 +11,7 @@ import {
 
 const message = (role, content, created_at) => ({ role, content, created_at })
 
-test("a next-day plan mentioned the prior night is not treated as started early next morning", () => {
+test("a next-day plan is not asserted as started, while asking its progress stays allowed", () => {
   const messages = [
     message("user", "明天准备处理一件新的事情", "2026-08-24T15:10:00.000Z"),
     message("user", "我先睡觉了", "2026-08-24T15:21:00.000Z"),
@@ -19,7 +19,8 @@ test("a next-day plan mentioned the prior night is not treated as started early 
   ]
 
   assert.equal(getInactivityEventEvidence(messages).futureIntentStillUnconfirmed, true)
-  assert.equal(isTemporallyUnsupportedReachOut("现在进展怎么样了", messages), true)
+  assert.equal(isTemporallyUnsupportedReachOut("现在进展怎么样了", messages), false)
+  assert.equal(isTemporallyUnsupportedReachOut("你已经开始做了。", messages), true)
 })
 
 test("an explicitly ongoing event permits a progress question", () => {
@@ -46,16 +47,20 @@ test("bedtime and a date change do not advance a future plan", () => {
     message("user", "晚安，我要睡了", "2026-08-24T15:21:00.000Z"),
   ]
 
-  assert.equal(isTemporallyUnsupportedReachOut("事情做完了吗", messages), true)
+  assert.equal(isTemporallyUnsupportedReachOut("事情做完了吗", messages), false)
+  assert.equal(isTemporallyUnsupportedReachOut("既然你已经做完了，来聊聊吧。", messages), true)
 })
 
-test("insufficient event evidence rejects progress completion and fatigue assumptions", () => {
+test("insufficient evidence does not ban questions or fatigue inquiries; stage assertions remain guarded", () => {
   const messages = [
     message("user", "今天外面天气还不错", "2026-08-25T01:00:00.000Z"),
   ]
 
-  assert.equal(isTemporallyUnsupportedReachOut("做得怎么样了", messages), true)
-  assert.equal(isTemporallyUnsupportedReachOut("累不累", messages), true)
+  assert.equal(isTemporallyUnsupportedReachOut("做得怎么样了", messages), false)
+  assert.equal(isTemporallyUnsupportedReachOut("累不累", messages), false)
+  assert.equal(isTemporallyUnsupportedReachOut("你已经完成了。", messages), true)
+  assert.equal(isTemporallyUnsupportedReachOut("你已经完成了吗？", messages), false)
+  assert.equal(isTemporallyUnsupportedReachOut("如果你已经完成了，可以休息一下。", messages), false)
   assert.equal(isTemporallyUnsupportedReachOut("只是有点想来找你", messages), false)
 })
 

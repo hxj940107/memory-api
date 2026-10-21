@@ -132,9 +132,11 @@ test("unchanged caller, Persona, Memory and prompt serialization outside the two
   for (const file of ["api/chat.js", "api/update-summary.js", "lib/promptCaching.js", "lib/aiConfig.js", "lib/memoryContextGateway.js", "lib/xiaocMemoryOwnedRetrievalAdapter.js", "prompt/system.md", "prompt/relationship.md"]) {
     const current = readFileSync(file, "utf8")
     const expected = execFileSync("git", ["show", `8f7098a:${file}`], { encoding: "utf8" })
+    // Inactivity scheduling has separate quiet-hours tests; it is not prompt assembly.
+    const withoutInactivitySchedule = text => text.replace(/function getInactivityReachOutDueAt\([\s\S]*?\n}\n/, "")
     assert.equal(file === "api/chat.js"
-      ? current.replace('recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")', "recentSelection.baselineMessages")
-      : current, expected)
+      ? withoutInactivitySchedule(current.replace('recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")', "recentSelection.baselineMessages"))
+      : current, file === "api/chat.js" ? withoutInactivitySchedule(expected) : expected)
   }
   const args = { persona: "Persona fixture", relationshipContract: "Relationship fixture", coreMemorySnapshot: "Core fixture", fixedRules: "Rules fixture", history: turn(1), dynamicContext: "Runtime fixture" }
   const messages = buildCachedPromptMessages(args)

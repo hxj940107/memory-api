@@ -27,6 +27,9 @@ function executor(at, { crossDuringGeneration = false, crossDuringSave = false, 
     Date: Clock, WEATHER_SHADOW_TASK_TYPE: "weather", PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE: "attention", BP1_CACHE_KEEPALIVE_TASK_TYPE: "cache",
     isProactiveQuietHours: (date = new Clock()) => quiet(date), getNextProactiveMorning: (date = new Clock()) => morning(date),
     validateInactivityReachOutTask: async () => ({ allowed: true }), getProactiveMessageCooldown: async () => null,
+    reserveInactivityContact: async (_client, t) => ({ row: { payload: {} }, deliveryTask: t }),
+    persistInactivityCandidate: async () => {}, releaseInactivityContact: async () => {}, updateInactivityContact: async () => {},
+    getInactivitySoftFallbackAt: () => null,
     getInactivitySilenceState, getRecentInactivityContext: async () => { calls.context++; return { messages: ["latest context"] } },
     generateInactivityReachOutMessage: async ({ recentContext }) => {
       calls.generation++; assert.deepEqual(recentContext.messages, ["latest context"])

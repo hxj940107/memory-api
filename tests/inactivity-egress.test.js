@@ -24,7 +24,7 @@ function fixture({ mode = "normal", messages = [message], tasks = [], beforeRead
   const source = readFileSync("api/memory.js", "utf8")
   const section = source.slice(source.indexOf("async function reconcileInactivityLifecycle("), source.indexOf("async function consumePendingInactivityWithProactiveMessage("))
   const run = vm.runInNewContext(`${section}\nreconcileInactivityLifecycle`, {
-    supabase: client, getCurrentInactivityReachOutMode: async () => mode,
+    supabase: client, readInactivityBudget: async () => null, getInactivitySoftFallbackAt: () => null, getCurrentInactivityReachOutMode: async () => mode,
     getInactivityReconciliationSource, planInactivityLifecycleRecovery, capInactivityOpportunityAtCeiling,
     getInactivityReachOutDelayMinutes: () => 150,
     isProactiveQuietHours: () => quiet,

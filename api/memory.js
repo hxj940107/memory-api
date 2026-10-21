@@ -66,8 +66,13 @@ import {
 import {
   parseInactivityGeneration,
   validateInactivityGeneration,
+  canUseInactivitySoftFallback,
 } from "../lib/inactivityGeneration.js"
 import { reevaluateExpiredMemoryEvents } from "../lib/memoryEventCapture.js"
+import {
+  readInactivityBudget, reserveInactivityContact, persistInactivityCandidate, getInactivitySoftFallbackAt,
+  releaseInactivityContact, updateInactivityContact,
+} from "../lib/inactivityContactBudget.js"
 import {
   getMomentCandidateAdmission,
   isInvalidMomentText,
@@ -1989,6 +1994,12 @@ ${recentContext.recentProactiveMessages?.length
     return {
       content: null,
       skipped: true,
+      softFallbackContent: canUseInactivitySoftFallback(decision, rejectionReason, message, {
+        internalLanguage: isBadProactiveMessage(message),
+        timeInappropriate: isTimeInappropriateReachOut(message, timeContext.period, recentContext, localTime.hour),
+        temporallyUnsupported: isTemporallyUnsupportedReachOut(message, recentContext.messages),
+        factualGrounded: factualGrounding.valid,
+      }) ? message : null,
       diagnostics: {
         attempt_index: attemptIndex,
         generated_content_accepted: false,
@@ -2986,6 +2997,19 @@ async function reconcileInactivityLifecycle({
   )
   if (activeTask) {
     return { recovered: false, reason: "active_lifecycle_exists", task_id: activeTask.id }
+  }
+
+  const contactBudget = await readInactivityBudget(supabase, {
+    user_id: userId, payload: { silence_anchor_message_id: latestMessageId, silence_anchor_at: latestMessage.created_at },
+  })
+  const budgetPayload = contactBudget?.payload
+  const freshCandidate = (budgetPayload?.candidate && Date.parse(budgetPayload.candidate.valid_until) > new Date(now).getTime())
+    || getInactivitySoftFallbackAt(budgetPayload, latestMessage.created_at, now)
+  const abandonedDelivery = budgetPayload?.lease_token && budgetPayload.lease_kind === "delivery"
+    && Date.parse(budgetPayload.lease_until) <= new Date(now).getTime()
+  if (budgetPayload && (abandonedDelivery || budgetPayload.last_failure === "delivery_outcome_unknown"
+    || (!freshCandidate && budgetPayload.ceiling >= 2))) {
+    return { recovered: false, reason: "inactivity_contact_budget_blocked", task_id: contactBudget.id }
   }
 
   // Recovery alone needs text and source identity; historical images stay in the DB.
@@ -4239,7 +4263,19 @@ async function executeProactiveTask(task) {
   if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
     return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
   }
-  const generation = task.type === "plan_follow_up"
+  let contactReservation = null
+  if (task.type === "inactivity_reach_out") {
+    contactReservation = await reserveInactivityContact(supabase, task)
+    if (contactReservation.delivered) return { messageId: contactReservation.messageId, conversationId: contactReservation.conversationId }
+    if (contactReservation.blocked) return { skipped: true, reason: contactReservation.reason }
+    if (contactReservation.wait) {
+      const next = new Date(contactReservation.dueAt)
+      return { deferred: true, dueAt: isProactiveQuietHours(next) ? getNextProactiveMorning(next) : next.toISOString(), reason: contactReservation.reason }
+    }
+  }
+  let generation
+  try {
+    generation = contactReservation?.generation || (task.type === "plan_follow_up"
     ? {
         content: await generatePlanFollowUpMessage({
           user_id: task.user_id,
@@ -4251,9 +4287,28 @@ async function executeProactiveTask(task) {
         user_id: task.user_id,
         task,
         recentContext,
-      })
+      }))
+    if (contactReservation && !contactReservation.generation) {
+      await persistInactivityCandidate(supabase, contactReservation, generation)
+      const fallbackAt = getInactivitySoftFallbackAt(contactReservation.row.payload,
+        getInactivitySilenceState(task).anchor_at)
+      if (generation.skipped && fallbackAt && Date.parse(fallbackAt) <= Date.now()) {
+        const fallback = await reserveInactivityContact(supabase, task)
+        if (fallback.generation && fallback.row) {
+          contactReservation = fallback
+          generation = fallback.generation
+        }
+      }
+    }
+  } catch (error) {
+    if (contactReservation) await updateInactivityContact(supabase, contactReservation, {
+      lease_token: null, lease_until: null, lease_kind: null, last_failure: "generation_or_candidate_persistence_failed",
+    })
+    throw error
+  }
   const content = generation.content
   if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
+    await releaseInactivityContact(supabase, contactReservation)
     return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
   }
   if (task.type === "inactivity_reach_out" && generation.skipped) {
@@ -4283,6 +4338,7 @@ async function executeProactiveTask(task) {
       .maybeSingle()
     if (latestMessageError) throw latestMessageError
     if (hasConversationAdvancedSinceInactivityAnchor(task, latestMessage)) {
+      await releaseInactivityContact(supabase, contactReservation)
       return { skipped: true, reason: "生成期间对话已有新的消息，旧沉默窗口失效" }
     }
   }
@@ -4293,14 +4349,28 @@ async function executeProactiveTask(task) {
       user_id: task.user_id,
       conversation_id: conversationId,
       content,
-      task,
+      task: contactReservation?.deliveryTask || task,
       metadata: generation.diagnostics
         ? { inactivityGeneration: generation.diagnostics }
         : {},
     })
   } catch (error) {
-    if (task.type !== "inactivity_reach_out" || error.code !== "INACTIVITY_QUIET_HOURS") throw error
-    return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
+    if (task.type !== "inactivity_reach_out") throw error
+    const knownRejected = error.code === "INACTIVITY_QUIET_HOURS" || /^[0-9A-Z]{5}$/.test(String(error.code || ""))
+    if (!knownRejected) {
+      await updateInactivityContact(supabase, contactReservation, { last_failure: "delivery_outcome_unknown" })
+      return { skipped: true, reason: "inactivity_delivery_outcome_unknown" }
+    }
+    await releaseInactivityContact(supabase, contactReservation)
+    return { deferred: true, dueAt: error.code === "INACTIVITY_QUIET_HOURS"
+      ? getNextProactiveMorning() : new Date(Date.now() + 5 * 60000).toISOString(),
+      reason: error.code === "INACTIVITY_QUIET_HOURS" ? "quiet_hours" : "inactivity_delivery_retry_cached_content" }
+  }
+  if (contactReservation) {
+    await updateInactivityContact(supabase, contactReservation, {
+      message_id: messageId, conversation_id: conversationId,
+      candidate: null, lease_token: null, lease_until: null, lease_kind: null,
+    })
   }
   const nextInactivityTask = task.type === "inactivity_reach_out"
     ? await enqueueNextInactivityReachOutTask({
