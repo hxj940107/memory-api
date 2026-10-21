@@ -121,7 +121,7 @@ test("model decline schedules another bounded reconsideration instead of ending 
   assert.equal(plan.ceiling_contact_required, false)
   assert.equal(plan.due_at, "2026-09-28T07:00:00.000Z")
   assert.match(memorySource, /generation\.skipped[\s\S]*planInactivityReconsideration/)
-  assert.match(memorySource, /deferred: true,[\s\S]*dueAt: reconsideration\.due_at/)
+  assert.match(memorySource, /deferred: true,[\s\S]*dueAt: isProactiveQuietHours\(new Date\(reconsideration\.due_at\)\)/)
 })
 
 test("continuous declines converge on the 12-hour contact deadline", () => {

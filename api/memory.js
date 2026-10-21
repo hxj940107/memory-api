@@ -1785,6 +1785,9 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
   const payload = task.payload || {}
   const now = new Date()
+  if (isProactiveQuietHours(now)) {
+    return { skipped: true, content: "", diagnostics: { skip_reason: "quiet_hours" } }
+  }
   const localTime = getMomentLocalTime(now)
   const timeContext = getInactivityTimeContext(now)
   const attemptIndex = getInactivityAttemptIndex(task)
@@ -1837,6 +1840,7 @@ ${systemPrompt}
 - 可以自然承接仍有价值的未来计划，但表达必须保持计划阶段，只围绕计划本身、期待或关系上的惦记，不得伪装成进度追问。
 - 如果事件阶段不明确，放弃进度和结果型问题。没有合适具体话题时，回到关系本身的自然靠近，不要为了承接上下文而补全事实。
 - 当前时段只用于判断事件在此刻是否合理，不用于选择固定问候或固定问题。
+- 夜间顺延的是联系机会，不是旧话题或预先生成的消息。即使沉默已到联系兜底，也必须在本次调用中按当前时间和最新上下文重新判断话题是否仍有时效；过时、已结束或不确定的话题可以不引用，自然形成新的联系动机。
 
 【历史事实账本】
 - 最近聊天上下文是这个 conversation 中已经实际发生的消息行为记录。涉及我或她之前有没有说过、发过、问过或做过某个聊天行为时，必须以记录为准。
@@ -2878,10 +2882,10 @@ async function enqueueNextInactivityReachOutTask({
   const silenceAnchorAt = anchorMessage?.created_at || scheduledAt
   const delayMinutes = getInactivityReachOutDelayMinutes(mode, "open")
   const rawDueAt = new Date(new Date(silenceAnchorAt).getTime() + delayMinutes * 60 * 1000)
-  const quietAdjustedDueAt = isProactiveQuietHours(rawDueAt)
-    ? getNextProactiveMorning(rawDueAt)
-    : rawDueAt.toISOString()
-  const dueAt = capInactivityOpportunityAtCeiling(quietAdjustedDueAt, silenceAnchorAt)
+  const cappedDueAt = new Date(capInactivityOpportunityAtCeiling(rawDueAt, silenceAnchorAt))
+  const dueAt = isProactiveQuietHours(cappedDueAt)
+    ? getNextProactiveMorning(cappedDueAt)
+    : cappedDueAt.toISOString()
   const previousMessageIds = Array.from(new Set([
     ...(task.payload?.previous_proactive_message_ids || []).map(String),
     String(messageId),
@@ -3036,11 +3040,8 @@ async function reconcileInactivityLifecycle({
   if (!recovery) return { recovered: false, reason: "invalid_silence_anchor" }
 
   let dueAt = recovery.due_at
-  if (!recovery.ceiling_contact_required && isProactiveQuietHours(new Date(dueAt))) {
-    dueAt = capInactivityOpportunityAtCeiling(
-      getNextProactiveMorning(new Date(dueAt)),
-      latestMessage.created_at,
-    )
+  if (isProactiveQuietHours(new Date(dueAt))) {
+    dueAt = getNextProactiveMorning(new Date(dueAt))
   }
 
   const previousTask = matchingTasks[0] || null
@@ -3234,6 +3235,9 @@ async function saveProactiveMessage({ user_id, conversation_id, content, task, m
     }
   }
 
+  if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
+    throw Object.assign(new Error("quiet_hours"), { code: "INACTIVITY_QUIET_HOURS" })
+  }
   const { data: message, error: messageError } = await supabase
     .from("messages")
     .insert({
@@ -4134,6 +4138,10 @@ async function executeProactiveTask(task) {
     return { skipped: true, reason: "unsupported proactive task type" }
   }
 
+  if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
+    return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
+  }
+
   if (task.type === BP1_CACHE_KEEPALIVE_TASK_TYPE) {
     const { data: latestUserMessage, error } = await supabase
       .from("messages")
@@ -4200,7 +4208,8 @@ async function executeProactiveTask(task) {
         const reconsideration = planInactivityReconsideration(task)
         return {
           deferred: true,
-          dueAt: reconsideration.due_at,
+          dueAt: isProactiveQuietHours(new Date(reconsideration.due_at))
+            ? getNextProactiveMorning(new Date(reconsideration.due_at)) : reconsideration.due_at,
           reason: validation.reason,
           payload: {
             ...(task.payload || {}),
@@ -4227,6 +4236,9 @@ async function executeProactiveTask(task) {
     ? await getRecentInactivityContext(task)
     : null
 
+  if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
+    return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
+  }
   const generation = task.type === "plan_follow_up"
     ? {
         content: await generatePlanFollowUpMessage({
@@ -4241,11 +4253,15 @@ async function executeProactiveTask(task) {
         recentContext,
       })
   const content = generation.content
+  if (task.type === "inactivity_reach_out" && isProactiveQuietHours()) {
+    return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
+  }
   if (task.type === "inactivity_reach_out" && generation.skipped) {
     const reconsideration = planInactivityReconsideration(task)
     return {
       deferred: true,
-      dueAt: reconsideration.due_at,
+      dueAt: isProactiveQuietHours(new Date(reconsideration.due_at))
+        ? getNextProactiveMorning(new Date(reconsideration.due_at)) : reconsideration.due_at,
       reason: generation.diagnostics?.skip_reason || "inactivity_generation_declined",
       payload: {
         ...(task.payload || {}),
@@ -4271,15 +4287,21 @@ async function executeProactiveTask(task) {
     }
   }
   const conversationId = await getLastConversationId(task.user_id)
-  const messageId = await saveProactiveMessage({
-    user_id: task.user_id,
-    conversation_id: conversationId,
-    content,
-    task,
-    metadata: generation.diagnostics
-      ? { inactivityGeneration: generation.diagnostics }
-      : {},
-  })
+  let messageId
+  try {
+    messageId = await saveProactiveMessage({
+      user_id: task.user_id,
+      conversation_id: conversationId,
+      content,
+      task,
+      metadata: generation.diagnostics
+        ? { inactivityGeneration: generation.diagnostics }
+        : {},
+    })
+  } catch (error) {
+    if (task.type !== "inactivity_reach_out" || error.code !== "INACTIVITY_QUIET_HOURS") throw error
+    return { deferred: true, dueAt: getNextProactiveMorning(), reason: "quiet_hours" }
+  }
   const nextInactivityTask = task.type === "inactivity_reach_out"
     ? await enqueueNextInactivityReachOutTask({
         task,
@@ -4394,10 +4416,6 @@ async function checkPendingProactiveTasks() {
 
   const quietHourExempt = pending.filter(item =>
     [PROACTIVE_ATTENTION_WAKEUP_TASK_TYPE, BP1_CACHE_KEEPALIVE_TASK_TYPE].includes(item.type)
-    || (
-      item.type === "inactivity_reach_out"
-      && getInactivitySilenceState(item, now).ceiling_contact_required
-    )
   )
   const quietDeferred = pending.filter(item =>
     !quietHourExempt.some(exempt => exempt.id === item.id)
@@ -4405,12 +4423,7 @@ async function checkPendingProactiveTasks() {
   if (isProactiveQuietHours(now) && quietDeferred.length) {
     const nextDueAt = getNextProactiveMorning(now)
     for (const deferredTask of quietDeferred) {
-      const dueAt = deferredTask.type === "inactivity_reach_out"
-        ? capInactivityOpportunityAtCeiling(
-            nextDueAt,
-            getInactivitySilenceState(deferredTask, now).anchor_at,
-          )
-        : nextDueAt
+      const dueAt = nextDueAt
       const { error: deferError } = await supabase
         .from("xiaoc_proactive_tasks")
         .update({ due_at: dueAt, updated_at: now.toISOString() })

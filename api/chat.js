@@ -763,9 +763,9 @@ function getInactivityReachOutDueAt(lastConversationState = "open", mode = "norm
 
   if (delayMinutes === null) return null
 
-  return capInactivityOpportunityAtCeiling(deferOutOfQuietHours(
-    new Date(Date.now() + delayMinutes * 60 * 1000)
-  ), anchorAt)
+  return deferOutOfQuietHours(new Date(capInactivityOpportunityAtCeiling(
+    new Date(Date.now() + delayMinutes * 60 * 1000), anchorAt
+  )))
 }
 
 async function enqueueInactivityReachOutTask({

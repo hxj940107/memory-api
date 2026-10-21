@@ -62,7 +62,7 @@ test("terminal history and quiet hours preserve decline history and original cei
   assert.equal(payload.prior_decline_count, 2); assert.equal(payload.reconsideration_count, 3)
   assert.equal(payload.reconciled_from_terminal_task_id, "old")
   assert.equal(payload.silence_anchor_at, message.created_at)
-  assert.equal(f.writes[0].due_at, "2026-10-08T17:40:00.000Z")
+  assert.equal(f.writes[0].due_at, "2026-10-09T00:00:00Z")
 })
 
 test("old metadata and proactive source identity retain their previous fallback behavior", async () => {
