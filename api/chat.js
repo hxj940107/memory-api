@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { buildClaudeRequest } from "../lib/claudeRequest.js"
 import { waitUntil } from "@vercel/functions"
 import {
   authenticatedSelfCallHeaders,
@@ -3139,11 +3140,11 @@ async function callLLM(messages, model = AI_MODELS.chat, options = {}) {
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
+      body: JSON.stringify(buildClaudeRequest({
         model,
         messages,
         ...options
-      })
+      }))
     }
   )
 

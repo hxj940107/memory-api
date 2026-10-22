@@ -15,12 +15,20 @@ export const AVAILABLE_CHAT_MODELS: ChatModelOption[] = [
     name: "Claude Opus 5",
   },
   {
+    id: "anthropic/claude-sonnet-5.5",
+    name: "Claude Sonnet 5.5",
+  },
+  {
     id: "anthropic/claude-sonnet-4.6",
     name: "Claude Sonnet 4.6",
   },
   {
-    id: "anthropic/claude-haiku-4.5",
-    name: "Claude Haiku 4.5",
+    id: "anthropic/claude-haiku-5.5",
+    name: "Claude Haiku 5.5",
+  },
+  {
+    id: "anthropic/claude-opus-5.5",
+    name: "Claude Opus 5.5",
   },
   {
     id: "anthropic/claude-opus-4.1",
@@ -32,12 +40,15 @@ const SELECTED_CHAT_MODEL_KEY = "xiaoc:selected_chat_model";
 
 export const DEFAULT_CHAT_MODEL =
   AVAILABLE_CHAT_MODELS.find(
-    (model) => model.id === "anthropic/claude-sonnet-4.6",
+    (model) => model.id === "anthropic/claude-sonnet-5.5",
   ) || AVAILABLE_CHAT_MODELS[0];
 
 export function findChatModel(modelId?: string | null) {
+  const migratedId = modelId === "anthropic/claude-haiku-4.5"
+    ? "anthropic/claude-haiku-5.5"
+    : modelId;
   return (
-    AVAILABLE_CHAT_MODELS.find((model) => model.id === modelId) ||
+    AVAILABLE_CHAT_MODELS.find((model) => model.id === migratedId) ||
     DEFAULT_CHAT_MODEL
   );
 }

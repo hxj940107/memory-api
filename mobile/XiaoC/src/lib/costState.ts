@@ -29,6 +29,24 @@ const MODEL_PRICING_PER_MILLION: Record<
     cacheWrite1h: number;
   }
 > = {
+  "anthropic/claude-sonnet-5.5": {
+    input: 2,
+    output: 10,
+    cacheRead: 0.1,
+    cacheWrite1h: 4,
+  },
+  "anthropic/claude-opus-5.5": {
+    input: 4,
+    output: 20,
+    cacheRead: 0.2,
+    cacheWrite1h: 8,
+  },
+  "anthropic/claude-haiku-5.5": {
+    input: 0.1,
+    output: 0.5,
+    cacheRead: 0.01,
+    cacheWrite1h: 0.2,
+  },
   "anthropic/claude-sonnet-5": {
     input: 2,
     output: 10,
@@ -137,7 +155,9 @@ export async function saveChatUsageFromResponse({
     usage.totalCost ??
     usage.estimated_cost;
   const costNumber = Number(rawCost);
-  const price = model ? MODEL_PRICING_PER_MILLION[model] : null;
+  const price = model === "anthropic/claude-haiku-5.5" && promptTokens >= 100_000
+    ? { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite1h: 1 }
+    : model ? MODEL_PRICING_PER_MILLION[model] : null;
   const promptTokenDetails = usage.prompt_tokens_details as
     | Record<string, unknown>
     | undefined;

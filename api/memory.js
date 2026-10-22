@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { buildClaudeRequest } from "../lib/claudeRequest.js"
 import { waitUntil } from "@vercel/functions"
 import { USER_MOMENT_AUTHORS, MOMENT_ACTIVITY_COOLDOWN_MS, getUserMomentActivityDeferral } from "../lib/inactivityMomentActivity.js"
 import fs from "fs"
@@ -776,13 +777,13 @@ async function callSmallLLM(messages, options = {}) {
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(buildClaudeRequest({
       model: AI_MODELS.memoryJudge,
       messages,
       max_tokens: 90,
       temperature: 0.55,
       ...requestOptions,
-    }),
+    })),
   })
 
   const data = await res.json().catch(() => null)

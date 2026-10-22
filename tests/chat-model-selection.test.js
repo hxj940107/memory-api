@@ -10,8 +10,10 @@ import {
 const expectedModels = [
   "anthropic/claude-sonnet-5",
   "anthropic/claude-opus-5",
+  "anthropic/claude-sonnet-5.5",
   "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-haiku-4.5",
+  "anthropic/claude-haiku-5.5",
+  "anthropic/claude-opus-5.5",
   "anthropic/claude-opus-4.1",
 ]
 
@@ -25,7 +27,7 @@ test("main chat allowlist contains the current XiaoC-compatible Claude models", 
   assert.equal(normalizeChatModel("anthropic/unknown"), AI_MODELS.chat)
 })
 
-test("mobile model options stay aligned without changing the default", () => {
+test("mobile model options stay aligned with the new default", () => {
   const source = readFileSync(
     "mobile/XiaoC/src/lib/modelSettings.ts",
     "utf8",
@@ -37,15 +39,17 @@ test("mobile model options stay aligned without changing the default", () => {
 
   assert.match(
     source,
-    /DEFAULT_CHAT_MODEL[\s\S]*anthropic\/claude-sonnet-4\.6/,
+    /DEFAULT_CHAT_MODEL[\s\S]*anthropic\/claude-sonnet-5\.5/,
   )
 })
 
 test("selecting a main model does not change background model assignments", () => {
-  assert.equal(AI_MODELS.chat, "anthropic/claude-sonnet-4.6")
-  assert.equal(AI_MODELS.imageDescription, "anthropic/claude-haiku-4.5")
-  assert.equal(AI_MODELS.memoryJudge, "anthropic/claude-haiku-4.5")
-  assert.equal(AI_MODELS.summary, "anthropic/claude-haiku-4.5")
+  assert.equal(AI_MODELS.chat, "anthropic/claude-sonnet-5.5")
+  assert.equal(AI_MODELS.imageDescription, "anthropic/claude-haiku-5.5")
+  assert.equal(AI_MODELS.memoryJudge, "anthropic/claude-haiku-5.5")
+  assert.equal(AI_MODELS.summary, "anthropic/claude-haiku-5.5")
+  assert.equal(normalizeChatModel("anthropic/claude-sonnet-4.6"), "anthropic/claude-sonnet-4.6")
+  assert.equal(normalizeChatModel("anthropic/claude-haiku-4.5"), AI_MODELS.memoryJudge)
 })
 
 test("local cost fallback includes OpenRouter cache prices for new models", () => {
@@ -55,4 +59,7 @@ test("local cost fallback includes OpenRouter cache prices for new models", () =
   assert.match(source, /"anthropic\/claude-opus-5"[\s\S]*cacheRead: 0\.5[\s\S]*cacheWrite1h: 10/)
   assert.match(source, /uncachedInputTokens/)
   assert.match(source, /cacheWriteTokens \* price\.cacheWrite1h/)
+  assert.match(source, /"anthropic\/claude-sonnet-5\.5":[\s\S]*?cacheRead: 0\.1,[\s\S]*?cacheWrite1h: 4/)
+  assert.match(source, /"anthropic\/claude-opus-5\.5":[\s\S]*?cacheRead: 0\.2,[\s\S]*?cacheWrite1h: 8/)
+  assert.match(source, /"anthropic\/claude-haiku-5\.5":[\s\S]*?cacheRead: 0\.01,[\s\S]*?cacheWrite1h: 0\.2/)
 })

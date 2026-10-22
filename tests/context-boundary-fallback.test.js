@@ -1,4 +1,5 @@
 import test from "node:test"
+import { withoutModelMigration } from "./helpers/model-migration-snapshot.js"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
@@ -134,9 +135,9 @@ test("unchanged caller, Persona, Memory and prompt serialization outside the two
     const expected = execFileSync("git", ["show", `8f7098a:${file}`], { encoding: "utf8" })
     // Inactivity scheduling has separate quiet-hours tests; it is not prompt assembly.
     const withoutInactivitySchedule = text => text.replace(/function getInactivityReachOutDueAt\([\s\S]*?\n}\n/, "")
-    assert.equal(file === "api/chat.js"
+    assert.equal(withoutModelMigration(file === "api/chat.js"
       ? withoutInactivitySchedule(current.replace('recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")', "recentSelection.baselineMessages"))
-      : current, file === "api/chat.js" ? withoutInactivitySchedule(expected) : expected)
+      : current), withoutModelMigration(file === "api/chat.js" ? withoutInactivitySchedule(expected) : expected))
   }
   const args = { persona: "Persona fixture", relationshipContract: "Relationship fixture", coreMemorySnapshot: "Core fixture", fixedRules: "Rules fixture", history: turn(1), dynamicContext: "Runtime fixture" }
   const messages = buildCachedPromptMessages(args)

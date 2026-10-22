@@ -1,4 +1,5 @@
 import test from "node:test"
+import { withoutModelMigration } from "./helpers/model-migration-snapshot.js"
 import assert from "node:assert/strict"
 import vm from "node:vm"
 import { readFileSync } from "node:fs"
@@ -146,7 +147,7 @@ test("all prompt templates, Persona and generation settings remain byte-for-byte
   const prompts = s => s.match(/`(?:\\.|[^`\\])*`/gs) || []
   assert.deepEqual(prompts(source), prompts(before))
   for (const file of ["prompt/system.md", "prompt/relationship.md", "lib/aiConfig.js", "api/chat.js"]) {
-    assert.equal(readFileSync(file, "utf8"), execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" }))
+    assert.equal(withoutModelMigration(readFileSync(file, "utf8")), withoutModelMigration(execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" })))
   }
   const generation = readFileSync("lib/inactivityGeneration.js", "utf8")
   const originalGeneration = execFileSync("git", ["show", "HEAD:lib/inactivityGeneration.js"], { encoding: "utf8" })

@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { buildClaudeRequest } from "../lib/claudeRequest.js";
 import { randomUUID } from "node:crypto";
 import { requireRequestIdentity } from "../lib/requestIdentity.js";
 import {
@@ -64,11 +65,11 @@ async function updateSummaryWithClaude(
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
+      body: JSON.stringify(buildClaudeRequest({
         model: AI_MODELS.summary,
         messages: requestMessages,
         max_tokens: SUMMARY_OUTPUT_MAX_TOKENS
-      })
+      }))
     });
 
     const data = await response.json();
