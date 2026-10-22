@@ -150,7 +150,7 @@ test("all prompt templates, Persona and generation settings remain byte-for-byte
   }
   const generation = readFileSync("lib/inactivityGeneration.js", "utf8")
   const originalGeneration = execFileSync("git", ["show", "HEAD:lib/inactivityGeneration.js"], { encoding: "utf8" })
-  assert.equal(generation.slice(0, generation.indexOf("// Only expression/auxiliary-metadata")).trimEnd(), originalGeneration.trimEnd())
+  assert.equal(generation, originalGeneration)
 })
 
 test("reconciliation cannot revive an exhausted latest silence window", async () => {

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { waitUntil } from "@vercel/functions"
+import { USER_MOMENT_AUTHORS, MOMENT_ACTIVITY_COOLDOWN_MS, getUserMomentActivityDeferral } from "../lib/inactivityMomentActivity.js"
 import fs from "fs"
 import path from "path"
 import { configuredPrivateAuthUserUuid, requireRequestIdentity } from '../lib/requestIdentity.js'
@@ -2805,15 +2806,22 @@ async function validateInactivityReachOutTask(task) {
 
   const { data: newerMoment, error: momentError } = await supabase
     .from("moment_entries")
-    .select("id")
+    .select("id,user_id,author,created_at")
     .eq("user_id", task.user_id)
+    .in("author", USER_MOMENT_AUTHORS)
     .gt("created_at", scheduledAt)
+    .gt("created_at", new Date(Date.now() - MOMENT_ACTIVITY_COOLDOWN_MS).toISOString())
+    .lte("created_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
 
   if (momentError) throw momentError
-  if (newerMoment && !silenceState.ceiling_contact_required) {
-    return { allowed: false, deferred: true, reason: "用户刚发布了朋友圈" }
+  const momentDueAt = getUserMomentActivityDeferral(newerMoment, {
+    userId: task.user_id, scheduledAt, now: new Date(), deadlineAt: silenceState.contact_deadline_at,
+  })
+  if (momentDueAt && !silenceState.ceiling_contact_required) {
+    return { allowed: false, deferred: true, dueAt: momentDueAt, reason: "用户刚发布了朋友圈" }
   }
 
   const { data: higherPriority, error: priorityError } = await supabase
@@ -4232,8 +4240,8 @@ async function executeProactiveTask(task) {
         const reconsideration = planInactivityReconsideration(task)
         return {
           deferred: true,
-          dueAt: isProactiveQuietHours(new Date(reconsideration.due_at))
-            ? getNextProactiveMorning(new Date(reconsideration.due_at)) : reconsideration.due_at,
+          dueAt: isProactiveQuietHours(new Date(validation.dueAt || reconsideration.due_at))
+            ? getNextProactiveMorning(new Date(validation.dueAt || reconsideration.due_at)) : validation.dueAt || reconsideration.due_at,
           reason: validation.reason,
           payload: {
             ...(task.payload || {}),

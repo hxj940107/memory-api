@@ -294,7 +294,7 @@ test("autonomy remains before the ceiling while explicit opt-out remains hard", 
 
   assert.match(memorySource, /如果此刻没有自然动机，可以 should_send=false/)
   assert.match(memorySource, /当前已到必须自然重新建立联系的最终机会/)
-  assert.match(memorySource, /newerMoment && !silenceState\.ceiling_contact_required/)
+  assert.match(memorySource, /momentDueAt && !silenceState\.ceiling_contact_required/)
   assert.match(memorySource, /higherPriority && !silenceState\.ceiling_contact_required/)
   assert.match(memorySource, /cooldown && !ceilingContactRequired/)
   assert.match(memorySource, /reachOutMode === "off"/)
