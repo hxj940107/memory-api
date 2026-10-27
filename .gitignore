@@ -23,3 +23,15 @@ historical-memory-importance-review.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+# Superseded or intermediate device activity Shortcut builds
+/artifacts/device-activity-shortcuts/XiaoC-Activity-Upload-v2.shortcut
+/artifacts/device-activity-shortcuts/XiaoC-Activity-Upload-v3.shortcut
+/artifacts/device-activity-shortcuts/XiaoC-Activity-Upload.shortcut
+/artifacts/device-activity-shortcuts/XiaoC-Upload-State-Test-v2.shortcut
+/artifacts/device-activity-shortcuts/XiaoC-Upload-State-Test.shortcut
+/artifacts/device-activity-shortcuts/queue-unsigned.shortcut
+/artifacts/device-activity-shortcuts/state-test-source.plist
+/artifacts/device-activity-shortcuts/state-test-unsigned.shortcut
+/artifacts/device-activity-shortcuts/uploader-source.plist
+/artifacts/device-activity-shortcuts/uploader-unsigned.shortcut
