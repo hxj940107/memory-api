@@ -67,8 +67,11 @@ url = add('gettext', WFTextActionText='https://memory-api-beta.vercel.app/api/us
 state_file = getfile('xiaoc-activity-upload-state.txt')
 state = add('detect.dictionary', WFInput=ref(state_file))
 ack = getkey(state, 'acknowledged_lines')
-last = getkey(state, 'last_attempt_at')
-previous = add('detect.date', WFInput=ref(last))
+# The persisted ISO string is diagnostic only. Native date detection is locale
+# dependent on iPhone; use the state file's native modification Date instead.
+# This file is written before each HTTP attempt and after acknowledgement.
+previous = add('properties.files', WFInput=ref(state_file),
+               WFContentItemPropertyName='Last Modified Date')
 now = add('date', WFDateActionMode='Current Date')
 elapsed = add('gettimebetweendates', WFTimeUntilFromDate=text(ref(previous)), WFInput=text(ref(now)), WFTimeUntilUnit='Seconds')
 g = if_start(elapsed, 0, 300)
@@ -106,7 +109,10 @@ response = add('downloadurl', WFURL=text(ref(url)), WFHTTPMethod='POST', WFHTTPB
                WFHTTPHeaders=fields(field('x-xiaoc-activity-token', text(ref(token)))),
                WFJSONValues=fields(field('log', text(ref(joined)))))
 result = getkey(response, 'status')
-g = if_start(result, 4, 'accepted')
+# Dictionary outputs have an unknown content type in iOS. Normalize to Text before
+# string comparisons, otherwise the accepted operand can import as an empty field.
+result_text = add('gettext', WFTextActionText=text(ref(result)))
+g = if_start(result_text, 4, 'accepted')
 # Match nonempty records within the raw range so trailing empty slots remain unacknowledged.
 last_item = add('getitemfromlist', WFInput=ref(batch), WFItemSpecifier='Last Item')
 add('setvariable', WFVariableName='AcknowledgedEnd', WFInput=batch_end)
@@ -115,10 +121,13 @@ one_less = add('math', WFInput=batch_end, WFMathOperation='-', WFMathOperand=1)
 add('setvariable', WFVariableName='AcknowledgedEnd', WFInput=ref(one_less)); end(h)
 ack_end={'Value':{'Type':'Variable','VariableName':'AcknowledgedEnd'},'WFSerializationType':'WFTextTokenAttachment'}
 confirmed = add('gettext', WFTextActionText=text('{"version":1,"acknowledged_lines":',ack_end,',"last_attempt_at":"',ref(stamp),'"}'))
-save(confirmed); end(g)
+save(confirmed)
+add('showresult', Text='上传已确认成功，已保存本批进度。没有调用模型。')
+stop(); end(g)
+add('showresult', Text=text('未收到成功确认，进度没有推进。后端返回：\n', ref(response)))
 
 workflow = {
- 'WFWorkflowName':'XiaoC-Activity-Upload-v3', 'WFWorkflowActions':actions,
+ 'WFWorkflowName':'XiaoC-Activity-Upload-v5', 'WFWorkflowActions':actions,
  'WFWorkflowClientVersion':'3036.0.4.2', 'WFWorkflowMinimumClientVersion':900,
  'WFWorkflowMinimumClientVersionString':'900', 'WFWorkflowTypes':[],
  'WFWorkflowInputContentItemClasses':[], 'WFWorkflowOutputContentItemClasses':[],

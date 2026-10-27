@@ -1,5 +1,9 @@
 # 小C活动上传：签名导入候选
 
+## 本地清理候选（最新）
+
+`小C感知测试.shortcut` 为新增的待上传队列版，需替换共用采集器，不是接在旧追加日志之后。每个活动单独保存，服务端确认本批及行数一致后只清理本批文件；旧日志/进度/凭证保持不动，新采集不再追加旧日志。手动无输入运行只检查队列并显示数量。生成流程的六项模拟测试、plist/引用检查及系统签名通过，2026-10-28 用户确认最新版 iPhone 运行无问题；并发与异常中断仍仅有上述有限检查。完整安装、回退边界与并发限制见 `docs/private-device-activity-local-cleanup.md`。
+
 ## 当前真机证据与下一项测试
 
 用户运行首版离线测试时，在首次写入后读取 `xiaoc-upload-selftest-state.txt` 报不存在。确认保存动作的参数应为 `WFFileDestinationPath`，生成器此前误用 `WFSaveFileDestinationPath`。已统一保存函数并修复两份文件：测试使用 `XiaoC-Upload-State-Test-v2.shortcut`，上传候选使用 `XiaoC-Activity-Upload-v3.shortcut`，均重新生成并签名。上传v2仅有读取/预览通过的证据，不能用于正式上传。修复后的状态写入仍需真机复验；新增参数名断言防止再次生成错误键。

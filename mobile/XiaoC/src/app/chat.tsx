@@ -4378,6 +4378,7 @@ const styles = StyleSheet.create({
   userBubble: {
     maxWidth: "78%",
     minHeight: 42,
+    flexDirection: "row",
     flexShrink: 1,
     justifyContent: "center",
     backgroundColor: XiaoCColors.userBubble,
