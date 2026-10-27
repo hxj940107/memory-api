@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { requireRequestIdentity } from "../lib/requestIdentity.js"
+import { ACTIVITY_UPLOAD_ACTION, handleDeviceActivityUpload } from "../lib/deviceActivityUpload.js"
 import {
   DEFAULT_INACTIVITY_REACH_OUT_MODE,
   INACTIVITY_REACH_OUT_MODES,
@@ -177,6 +178,11 @@ async function uploadPreferenceImage(userId, kind, imageBase64, imageMimeType) {
 }
 
 export default async function handler(req, res) {
+  // This credential is write-only and accepted only by this exact action.
+  // All other actions retain the existing trusted identity resolver.
+  if (req.query?.action === ACTIVITY_UPLOAD_ACTION) {
+    return handleDeviceActivityUpload(req, res, { client: supabase })
+  }
   if (!await requireRequestIdentity(req, res)) return
 
   try {
