@@ -4402,6 +4402,7 @@ const styles = StyleSheet.create({
   aiBox: {
     maxWidth: "100%",
     minHeight: 42,
+    flexDirection: "row",
     flexShrink: 1,
     alignSelf: "flex-start",
     justifyContent: "center",
