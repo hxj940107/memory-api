@@ -4,6 +4,8 @@
 
 ## 0. 当前交接状态
 
+2026-10-27 增量（本地实现，未部署）：Private App 活动作为独立短期动态区块接入已有主聊天，近90分钟/24条/最多750字符；只读 verified owner 的活动，不新增模型调用、不进入稳定缓存前缀，不直接写 Memory/Summary/Attention 或产生主动任务。详细行为与回退见 `docs/private-device-activity-chat-context.md`。原有架构基线继续保留。
+
 截至 2026-09-05，Memory / Context P0、P1 与 P1.5 已完成；P1.5 proactive real-send 已进入生产路径，并继续受 kill switch、execution-time Gate、arbitration、final recheck 和幂等保护。Judge deterministic prefilter 仍为 Shadow，不能跳过真实 Judge。P2 Shared Context Batch 1 已完成，后续扩展暂停。
 
 ### 0.1 已完成

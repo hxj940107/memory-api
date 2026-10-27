@@ -5,6 +5,7 @@ import {
   authenticatedSelfCallHeaders,
 } from "../lib/privateAppAuth.js"
 import { requireRequestIdentity } from "../lib/requestIdentity.js"
+import { loadRecentDeviceActivity, formatDeviceActivityContext } from "../lib/deviceActivityContext.js"
 import {
   isInvalidMomentText,
   isMomentTechnicalDiscussion,
@@ -3403,6 +3404,7 @@ const userMessageId = await saveUserMessage(
   selfCallHeaders,
 )
 // 2. history
+const deviceActivityRead = loadRecentDeviceActivity(supabase, req.identity?.authUserId)
 const [historyCandidates, completedUserTurnsResult] = await Promise.all([
   getRecentMessages(
     user_id,
@@ -3742,6 +3744,7 @@ console.log("DIARY CONTEXT MESSAGES:", diaryContextMessages.length)
 console.log("DIARY CONTEXT LENGTH:", diaryContext.length)
 console.log("CHAT MODEL:", selectedChatModel)
 
+const recentDeviceActivity = await deviceActivityRead
 const environmentContext = buildEnvironmentContext()
 const imageUnderstandingContext = buildImageUnderstandingContext(normalizedImageKinds)
 
@@ -3762,6 +3765,10 @@ const systemDynamicRules = joinContextBlocks([
 
 const dynamicPromptContext = joinContextBlocks([
   environmentContext,
+  formatDeviceActivityContext(recentDeviceActivity, {
+    recentMessages: historyCandidates,
+    currentMessage: message,
+  }),
   recentMessageLedger,
   buildOptionalContextSection(
     "User Profile｜用户长期事实",

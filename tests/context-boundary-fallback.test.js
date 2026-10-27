@@ -129,14 +129,21 @@ test("oversized latest summary: whole older fallback explicitly marked; no slici
   assert.equal(partials.partialOverlapIds.length, 1)
 })
 
-test("unchanged caller, Persona, Memory and prompt serialization outside the two selectors", () => {
+test("unchanged caller, Persona, Memory and prompt serialization except separately tested optional activity context", () => {
   for (const file of ["api/chat.js", "api/update-summary.js", "lib/promptCaching.js", "lib/aiConfig.js", "lib/memoryContextGateway.js", "lib/xiaocMemoryOwnedRetrievalAdapter.js", "prompt/system.md", "prompt/relationship.md"]) {
     const current = readFileSync(file, "utf8")
     const expected = execFileSync("git", ["show", `8f7098a:${file}`], { encoding: "utf8" })
     // Inactivity scheduling has separate quiet-hours tests; it is not prompt assembly.
     const withoutInactivitySchedule = text => text.replace(/function getInactivityReachOutDueAt\([\s\S]*?\n}\n/, "")
+    // Explicit additions covered by device-activity-context.test.js; keep the rest
+    // of this historical snapshot strict, including all stable cache assembly.
+    const withoutDeviceActivity = text => text
+      .replace('import { loadRecentDeviceActivity, formatDeviceActivityContext } from "../lib/deviceActivityContext.js"\n', '')
+      .replace('const deviceActivityRead = loadRecentDeviceActivity(supabase, req.identity?.authUserId)\n', '')
+      .replace('const recentDeviceActivity = await deviceActivityRead\n', '')
+      .replace('  formatDeviceActivityContext(recentDeviceActivity, {\n    recentMessages: historyCandidates,\n    currentMessage: message,\n  }),\n', '')
     assert.equal(withoutModelMigration(file === "api/chat.js"
-      ? withoutInactivitySchedule(current.replace('recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")', "recentSelection.baselineMessages"))
+      ? withoutDeviceActivity(withoutInactivitySchedule(current.replace('recentSelection.baselineMessages.filter(item => item.contextOrigin !== "application")', "recentSelection.baselineMessages")))
       : current), withoutModelMigration(file === "api/chat.js" ? withoutInactivitySchedule(expected) : expected))
   }
   const args = { persona: "Persona fixture", relationshipContract: "Relationship fixture", coreMemorySnapshot: "Core fixture", fixedRules: "Rules fixture", history: turn(1), dynamicContext: "Runtime fixture" }

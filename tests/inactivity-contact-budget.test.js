@@ -147,7 +147,14 @@ test("all prompt templates, Persona and generation settings remain byte-for-byte
   const prompts = s => s.match(/`(?:\\.|[^`\\])*`/gs) || []
   assert.deepEqual(prompts(source), prompts(before))
   for (const file of ["prompt/system.md", "prompt/relationship.md", "lib/aiConfig.js", "api/chat.js"]) {
-    assert.equal(withoutModelMigration(readFileSync(file, "utf8")), withoutModelMigration(execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" })))
+    // Optional activity reads/volatile context have dedicated tests. Inactivity
+    // generation and the remainder of main-chat assembly still compare exactly.
+    const withoutActivity = text => file !== 'api/chat.js' ? text : text
+      .replace('import { loadRecentDeviceActivity, formatDeviceActivityContext } from "../lib/deviceActivityContext.js"\n', '')
+      .replace('const deviceActivityRead = loadRecentDeviceActivity(supabase, req.identity?.authUserId)\n', '')
+      .replace('const recentDeviceActivity = await deviceActivityRead\n', '')
+      .replace('  formatDeviceActivityContext(recentDeviceActivity, {\n    recentMessages: historyCandidates,\n    currentMessage: message,\n  }),\n', '')
+    assert.equal(withoutModelMigration(withoutActivity(readFileSync(file, "utf8"))), withoutModelMigration(withoutActivity(execFileSync("git", ["show", `HEAD:${file}`], { encoding: "utf8" }))))
   }
   const generation = readFileSync("lib/inactivityGeneration.js", "utf8")
   const originalGeneration = execFileSync("git", ["show", "HEAD:lib/inactivityGeneration.js"], { encoding: "utf8" })
