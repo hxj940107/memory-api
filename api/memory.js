@@ -9,6 +9,7 @@ import { buildInactivityApproachPolicy, loadInactivityActivityContext } from '..
 import {
   BP1_CACHE_KEEPALIVE_TASK_TYPE,
   evaluateBp1CacheKeepaliveActivity,
+  isBp1CacheKeepaliveEnabled,
 } from "../lib/cacheKeepalive.js"
 import {
   editOwnedMemory,
@@ -4197,6 +4198,9 @@ async function executeProactiveTask(task) {
   }
 
   if (task.type === BP1_CACHE_KEEPALIVE_TASK_TYPE) {
+    if (!isBp1CacheKeepaliveEnabled()) {
+      return { skipped: true, reason: "bp1_cache_keepalive_disabled" }
+    }
     const { data: latestUserMessage, error } = await supabase
       .from("messages")
       .select("id,conversation_id,created_at")

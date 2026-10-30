@@ -138,6 +138,10 @@ test("unchanged caller, Persona, Memory and prompt serialization except separate
     // Explicit additions covered by device-activity-context.test.js; keep the rest
     // of this historical snapshot strict, including all stable cache assembly.
     const withoutDeviceActivity = text => text
+      // Synthetic keepalive gates have separate execution tests; cache assembly stays strict.
+      .replace('  isBp1CacheKeepaliveEnabled,\n', '')
+      .replace('  if (!isBp1CacheKeepaliveEnabled()) return null\n', '')
+      .replace('      if (!isBp1CacheKeepaliveEnabled()) {\n        return res.status(200).json({ success: true, skipped: true, reason: "bp1_cache_keepalive_disabled" })\n      }\n', '')
       .replace('import { loadRecentDeviceActivity, formatDeviceActivityContext } from "../lib/deviceActivityContext.js"\n', '')
       .replace('const deviceActivityRead = loadRecentDeviceActivity(supabase, req.identity?.authUserId)\n', '')
       .replace('const recentDeviceActivity = await deviceActivityRead\n', '')

@@ -101,6 +101,7 @@ import {
   BP1_CACHE_KEEPALIVE_TASK_TYPE,
   buildBp1CacheKeepaliveSuffix,
   getBp1CacheKeepaliveDueAt,
+  isBp1CacheKeepaliveEnabled,
 } from "../lib/cacheKeepalive.js"
 import {
   capInactivityOpportunityAtCeiling,
@@ -865,6 +866,7 @@ async function enqueueBp1CacheKeepalive({
   model,
   activity_at = new Date(),
 }) {
+  if (!isBp1CacheKeepaliveEnabled()) return null
   if (!user_message_id || !conversation_id) return null
   const scheduledAt = new Date(activity_at).toISOString()
 
@@ -3320,6 +3322,9 @@ export default async function handler(req, res) {
     if (req.body?.action === BP1_CACHE_KEEPALIVE_TASK_TYPE) {
       if (req.identity?.actorType !== "cron") {
         return res.status(401).json({ error: "Unauthorized" })
+      }
+      if (!isBp1CacheKeepaliveEnabled()) {
+        return res.status(200).json({ success: true, skipped: true, reason: "bp1_cache_keepalive_disabled" })
       }
       const storedSnapshot = readStoredCoreMemorySnapshot(
         await readCoreMemorySnapshot(cid),

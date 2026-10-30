@@ -154,6 +154,10 @@ test("unrelated prompt templates, Persona and generation settings remain unchang
     // Optional activity reads/volatile context have dedicated tests. Inactivity
     // generation and the remainder of main-chat assembly still compare exactly.
     const withoutActivity = text => file !== 'api/chat.js' ? text : text
+      // Synthetic keepalive gates have separate execution tests; cache assembly stays strict.
+      .replace('  isBp1CacheKeepaliveEnabled,\n', '')
+      .replace('  if (!isBp1CacheKeepaliveEnabled()) return null\n', '')
+      .replace('      if (!isBp1CacheKeepaliveEnabled()) {\n        return res.status(200).json({ success: true, skipped: true, reason: "bp1_cache_keepalive_disabled" })\n      }\n', '')
       .replace('import { loadRecentDeviceActivity, formatDeviceActivityContext } from "../lib/deviceActivityContext.js"\n', '')
       .replace('const deviceActivityRead = loadRecentDeviceActivity(supabase, req.identity?.authUserId)\n', '')
       .replace('const recentDeviceActivity = await deviceActivityRead\n', '')
