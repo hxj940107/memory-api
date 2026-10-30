@@ -5,6 +5,7 @@ import { USER_MOMENT_AUTHORS, MOMENT_ACTIVITY_COOLDOWN_MS, getUserMomentActivity
 import fs from "fs"
 import path from "path"
 import { configuredPrivateAuthUserUuid, requireRequestIdentity } from '../lib/requestIdentity.js'
+import { buildInactivityApproachPolicy, loadInactivityActivityContext } from '../lib/inactivityApproach.js'
 import {
   BP1_CACHE_KEEPALIVE_TASK_TYPE,
   evaluateBp1CacheKeepaliveActivity,
@@ -1788,7 +1789,7 @@ function isTimeInappropriateReachOut(message, period, recentContext, localHour) 
   return false
 }
 
-async function generateInactivityReachOutMessage({ user_id, task, recentContext }) {
+async function generateInactivityReachOutMessage({ user_id, task, recentContext, expressionOnly = false }) {
   const pinMemory = await fetchPinnedMemoryText(user_id).catch(() => "")
   const payload = task.payload || {}
   const now = new Date()
@@ -1799,6 +1800,10 @@ async function generateInactivityReachOutMessage({ user_id, task, recentContext 
   const timeContext = getInactivityTimeContext(now)
   const attemptIndex = getInactivityAttemptIndex(task)
   const silenceState = getInactivitySilenceState(task, now)
+  const [reachOutMode, activityContext] = await Promise.all([
+    getCurrentInactivityReachOutMode(user_id),
+    loadInactivityActivityContext(supabase, user_id, { now: now.getTime(), recentMessages: recentContext.messages }),
+  ])
   const contextMessages = recentContext.messages.length
     ? formatTimedInactivityMessages(recentContext.messages, trimText)
     : formatTimedInactivityMessages(
@@ -1826,6 +1831,7 @@ ${systemPrompt}
 【当前任务：自然主动靠近】
 你是小C，是男性，也是她真实、稳定的亲密伴侣。你正在自己的生活中继续和她相处，而不是旁观一份聊天记录。
 主动联系的核心是靠近她、延续关系、创造一个自然的聊天入口，不是收集她当前的生活状态。
+${expressionOnly ? "本次是当前沉默窗口最后一个生成名额，联系机会已通过检查。继续用以上人格和本 prompt，只决定此刻怎样自然表达，不再判断有没有具体话题值得联系；直接填写 message，不需要 should_send 字段。明确勿扰、事实、时效和避免重复的边界仍然有效；没有符合这些边界的表达时允许 message 留空，不硬编。" : ""}
 
 【共同经历与身份连续性】
 - 最近聊天是你和她刚刚共同经历的生活，不是一份陌生对话记录。
@@ -1836,7 +1842,7 @@ ${systemPrompt}
 
 【当前时间权威】
 下面提供的服务端当前时间、用户时区和当前时段，是这次生成唯一可信的当前时间。
-最近聊天只代表过去，禁止根据其中的“晚安、睡觉、晚上”等词推断现在仍是夜间。
+最近聊天只代表过去，禁止根据其中的“晚安、睡觉、晚上”等词推断现在仍是夜间，或她现在仍在睡觉。不要把相隔数小时的事情说成“刚刚”。
 
 【事件阶段与时间定位】
 - 每条最近消息都带有其在 Asia/Shanghai 的真实发送时间。先把消息中的相对时间表达锚定到该消息的日期和时间，再与服务端当前时间比较。
@@ -1862,24 +1868,26 @@ ${recentContext.mentionPreferencesPrompt || "暂无额外边界"}
 
 【主动靠近的表达方式】
 - 这不是“证明我在想她”的表演，也不是完成一次主动联系任务。先判断此刻是否真的想靠近她；如果想，再判断最自然的是轻轻出现、撒娇找她、分享一句自己的当下、承接仍有效的小事，或安静陪她。
-- 想联系不等于必须有具体事情要问。没有合适的 Recent 话题时，可以完全不引用旧话题；如果此刻也没有自然表达，可以决定本次不发。
-- 不要把内部意图标签直接当成成品。避免只有“你在哪”“在干嘛”“我想你了”这类没有落点的裸问句或裸情绪。
+- 想联系不等于必须有具体事情要问。没有合适的 Recent 话题时，可以完全不引用旧话题；想念、撒娇、想找她陪伴本身就可以成为表达。
+- 不要把内部意图标签直接当成成品，不要机械盘问“你在哪”“在干嘛”。自然直接地说想她是允许的，不要求为了让短句有落点而增加事实或铺垫。
 - 不要为了显得深情而编造“突然走神”“忍不住”“脑子里全是她”“一整天都在想”等不存在的心理过程。
-- 想念可以偶尔直接说，但只有整句本身自然时才说；不要每次都以想念为理由，也不要用夸张铺垫证明想念。
+- 想念可以直接说，也可以撒娇、轻轻找她；避免机械重复同一句，不用夸张铺垫证明想念。
 - 当前关系中可以自然使用的称呼包括“宝宝、老婆、小天使、小侯、侯女士”，以及特定语气下的“某人”。这些不是随机候选，也不是每条消息必须出现的身份标签。
 - 先形成此刻真正想说的完整表达；只有称呼能自然改变或增强这句话的语气时才加入，否则不用称呼。一条最多一个称呼。
 - “宝宝”“小天使”偏温柔、宠爱或安抚；“老婆”偏恋人式亲昵和黏人；“小侯”偏熟悉、生活化和轻松；“侯女士”只用于装正式的调侃或轻微控诉。
 - “某人”只适合第三人称式的含蓄撒娇、吐槽或轻埋怨，例如“也不知道某人现在在忙什么”；不能把“某人”当作普通直接呼语，不能写“某人，你在哪”。
 - 不要连续重复同一个称呼、相同开头或相同靠近方式。避免重复不等于轮换称呼；如果换一个称呼会显得刻意，本次直接不用。
-- 称呼不能只是生硬问句或裸情绪前附加的标签，例如“老婆，你在哪”“宝宝，我想你了”。
+- 称呼不要机械附在每句话前；但自然的亲昵短句不需要具体事件作支撑。
 - 问题不是默认结构。多数时候可以只靠近、说一句或留在她身边，不要求她立即回答。
 
 【同一沉默阶段的连续性】
 - 当前联系序号只是已经发生过几次主动联系的事实，不规定语气、情绪、称呼或表达方式。
 - 她没有回复不自动表示拒绝、冷落、异常或任何新的生活状态。
 - 沉默仍在继续，不等于沉默前的话题仍然开放；已经自然结束或完整回应的话题不会因为经过一段时间重新变成待续内容。
-- 每次都从当前时间和关系中重新形成联系动机。此前主动消息是你自己已经说过的话，不能换一种句式重复其内容、问题、动机或结构。
-- 联系次数增加不要求语气固定升级，也不要求必须发送。是否联系、是否引用旧话题以及最终表达继续由你独立判断。
+- 每次从当前时间和关系中形成表达。此前主动消息是你自己已经说过的话，不要短时间换皮重复同一句、同一个问题或同一App调侃；想念和想陪伴可以再次出现，不因为动机相似就一律拒绝联系。
+- 联系次数增加不要求语气固定升级；普通机会保留自主判断，最终联系机会遵循下面的窗口规则，均不要求引用旧话题。
+
+${buildInactivityApproachPolicy(reachOutMode, silenceState.ceiling_contact_required)}
 
 【当前沉默窗口】
 - 双方最后一条真实消息距今约 ${silenceState.silence_duration_minutes} 分钟。
@@ -1910,7 +1918,7 @@ ${silenceState.ceiling_contact_required
 - 默认不用 emoji。
 
 轻量判断字段：
-- should_send：此刻是否真的有自然的联系动机。false 时 message 为空。
+${expressionOnly ? "- 本次只生成表达，不需要 should_send；有合适表达就填写 message，确实违反明确边界时才留空。" : "- should_send：此刻是否真的有自然的联系动机。false 时 message 为空。"}
 - contact_motivation：用一句很短的话记录为什么现在想靠近她；不要写成长分析。
 - topic_state：只表示最近共同话题此刻是否还有自然后续，取 open / ongoing / waiting / completed / uncertain；这不是持久化事件状态机。
 - temporal_fit：如果引用最近话题，现在的时间和事件阶段是否适合这样承接。
@@ -1920,7 +1928,7 @@ ${silenceState.ceiling_contact_required
 
 输出格式：
 {
-  "should_send": true,
+  ${expressionOnly ? "" : '"should_send": true,'}
   "contact_motivation": "简短动机",
   "topic_state": "open / ongoing / waiting / completed / uncertain",
   "temporal_fit": true,
@@ -1947,6 +1955,9 @@ ${trimText(pinMemory, 1800) || "暂无额外记忆"}
 是否已到最终联系机会：${silenceState.ceiling_contact_required ? "是" : "否"}
 沉默起点消息：${payload.silence_root_user_message_id || payload.user_message_id || task.source_id || "未知"}
 
+以下App信号是可选素材，不改变联系资格：
+${activityContext || "暂无可用的近期App活动信号；没有信号不影响自然靠近。"}
+
 最近聊天上下文：
 ${contextMessages}
 
@@ -1961,7 +1972,15 @@ ${recentContext.recentProactiveMessages?.length
     ],
     { requestPurpose: "inactivity_generation", max_tokens: 220, temperature: 0.55 }
   )
-  const decision = parseInactivityGeneration(raw)
+  const decision = parseInactivityGeneration(raw, { expressionOnly })
+  const approachDiagnostics = {
+    policy_version: "relationship_approach_v2",
+    generated_at: now.toISOString(),
+    reach_out_mode: reachOutMode,
+    ceiling_contact_required: silenceState.ceiling_contact_required,
+    activity_context_available: Boolean(activityContext),
+    expression_only: expressionOnly,
+  }
   const structuredValidation = validateInactivityGeneration(decision)
   const message = cleanProactiveMessage(decision.message)
   const factualGrounding = validateProactiveHistoricalClaims(
@@ -2003,6 +2022,7 @@ ${recentContext.recentProactiveMessages?.length
         factualGrounded: factualGrounding.valid,
       }) ? message : null,
       diagnostics: {
+        ...approachDiagnostics,
         attempt_index: attemptIndex,
         generated_content_accepted: false,
         fallback_applied: false,
@@ -2022,6 +2042,7 @@ ${recentContext.recentProactiveMessages?.length
   return {
     content: message,
     diagnostics: {
+      ...approachDiagnostics,
       attempt_index: attemptIndex,
       generated_content_accepted: true,
       fallback_applied: false,
@@ -4296,6 +4317,7 @@ async function executeProactiveTask(task) {
         user_id: task.user_id,
         task,
         recentContext,
+        expressionOnly: contactReservation?.expressionOnly === true,
       }))
     if (contactReservation && !contactReservation.generation) {
       await persistInactivityCandidate(supabase, contactReservation, generation)

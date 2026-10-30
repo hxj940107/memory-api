@@ -141,10 +141,14 @@ test("schema supports ledger identity; ledger is never a runnable pending task",
   assert.match(source, /generation = contactReservation\?\.generation \|\|/)
 })
 
-test("all prompt templates, Persona and generation settings remain byte-for-byte unchanged", () => {
+test("unrelated prompt templates, Persona and generation settings remain unchanged", () => {
   const source = readFileSync("api/memory.js", "utf8")
   const before = execFileSync("git", ["show", "HEAD:api/memory.js"], { encoding: "utf8" })
-  const prompts = s => s.match(/`(?:\\.|[^`\\])*`/gs) || []
+  const prompts = s => {
+    const start = s.indexOf("async function generateInactivityReachOutMessage(")
+    const end = s.indexOf("function parseAutonomousTreeholeDrafts(", start)
+    return (s.slice(0, start) + s.slice(end)).match(/`(?:\\.|[^`\\])*`/gs) || []
+  }
   assert.deepEqual(prompts(source), prompts(before))
   for (const file of ["prompt/system.md", "prompt/relationship.md", "lib/aiConfig.js", "api/chat.js"]) {
     // Optional activity reads/volatile context have dedicated tests. Inactivity
@@ -158,7 +162,8 @@ test("all prompt templates, Persona and generation settings remain byte-for-byte
   }
   const generation = readFileSync("lib/inactivityGeneration.js", "utf8")
   const originalGeneration = execFileSync("git", ["show", "HEAD:lib/inactivityGeneration.js"], { encoding: "utf8" })
-  assert.equal(generation, originalGeneration)
+  const validation = text => text.slice(text.indexOf('export function validateInactivityGeneration('))
+  assert.equal(validation(generation), validation(originalGeneration))
 })
 
 test("reconciliation cannot revive an exhausted latest silence window", async () => {
@@ -300,4 +305,38 @@ test("no fallback for hard failures, empty output, refusal, expired content or i
   await fourAttempts(db)
   assert.equal((await reserveInactivityContact(db, task, new Date("2026-01-01T12:11:00Z"))).blocked, true)
   assert.equal(getInactivitySoftFallbackAt({ ordinary: 0, ceiling: 2, soft_candidate: db.rows[0].payload.soft_candidate }, task.payload.silence_anchor_at, ceiling), null)
+})
+
+test("four reservations retain separate bounded outcomes without raw completion or candidate bodies", async () => {
+  const db = ledgerFixture()
+  for (const at of [ordinary, ordinary, ceiling, ceiling]) {
+    const r = await reserveInactivityContact(db, task, at)
+    await persistInactivityCandidate(db, r, { ...declined, diagnostics: {
+      should_send: false, contact_motivation: '没有新话题', skip_reason: 'model_declined',
+      raw: 'PRIVATE_RAW_MUST_NOT_PERSIST', message: 'PRIVATE_BODY_MUST_NOT_PERSIST',
+    } }, at)
+  }
+  const history = db.rows[0].payload.generation_attempts
+  assert.equal(history.length, 4)
+  assert.deepEqual(history.map(x=>x.stage), ['ordinary','ordinary','ceiling','ceiling'])
+  assert.ok(history.every(x=>x.outcome === 'not_sent' && x.diagnostics.should_send === false))
+  assert.doesNotMatch(JSON.stringify(history), /PRIVATE_RAW|PRIVATE_BODY/)
+  assert.equal((await reserveInactivityContact(db,task,ceiling)).blocked,true)
+})
+
+test("only the final available ceiling generation slot is expression-only; cached deliveries do not consume a slot", async () => {
+  const db = ledgerFixture()
+  for (const at of [ordinary, ordinary, ceiling]) {
+    const r = await reserveInactivityContact(db, task, at)
+    assert.equal(r.expressionOnly, false)
+    await persistInactivityCandidate(db,r,declined,at)
+  }
+  const final = await reserveInactivityContact(db,task,ceiling)
+  assert.equal(final.expressionOnly,true)
+  await persistInactivityCandidate(db,final,good,ceiling)
+  await releaseInactivityContact(db,final)
+  const retry = await reserveInactivityContact(db,task,ceiling)
+  assert.equal(retry.expressionOnly,false)
+  assert.equal(retry.generation.content,good.content)
+  assert.equal(retry.row.payload.ordinary+retry.row.payload.ceiling,4)
 })

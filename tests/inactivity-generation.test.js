@@ -79,3 +79,14 @@ test("malformed output is not repaired or converted into a fixed message", () =>
     reason: "invalid_structured_output",
   })
 })
+
+test("expression-only accepts omitted decision but never forces explicit refusal, malformed or empty output", () => {
+  const raw = { contact_motivation:'想陪她',topic_state:'completed',temporal_fit:true,self_continuity:true,should_reference_topic:false,message:'想你了。' }
+  const parse = data => parseInactivityGeneration(JSON.stringify(data),{expressionOnly:true})
+  assert.equal(validateInactivityGeneration(parse(raw)).valid,true)
+  assert.equal(validateInactivityGeneration(parse({...raw,should_send:false})).valid,false)
+  assert.equal(validateInactivityGeneration(parse({...raw,message:''})).reason,'empty_output')
+  assert.equal(validateInactivityGeneration(parse({...raw,self_continuity:false})).reason,'self_continuity_failed')
+  assert.equal(validateInactivityGeneration(parseInactivityGeneration('broken',{expressionOnly:true})).valid,false)
+  assert.equal(validateInactivityGeneration(parseInactivityGeneration(JSON.stringify(raw))).reason,'model_declined')
+})
