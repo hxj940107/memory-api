@@ -1616,8 +1616,8 @@ const styles = StyleSheet.create({
   },
 
   text: {
-    fontSize: 18,
-    lineHeight: 29,
+    fontSize: 17,
+    lineHeight: 26,
     color: "#161616",
     marginBottom: 12,
   },
@@ -1739,8 +1739,8 @@ const styles = StyleSheet.create({
   },
 
   likedByText: {
-    fontSize: 16,
-    lineHeight: 23,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#576B95",
   },
 
@@ -1763,32 +1763,32 @@ const styles = StyleSheet.create({
   },
 
   commentLine: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#3A3A3C",
   },
 
   commentAuthor: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#576B95",
   },
 
   commentReplyHint: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#A5A5AA",
   },
 
   commentColon: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#333333",
   },
 
   commentContent: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: 15,
+    lineHeight: 22,
     color: "#333333",
   },
 
