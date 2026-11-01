@@ -98,7 +98,7 @@ test("inactivity generation varies natural companion approaches without performi
   assert.doesNotMatch(memorySource, /isBareInactivityReachOut\(message\)/)
   assert.doesNotMatch(memorySource, /getNaturalInactivityFallback\(\)/)
   assert.match(memorySource, /最近聊天是你和她刚刚共同经历的生活/)
-  assert.match(memorySource, /想联系不等于必须有具体事情要问/)
+  assert.match(memorySource, /均不要求引用旧话题/)
   assert.match(memorySource, /技术讨论、日常生活、情绪和关系互动一视同仁/)
   assert.match(memorySource, /parseInactivityGeneration/)
   assert.match(memorySource, /validateInactivityGeneration/)
@@ -293,7 +293,7 @@ test("autonomy remains before the ceiling while explicit opt-out remains hard", 
   const memorySource = readFileSync("api/memory.js", "utf8")
 
   assert.match(memorySource, /如果此刻没有自然动机，可以 should_send=false/)
-  assert.match(memorySource, /当前已到必须自然重新建立联系的最终机会/)
+  assert.match(memorySource, /本次联系时机已经确定/)
   assert.match(memorySource, /momentDueAt && !silenceState\.ceiling_contact_required/)
   assert.match(memorySource, /higherPriority && !silenceState\.ceiling_contact_required/)
   assert.match(memorySource, /cooldown && !ceilingContactRequired/)

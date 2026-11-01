@@ -91,3 +91,16 @@ test('last-slot expression uses existing prompt, omits send decision and still g
   assert.equal(f.result.diagnostics.expression_only,true)
   assert.equal(f.result.diagnostics.should_send,true)
 })
+
+test('initiative preserves persona without prescribing affection or repeated longing', async () => {
+  for (const options of [{}, {ceiling:true}, {ceiling:true,expressionOnly:true}]) {
+    const f = await generate(options)
+    const prompt = f.request.messages[0].content
+    assert.match(prompt, /主动不等于每次都要表达亲昵/)
+    assert.match(prompt, /不要只换称呼、换句式再说一次/)
+    assert.doesNotMatch(prompt, /优先形成一句自然的亲昵表达|宁可直接表达想靠近她|回到关系本身|本次 should_send 必须为 true/)
+    assert.equal(f.calls, 1)
+    assert.equal(f.result.skipped, undefined)
+    if (options.ceiling) assert.match(prompt, /无需刻意表达想念、深情或关怀/)
+  }
+})
