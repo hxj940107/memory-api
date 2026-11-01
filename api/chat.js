@@ -1,3 +1,4 @@
+import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from "@supabase/supabase-js"
 import { buildClaudeRequest } from "../lib/claudeRequest.js"
 import { waitUntil } from "@vercel/functions"
@@ -2046,7 +2047,7 @@ function hasUnsupportedMomentWeather(text, sourceText) {
     !weatherPattern.test(String(sourceText || ""))
 }
 
-async function getAvailableMomentImages(user_id, selectedAlbum = null) {
+async function getAvailableMomentImages(user_id, selectedAlbum = null, sceneContext = "") {
   const [momentResult, albumResult] = await Promise.all([
     supabase
       .from("moment_entries")
@@ -2059,7 +2060,7 @@ async function getAvailableMomentImages(user_id, selectedAlbum = null) {
     sharedAlbumQuery(supabase, user_id)
       .order("last_used_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: false })
-      .limit(8),
+      .limit(MOMENT_ALBUM_SCAN_LIMIT),
   ])
 
   const { data, error } = momentResult
@@ -2105,8 +2106,9 @@ async function getAvailableMomentImages(user_id, selectedAlbum = null) {
     一起出门: ["一起", "出门", "散步", "旅行"],
     共同回忆: ["以前", "记得", "回忆", "那次", "一起"],
   }
-  const albumImages = (selectedAlbum ? [selectedAlbum] : albumResult.data || [])
-    .filter(item => selectedAlbum || !recentAlbumIds.has(Number(item.id)))
+  const albumImages = (selectedAlbum ? [selectedAlbum] : selectMomentAlbumAssets(albumResult.data || [], {
+      context: sceneContext, limit: 8, excludeIds: [...recentAlbumIds],
+    }))
     .map(item => {
       const categories = [...new Set([
         ...(Array.isArray(item.categories) ? item.categories : []),
@@ -2456,7 +2458,8 @@ async function maybeCreateMoment({
     }
   }
 
-  const availableMomentImages = await getAvailableMomentImages(user_id, selectedAlbum)
+  const availableMomentImages = await getAvailableMomentImages(user_id, selectedAlbum,
+    sourceMaterials.map(item => `${item.text || ""} ${item.imageDescription || ""}`).join("\n"))
   const momentImageCatalog = getMomentImagePromptCatalog(availableMomentImages)
   const recentMomentHistory = formatRecentMomentsForPrompt(recentMoments)
   const momentEnvironment = buildEnvironmentContext(USER_TIMEZONE)

@@ -1,3 +1,4 @@
+import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from '@supabase/supabase-js'
 import { buildClaudeRequest } from "../lib/claudeRequest.js"
 import { waitUntil } from "@vercel/functions"
@@ -5001,7 +5002,7 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
       .is("archived_at", null)
       .order("last_used_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: false })
-      .limit(8),
+      .limit(MOMENT_ALBUM_SCAN_LIMIT),
   ])
 
   for (const result of [recentResult, dailyResult, pendingResult, messageResult]) {
@@ -5042,7 +5043,10 @@ async function checkAutonomousMomentConsideration(userId = APP_USER.defaultUserI
         ...message,
         metadata: { imageDescription: message.imageDescription },
       })), { now, maxMaterials: 8 }),
-      ...buildAlbumMomentMaterials(albumResult.data || [], { maxMaterials: 6 }),
+      ...buildAlbumMomentMaterials(selectMomentAlbumAssets(albumResult.data || [], {
+        context: (messageResult.data || []).map(item => `${item.content || ""} ${item.imageDescription || ""}`).join("\n"),
+        limit: 6,
+      }), { maxMaterials: 6 }),
     ])
     prompt = buildAutonomousMomentPrompt({
       environment: formatAutonomousMomentEnvironment(now),
