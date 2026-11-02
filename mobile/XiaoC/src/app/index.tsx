@@ -21,6 +21,7 @@ import {
 import { consumePendingNotificationConversation } from "../lib/pushNotifications";
 import { syncClientPreferences } from "../lib/cloudPreferences";
 import { isVoicePocBuild } from "../config/voicePoc";
+import { XiaoCColors } from "../constants/theme";
 
 
 export default function Index() {
@@ -363,7 +364,7 @@ const styles = StyleSheet.create({
 
   container:{
     flex:1,
-    backgroundColor:'#FAFAF8',
+    backgroundColor:XiaoCColors.background,
   },
 
 
@@ -391,7 +392,7 @@ const styles = StyleSheet.create({
   hint:{
     marginTop:18,
     fontSize:13,
-    color:'#B2AAA5',
+    color:XiaoCColors.textSecondary,
     fontWeight:'400',
     letterSpacing:2,
   },
@@ -408,20 +409,20 @@ const styles = StyleSheet.create({
   dot:{
     fontSize:31,
     lineHeight:34,
-    color:'#A8A8A8',
+    color:XiaoCColors.placeholder,
     fontWeight:'200',
   },
 
 
   activeDot:{
-    color:'#6A6F6D',
+    color:XiaoCColors.textPrimary,
   },
 
 
   errorText:{
     marginTop:12,
     fontSize:14,
-    color:'#B26A6A',
+    color:XiaoCColors.destructive,
   },
 
   welcomeContent:{
@@ -445,7 +446,7 @@ const styles = StyleSheet.create({
   welcomeText:{
     fontSize:15,
     lineHeight:25,
-    color:'#9B9692',
+    color:XiaoCColors.textSecondary,
     fontWeight:'300',
     letterSpacing:2,
     textAlign:'center',
@@ -456,7 +457,7 @@ const styles = StyleSheet.create({
     marginTop:2,
     fontSize:15,
     lineHeight:25,
-    color:'#87827E',
+    color:XiaoCColors.textSecondary,
     fontWeight:'300',
     letterSpacing:3,
     textAlign:'center',
