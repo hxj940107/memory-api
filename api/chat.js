@@ -1,3 +1,4 @@
+import { buildAlbumVisionMessage } from "../lib/sharedAlbumVision.js"
 import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from "@supabase/supabase-js"
 import { buildClaudeRequest } from "../lib/claudeRequest.js"
@@ -3906,7 +3907,7 @@ const mainChatOptions = buildMainChatImageToolOptions(
 if (requestSourceMode === "real_album_source") {
   mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")
   mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
-  messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 获取本次授权候选，再按需 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
+  messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 按她提到的地点、场景等关键词获取本次授权候选。她要看照片时，继续 view 相关ID（一次最多3张），实际收到原图再回答；发朋友圈才需要 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
 }
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 const mainChatLlmCalls = [{
@@ -3924,13 +3925,17 @@ for (let step = 0; step < 3; step++) {
   const albumCall = calls.find(call => call.function?.name === "shared_album")
   if (!albumCall) break
   const results = []
+  const visionPhotos = []
   for (const call of calls) {
     let result
     try {
       if (call.function?.name !== "shared_album") throw new Error("USE_REAL_ALBUM_TOOL_NOT_GENERATION")
+      const albumArgs = JSON.parse(call.function.arguments || "{}")
+      if (albumArgs.action === "view" && visionPhotos.length) throw new Error("ALBUM_VIEW_LIMIT_REACHED")
       const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
-        args: JSON.parse(call.function.arguments || "{}"), seen: albumSeen })
+        args: albumArgs, seen: albumSeen })
       if (executed.selected) selectedChatAlbum = executed.selected
+      if (executed.visionPhotos && !visionPhotos.length) visionPhotos.push(...executed.visionPhotos)
       result = albumReplyState({ result: executed.result, selected: executed.selected,
         publishRequested: mayPublishAlbum(message) })
     } catch (error) {
@@ -3940,8 +3945,9 @@ for (let step = 0; step < 3; step++) {
     results.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) })
   }
   albumMessages = [...albumMessages, rawMessage, ...results]
+  if (visionPhotos.length) albumMessages.push(buildAlbumVisionMessage(visionPhotos))
   llm = await callLLM(albumMessages, selectedChatModel, { ...mainChatOptions,
-    tool_choice: step === 2 || selectedChatAlbum ? "none" : "auto" })
+    tool_choice: step === 2 || selectedChatAlbum || visionPhotos.length ? "none" : "auto" })
   mainChatLlmCalls.push({ request_purpose: "normal_chat_after_album_tool", model: selectedChatModel, usage: llm.usage || {} })
   reply = llm.reply
 }
