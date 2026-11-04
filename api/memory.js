@@ -1,3 +1,4 @@
+import { albumMomentMode, processAlbumMomentUploads } from "../lib/albumMomentUpload.js"
 import { buildMomentCommentPrompt } from "../lib/momentCommentPrompt.js"
 import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from '@supabase/supabase-js'
@@ -5220,6 +5221,13 @@ async function checkPendingMomentCandidates() {
     if (claimError || !claimed) continue
 
     try {
+      if (candidate.source_type === "album_upload" && (albumMomentMode() !== "live" || !parseAlbumImageReference(candidate.image_key))) {
+        const { error } = await supabase.from("moment_candidates").update({ status: "skipped", skip_reason: "相册触发发布已关闭或授权引用缺失", updated_at: nowIso })
+          .eq("id", candidate.id).eq("status", "processing")
+        if (error) throw error
+        skipped += 1
+        continue
+      }
       if (isInvalidMomentText(candidate.text)) {
         const { error: invalidError } = await supabase
           .from("moment_candidates")
@@ -5236,6 +5244,17 @@ async function checkPendingMomentCandidates() {
         continue
       }
 
+      if (candidate.source_type === "album_upload") {
+        const { data: existing, error } = await supabase.from("moment_entries").select("id")
+          .eq("user_id", candidate.user_id).eq("source_type", "album_upload").eq("source_ref", candidate.source_ref).maybeSingle()
+        if (error) throw error
+        if (existing) {
+          const { error: recoveryError } = await supabase.from("moment_candidates").update({ status: "published", published_moment_id: existing.id, updated_at: nowIso })
+            .eq("id", candidate.id).eq("status", "processing")
+          if (recoveryError) throw recoveryError
+          continue
+        }
+      }
       const timeCheck = isMomentCandidateTimeConsistent(candidate, new Date())
 
       if (!timeCheck.valid) {
@@ -6004,6 +6023,9 @@ export default async function handler(req, res) {
           checkPendingProactiveTasks(),
           checkPendingMomentCandidates(),
         ])
+        const albumMoment = await processAlbumMomentUploads({ client: supabase, userId: APP_USER.defaultUserId, persona: systemPrompt,
+          generate: messages => callSmallLLM(messages, { requestPurpose: "album_upload_moment", model: AI_MODELS.imageDescription, max_tokens: 420, temperature: 0.35, response_format: { type: "json_object" } }),
+        }).catch(() => ({ failed: true, error_code: "ALBUM_MOMENT_WORKER_UNAVAILABLE", model_calls_unknown: true }))
         const autonomousMoment = await checkAutonomousMomentConsideration()
         const memoryEvents = await reevaluateExpiredMemoryEvents({ client: supabase,
           userId: APP_USER.defaultUserId,
@@ -6013,7 +6035,7 @@ export default async function handler(req, res) {
           ? await reconcileMissingNativeEmbeddings({ client: supabase, provider: createXiaoCMemoryEmbeddingProvider({ env: process.env }), userId: APP_USER.defaultUserId, limit: 3 })
             .catch(error => ({ failed: true, error_code: String(error?.code || error?.message || "EMBEDDING_RECONCILE_FAILED").split(":")[0].slice(0, 80) }))
           : { skipped: true, reason: "FLAG_OFF" }
-        result = { proactive, momentCandidates, autonomousMoment, memoryEmbeddings, memoryEvents }
+        result = { proactive, momentCandidates, autonomousMoment, albumMoment, memoryEmbeddings, memoryEvents }
       } catch (error) {
         workerError = error
       }
