@@ -5,7 +5,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { router, useFocusEffect } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Alert, AppState, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { apiJson, APP_USER_ID } from "../config/api";
@@ -26,6 +26,8 @@ type AlbumAsset = {
   usageCount: number;
   createdAt: string;
 };
+
+type AlbumComment = { id: string; content: string; created_at: string };
 
 type PickedImage = {
   uri: string;
@@ -80,6 +82,40 @@ const getAssetCategories = (asset: AlbumAsset) => [...new Set([
 export default function AlbumScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const [assets, setAssets] = useState<AlbumAsset[]>([]);
+  const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
+  const pendingEditAssetRef = useRef<AlbumAsset | null>(null);
+  const [comments, setComments] = useState<AlbumComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState(false);
+  const detailAsset = assets.find(asset => asset.id === detailAssetId) || null;
+
+  useEffect(() => {
+    if (detailAssetId === null) return;
+    let active = true;
+    let loading = false;
+    setComments([]);
+    setCommentsLoading(true);
+    setCommentsError(false);
+    const refresh = async () => {
+      if (loading || AppState.currentState !== "active") return;
+      loading = true;
+      try {
+        const result = await apiJson<AlbumComment[]>("/api/memory", {
+          query: { type: "album_assets", action: "comments", asset_id: String(detailAssetId), user_id: APP_USER_ID },
+        });
+        if (active) { setComments(result); setCommentsError(false); }
+      } catch {
+        if (active) setCommentsError(true);
+      } finally {
+        loading = false;
+        if (active) setCommentsLoading(false);
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 30000);
+    const subscription = AppState.addEventListener("change", state => { if (state === "active") void refresh(); });
+    return () => { active = false; clearInterval(timer); subscription.remove(); };
+  }, [detailAssetId]);
   const [loading, setLoading] = useState(true);
   const [editorVisible, setEditorVisible] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -374,7 +410,7 @@ export default function AlbumScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.intro}>只有你主动放进来的照片。分类由你决定，小C只会从允许使用的照片里挑选朋友圈配图。</Text>
+        <Text style={styles.intro}>只有你主动放进来的照片。小C会看看允许使用的新照片，有想说的话就留在这里。</Text>
         {assets.length > 0 ? (
           <ScrollView
             horizontal
@@ -412,7 +448,7 @@ export default function AlbumScreen() {
               <Pressable
                 key={asset.id}
                 style={{ width: thumbnailSize, height: thumbnailSize }}
-                onPress={() => openAsset(asset)}
+                onPress={() => setDetailAssetId(asset.id)}
               >
                 <Image source={asset.image} style={styles.gridImage} contentFit="cover" />
               </Pressable>
@@ -420,6 +456,37 @@ export default function AlbumScreen() {
           </View>
         )}
       </ScrollView>
+
+      <Modal visible={!!detailAsset} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setDetailAssetId(null)} onDismiss={() => {
+        const asset = pendingEditAssetRef.current;
+        pendingEditAssetRef.current = null;
+        if (asset) openAsset(asset);
+      }}>
+        <SafeAreaView style={styles.editor}>
+          <View style={styles.editorHeader}>
+            <Pressable onPress={() => setDetailAssetId(null)}><Text style={styles.cancel}>关闭</Text></Pressable>
+            <Text style={styles.editorTitle}>照片</Text>
+            <Pressable onPress={() => { if (detailAsset) { const asset = detailAsset; if (Platform.OS === "ios") pendingEditAssetRef.current = asset; setDetailAssetId(null); if (Platform.OS !== "ios") openAsset(asset); } }}>
+              <Text style={styles.save}>编辑</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.editorContent}>
+            {detailAsset && <>
+              <Image source={detailAsset.image} style={{ width: "100%", aspectRatio: detailAsset.imageAspectRatio || 1 }} contentFit="contain" />
+              {!!detailAsset.description && <Text style={styles.photoDescription}>{detailAsset.description}</Text>}
+              <Text style={styles.sectionTitle}>小C的留言</Text>
+              {comments.map(comment => <View key={comment.id} style={styles.commentCard}>
+                <Text style={styles.commentAuthor}>小C</Text>
+                <Text style={styles.commentBody}>{comment.content}</Text>
+                <Text style={styles.commentDate}>{new Date(comment.created_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</Text>
+              </View>)}
+              {commentsLoading && <Text style={styles.statusText}>正在读取留言…</Text>}
+              {commentsError && <Text style={styles.statusText}>留言暂时无法读取，稍后会再试。</Text>}
+              {!commentsLoading && !commentsError && !comments.length && <Text style={styles.statusText}>这里还没有留言。</Text>}
+            </>}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       <Modal visible={editorVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={closeEditor}>
         <SafeAreaView style={styles.editor}>
@@ -538,6 +605,11 @@ export default function AlbumScreen() {
 }
 
 const styles = StyleSheet.create({
+  photoDescription: { fontSize: 16, lineHeight: 24, color: "#343438", marginTop: 18 },
+  commentCard: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 16, marginBottom: 12, gap: 6 },
+  commentAuthor: { fontSize: 14, fontWeight: "600", color: "#526B94" },
+  commentBody: { fontSize: 15, lineHeight: 23, color: "#343438" },
+  commentDate: { fontSize: 12, color: "#8E8E93", marginTop: 4 },
   feedbackToast: { position: "absolute", alignSelf: "center", bottom: 42, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 18, backgroundColor: "rgba(32,32,34,0.88)" },
   feedbackToastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "500" },
   screen: { flex: 1, backgroundColor: "#F7F7F8" },

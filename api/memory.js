@@ -6024,7 +6024,7 @@ export default async function handler(req, res) {
           checkPendingMomentCandidates(),
         ])
         const albumMoment = await processAlbumMomentUploads({ client: supabase, userId: APP_USER.defaultUserId, persona: systemPrompt,
-          generate: messages => callSmallLLM(messages, { requestPurpose: "album_upload_moment", model: AI_MODELS.imageDescription, max_tokens: 420, temperature: 0.35, response_format: { type: "json_object" } }),
+          generate: messages => callSmallLLM(messages, { requestPurpose: "album_upload_moment", model: AI_MODELS.imageDescription, max_tokens: process.env.XIAOC_ALBUM_COMMENTS_ENABLED === "true" ? 1000 : 420, temperature: 0.35, response_format: { type: "json_object" } }),
         }).catch(() => ({ failed: true, error_code: "ALBUM_MOMENT_WORKER_UNAVAILABLE", model_calls_unknown: true }))
         const autonomousMoment = await checkAutonomousMomentConsideration()
         const memoryEvents = await reevaluateExpiredMemoryEvents({ client: supabase,
@@ -6789,6 +6789,20 @@ export default async function handler(req, res) {
       const normalizeStringList = (value, limit = 6) => Array.isArray(value)
         ? value.map(item => String(item || "").trim()).filter(Boolean).slice(0, limit)
         : []
+
+      if (req.method === "GET" && req.query.action === "comments") {
+        const assetId = Number(req.query.asset_id)
+        if (!Number.isSafeInteger(assetId) || assetId <= 0) return res.status(400).json({ error: "Invalid photo" })
+        const { data: asset, error: assetError } = await supabase.from("album_assets").select("id")
+          .eq("id", assetId).eq("user_id", user_id).is("archived_at", null).maybeSingle()
+        if (assetError) return res.status(500).json({ error: "照片暂时无法读取" })
+        if (!asset) return res.status(404).json({ error: "Photo not found" })
+        const { data, error } = await supabase.from("album_photo_comments").select("id,content,created_at")
+          .eq("user_id", user_id).eq("asset_id", assetId).order("created_at", { ascending: true }).limit(20)
+        if (error?.code === "42P01") return res.status(200).json([])
+        if (error) return res.status(500).json({ error: "留言暂时无法读取" })
+        return res.status(200).json(data || [])
+      }
 
       if (req.method === "GET") {
         const { data, error } = await supabase
