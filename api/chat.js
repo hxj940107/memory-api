@@ -126,7 +126,7 @@ import { runMemoryEventCapture } from "../lib/memoryEventCapture.js"
 import { resolveMomentImageIdentity } from "../lib/momentImageIdentity.js"
 import { MOMENT_NARRATION_CONTRACT } from "../lib/momentNarration.js"
 import { authorizeChatImage, assertChatImageAuthorization } from "../lib/chatImageAuthorization.js"
-import { sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
+import { ALBUM_CONVERSATION_GUIDANCE, sharedAlbumQuery, readSharedAlbum, executeSharedAlbumTool, isRealAlbumRequest, mayPublishAlbum, albumReplyState } from "../lib/sharedAlbumChat.js"
 import {
   allocateDynamicContextBudget,
   buildDeterministicHistoryEpoch,
@@ -3907,6 +3907,7 @@ const mainChatOptions = buildMainChatImageToolOptions(
 if (requestSourceMode === "real_album_source") {
   mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")
   mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
+  messages.push(buildContextualPromptMessage(ALBUM_CONVERSATION_GUIDANCE))
   messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 按她提到的地点、场景等关键词获取本次授权候选。她要看照片时，继续 view 相关ID（一次最多3张），实际收到原图再回答；她要求把照片发来时用 send，真实图片会随回复显示；发朋友圈才需要 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
 }
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)

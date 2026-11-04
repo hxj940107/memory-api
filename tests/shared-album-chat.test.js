@@ -111,3 +111,26 @@ test("explicit album request forces dispatch and tool results reach existing fol
   assert.ok(code.includes('callLLM(albumMessages, selectedChatModel'))
   assert.equal((code.match(/maybeCreateMoment\(\{/g) || []).length, 2) // declaration + sole dispatch
 })
+
+test('album replies preserve conversational purpose without prescribing affection or leaking IDs', async () => {
+  const { ALBUM_CONVERSATION_GUIDANCE } = await import('../lib/sharedAlbumChat.js')
+  for (const result of [
+    {ok:true,photos:[]},
+    {ok:true,visual_access:'original_images_supplied',chat_photos_queued:true},
+    {ok:false,error:'unavailable'},
+  ]) {
+    const state=albumReplyState({result,publishRequested:false})
+    assert.equal(state.conversation_guidance,ALBUM_CONVERSATION_GUIDANCE)
+    assert.equal(state.published,false)
+  }
+  assert.match(ALBUM_CONVERSATION_GUIDANCE,/调用 send 完成发送/)
+  assert.match(ALBUM_CONVERSATION_GUIDANCE,/不在聊天正文中报编号/)
+  assert.match(ALBUM_CONVERSATION_GUIDANCE,/可见事实是表达的依据，不是必须复述的清单/)
+  assert.match(ALBUM_CONVERSATION_GUIDANCE,/不凭外貌猜测/)
+  assert.match(ALBUM_CONVERSATION_GUIDANCE,/不要求每张照片都夸赞/)
+  assert.match(SHARED_TOOL_DESCRIPTION(),/never stop at naming an ID/)
+  assert.ok(readFileSync('api/chat.js','utf8').includes('buildContextualPromptMessage(ALBUM_CONVERSATION_GUIDANCE)'))
+})
+function SHARED_TOOL_DESCRIPTION() {
+  return readFileSync('lib/sharedAlbumChat.js','utf8')
+}
