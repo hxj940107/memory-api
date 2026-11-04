@@ -60,7 +60,7 @@ test('chat tool loop delivers original pixels to the existing model and stops fu
 
 test('send queues real references without URLs or publishing, view alone queues nothing', async()=>{
  const c=client();const seen=new Map([[1,{}]])
- const sent=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'send',asset_ids:[1]}})
+ const sent=await executeSharedAlbumTool({client:c,owner:'owner',seen,requestText:'发一张照片给我',args:{action:'send',asset_ids:[1]}})
  assert.equal(sent.attachments[0].type,'shared_album_image')
  assert.equal(sent.attachments[0].album_asset_id,1)
  assert.equal(sent.attachments[0].storage_path,'owner/photo.jpg')
@@ -84,4 +84,12 @@ test('history re-sign uses recorded message owner and live album permission, nev
  allowed=false
  await assert.rejects(signGeneratedAttachmentDownload(args),{code:'ATTACHMENT_NOT_FOUND'})
  assert.equal(signs,1)
+})
+
+test('send defaults to one even if the model supplies three IDs',async()=>{
+ const c=client(); const seen=new Map([[1,{}],[2,{}],[99,{}]])
+ const sent=await executeSharedAlbumTool({client:c,owner:'owner',seen,requestText:'挑张照片发给我',args:{action:'send',asset_ids:[1,2,99]}})
+ assert.deepEqual(sent.attachments.map(a=>a.album_asset_id),[1])
+ assert.deepEqual(sent.result.viewed_asset_ids,[1])
+ assert.equal(c.signed.length,1)
 })

@@ -3933,9 +3933,10 @@ for (let step = 0; step < 3; step++) {
     try {
       if (call.function?.name !== "shared_album") throw new Error("USE_REAL_ALBUM_TOOL_NOT_GENERATION")
       const albumArgs = JSON.parse(call.function.arguments || "{}")
+      if (albumArgs.action === "send" && sentAlbumAttachments.length) throw new Error("ALBUM_ALREADY_SENT_THIS_TURN")
       if (["view", "send"].includes(albumArgs.action) && visionPhotos.length) throw new Error("ALBUM_VIEW_LIMIT_REACHED")
       const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
-        args: albumArgs, seen: albumSeen })
+        args: albumArgs, seen: albumSeen, requestText: message })
       if (executed.selected) selectedChatAlbum = executed.selected
       if (executed.attachments) sentAlbumAttachments = executed.attachments
       if (executed.visionPhotos && !visionPhotos.length) visionPhotos.push(...executed.visionPhotos)
