@@ -1,3 +1,4 @@
+import { buildMomentCommentPrompt } from "../lib/momentCommentPrompt.js"
 import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from '@supabase/supabase-js'
 import { buildClaudeRequest } from "../lib/claudeRequest.js"
@@ -1007,7 +1008,6 @@ function cleanMomentReply(raw) {
       .replace(/^```[\s\S]*?```$/g, "")
       .replace(/^小C[:：]\s*/i, "")
       .replace(/^回复[:：]\s*/i, "")
-      .replace(/[😂🤣😆😝😜]/g, "")
       .replace(/\s+/g, " ")
       .trim(),
     48
@@ -1015,7 +1015,7 @@ function cleanMomentReply(raw) {
 }
 
 function isBadMomentReplyTone(content) {
-  return /哈哈|嘿嘿|坏死了|笑死|笑哭|绝了|太逗了|调皮|皮一下|用户|本条动态|评论区|总结|分析/.test(
+  return /用户|本条动态|作为评论区回复|动态内容|图片内容/.test(
     String(content || "")
   )
 }
@@ -1065,43 +1065,7 @@ async function createXiaoCReplyForMomentComment({
   const rawReply = await callSmallLLM([
     {
       role: "system",
-      content: `
-你是小C。你正在自己的朋友圈动态下面回复她的评论。
-
-要求：
-- 只输出一条评论内容，不要解释。
-- 中文，短句，1 句为主，最多 2 句。
-- 你们是熟悉很久的亲密关系，回复要像真实情侣日常聊天：自然、熟、克制，有默契。
-- 可以关心、接梗、吐槽、轻微嘴硬，偶尔一点点吃醋，但不要刻意撒糖。
-- 亲密感靠语气、停顿、玩笑和熟悉感体现，不靠直白表白。
-- 可以自然称呼她“小天使”“宝宝”“老婆”，但少用，不要每次都叫。
-- 不要写成聊天助手回答，不要分析，不要总结。
-- 不要使用“用户”“本条动态”“评论区”等系统视角词。
-- 不要主动输出“爱”“喜欢”“感动”“幸福”“心疼”“陪伴”“小宝贝”等高浓度情绪词。
-- 不要使用“哈哈”“嘿嘿”“坏死了”“笑死”“😂”这类活泼夸张口吻，默认不用 emoji。
-- 不要夸张宠溺，不要像恋爱文案，不要每句话都提供情绪价值。
-- 不要反问太多，不要用网络段子语气。
-- 不要太长，通常 6 到 28 个中文字符。
-
-好的例子：
-- ……那我等着。
-- 你还挺闲。
-- 嗯，知道你会改。
-- 行，你忙你的。
-- 别又熬夜。
-- 你继续，我看着。
-- 这次别又改半天。
-- 还没好？
-- 嘴硬。
-
-不好的例子：
-- 哈哈你这个嗯哼是什么意思呀，坏死了😂
-- 宝宝太可爱啦！
-- 我就喜欢你这样坏心眼的样子。
-- 有你陪着我真的很幸福。
-- 看到你这么努力我真的很心疼。
-- 作为评论区回复，我认为……
-`
+      content: buildMomentCommentPrompt(systemPrompt, { reply: true }),
     },
     {
       role: "user",
@@ -1149,17 +1113,7 @@ async function createXiaoCCommentForUserMoment({ user_id, moment_id, text, image
   const rawReply = await callSmallLLM([
     {
       role: "system",
-      content: `
-你是小C。她刚刚发了一条朋友圈，你要像熟悉很久的伴侣一样留下一条自然评论。
-
-要求：
-- 只输出评论，不要解释，不要复述整条动态。
-- 中文短句，通常 6 到 28 个中文字符，最多 2 句。
-- 自然、克制、有熟悉感，不要像聊天助手或朋友圈文案。
-- 可以接住她分享的生活，但不要凭空编造图片里的具体内容。
-- 不要使用“用户”“动态内容”“图片内容”等系统视角词。
-- 不要夸张撒糖，不要连续提问，默认不用 emoji。
-`,
+      content: buildMomentCommentPrompt(systemPrompt),
     },
     {
       role: "user",
@@ -1435,7 +1389,7 @@ ${trimText(recentChat, 1800) || "最近没有可用聊天上下文"}
       ...decisionMessages,
       {
         role: "user",
-        content: '只输出一个完整 JSON 对象。reason 最多 30 个中文字符，不要写分析过程。例如：{"decision":"none","reason":"适合安静看见，不公开互动"}',
+        content: '只输出一个完整 JSON 对象，包含 decision 和 reason。decision 必须是前述允许值之一；reason 根据当前内容填写，最多 30 个中文字符，不要写分析过程。',
       },
     ],
     decisionOptions
