@@ -73,7 +73,7 @@ test("ordinary mentions and explicit artwork do not activate real source mode", 
 
 test("no fake album attachment when real photo display is unsupported; model options remain restricted", () => {
   const result = albumReplyState({ result: { ok: true, photos: [] }, publishRequested: false })
-  assert.equal(result.chat_image_display, "unsupported_no_attachment")
+  assert.equal(result.chat_image_display, "not_attached")
   assert.equal(result.attachments, undefined)
   assert.match(result.photo_truth_contract, /not original pixels/)
   const code = readFileSync("api/chat.js", "utf8")

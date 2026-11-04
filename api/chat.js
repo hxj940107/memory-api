@@ -3907,7 +3907,7 @@ const mainChatOptions = buildMainChatImageToolOptions(
 if (requestSourceMode === "real_album_source") {
   mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")
   mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
-  messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 按她提到的地点、场景等关键词获取本次授权候选。她要看照片时，继续 view 相关ID（一次最多3张），实际收到原图再回答；发朋友圈才需要 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
+  messages.push(buildContextualPromptMessage("本轮明确要求操作真实共享相册：必须先 browse 按她提到的地点、场景等关键词获取本次授权候选。她要看照片时，继续 view 相关ID（一次最多3张），实际收到原图再回答；她要求把照片发来时用 send，真实图片会随回复显示；发朋友圈才需要 select。只能依据真实工具结果回答，不能凭历史能力说明声称无法访问；只读描述/标签不等于看过原图。发朋友圈是后续异步判断，工具选择成功不等于发布成功。"))
 }
 let llm = await callLLM(messages, selectedChatModel, mainChatOptions)
 const mainChatLlmCalls = [{
@@ -3917,6 +3917,7 @@ const mainChatLlmCalls = [{
 }]
 let reply = llm.reply
 let selectedChatAlbum = null
+let sentAlbumAttachments = []
 const albumSeen = new Map()
 let albumMessages = messages
 for (let step = 0; step < 3; step++) {
@@ -3931,10 +3932,11 @@ for (let step = 0; step < 3; step++) {
     try {
       if (call.function?.name !== "shared_album") throw new Error("USE_REAL_ALBUM_TOOL_NOT_GENERATION")
       const albumArgs = JSON.parse(call.function.arguments || "{}")
-      if (albumArgs.action === "view" && visionPhotos.length) throw new Error("ALBUM_VIEW_LIMIT_REACHED")
+      if (["view", "send"].includes(albumArgs.action) && visionPhotos.length) throw new Error("ALBUM_VIEW_LIMIT_REACHED")
       const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
         args: albumArgs, seen: albumSeen })
       if (executed.selected) selectedChatAlbum = executed.selected
+      if (executed.attachments) sentAlbumAttachments = executed.attachments
       if (executed.visionPhotos && !visionPhotos.length) visionPhotos.push(...executed.visionPhotos)
       result = albumReplyState({ result: executed.result, selected: executed.selected,
         publishRequested: mayPublishAlbum(message) })
@@ -3994,7 +3996,7 @@ ${fallbackWebSearch}
   }
 }
 
-    let attachments = []
+    let attachments = sentAlbumAttachments
     let imageGenerationUsage = null
     if (imageToolCall) {
       let toolResult
@@ -4552,6 +4554,16 @@ console.log("======================================\n")
     }))
 
 let responseAttachments = attachments
+if (attachments[0]?.type === "shared_album_image") {
+  responseAttachments = await Promise.all(attachments.map(async attachment => {
+    const { data: asset } = await supabase.from("album_assets").select("storage_path")
+      .eq("id", attachment.album_asset_id).eq("user_id", user_id)
+      .eq("access_scope", "shared").eq("enabled", true).is("archived_at", null).maybeSingle()
+    if (!asset || asset.storage_path !== attachment.storage_path) return attachment
+    const { data } = await supabase.storage.from("album-images").createSignedUrl(asset.storage_path, 300)
+    return { ...attachment, ...(data?.signedUrl ? { display_url: data.signedUrl } : {}) }
+  }))
+}
 if (attachments[0]?.type === "generated_image") {
   const { data: signed } = await supabase.storage
     .from("generated-files")

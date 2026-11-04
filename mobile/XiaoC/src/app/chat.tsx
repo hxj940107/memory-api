@@ -754,7 +754,7 @@ function GeneratedImagePressable({
   return (
     <Pressable
       accessibilityRole="imagebutton"
-      accessibilityLabel="小C生成的图片"
+      accessibilityLabel="小C发来的图片"
       delayLongPress={450}
       hitSlop={4}
       pressRetentionOffset={20}

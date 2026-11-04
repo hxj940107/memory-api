@@ -4,7 +4,7 @@ export type GeneratedAttachment = {
   mime_type: string;
   size: number;
   storage_path: string;
-  type: "generated_file" | "generated_image";
+  type: "generated_file" | "generated_image" | "shared_album_image";
   display_url?: string;
 };
 
@@ -22,7 +22,7 @@ export const normalizeGeneratedAttachments = (
     const size = Number(value.size);
 
     if (
-      !["generated_file", "generated_image"].includes(String(value.type)) ||
+      !["generated_file", "generated_image", "shared_album_image"].includes(String(value.type)) ||
       typeof value.id !== "string" ||
       typeof value.name !== "string" ||
       typeof value.mime_type !== "string" ||

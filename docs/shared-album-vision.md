@@ -11,3 +11,11 @@ View does not select a publishing asset or authorize Moments. Existing select/pu
 Costs: existing tool loop remains bounded to three follow-ups; browse/view can add main-model tool follow-ups and image input costs when requested. No upload-wide indexing model, background visual model or extra standalone API Function. API functions remain 12.
 
 Validation: 74 Moments/shared album tests, JS syntax and git diff checks passed. Includes actual chat-loop extraction with synthetic provider replies to verify multimodal delivery, older-photo search, sunset synonyms, private/cross-owner/revoked/unobserved IDs and maximum-view enforcement. No production data or real model calls used for local tests.
+
+## Chat photo delivery (2026-11-04, local pending deployment)
+
+Added send action: browse first, then send up to three observed IDs. This reuses the same authorization recheck and original-image delivery as view, and queues shared_album_image attachments for the assistant message. It does not populate selectedChatAlbum or trigger Moments. view alone still does not attach photos.
+
+Persisted metadata contains asset ID and server-resolved storage path, not signed URLs. Immediate reply gets short-lived display URLs. The existing message-scoped sign_download route recognizes shared_album_image, verifies assistant message owner/conversation plus current live album owner/shared/enabled/not archived and matching path, then signs album-images (not generated-files). iOS normalizer accepts the new attachment type and reuses image preview/cache/save/history hydration. Previously downloaded local images are not remotely erased by revoking album access; fresh server signing is denied. No new schema or Function. Requires backend deployment and mobile OTA; old clients will not fully understand the new attachment type.
+
+Validation for delivery increment: 87 targeted shared-album, generated-file and Moments tests; TypeScript noEmit, JS syntax and diff checks passed. Real device/provider delivery remains to verify after deployment. Selection/viewing can use the existing main-model tool follow-ups and image input billing; no separate image generation or background vision job is added.

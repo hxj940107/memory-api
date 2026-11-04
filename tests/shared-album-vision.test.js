@@ -57,3 +57,31 @@ test('chat tool loop delivers original pixels to the existing model and stops fu
  assert.ok(requests[1].messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')))
  assert.equal(requests[1].options.tool_choice,'none')
 })
+
+test('send queues real references without URLs or publishing, view alone queues nothing', async()=>{
+ const c=client();const seen=new Map([[1,{}]])
+ const sent=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'send',asset_ids:[1]}})
+ assert.equal(sent.attachments[0].type,'shared_album_image')
+ assert.equal(sent.attachments[0].album_asset_id,1)
+ assert.equal(sent.attachments[0].storage_path,'owner/photo.jpg')
+ assert.equal(JSON.stringify(sent.attachments).includes('https:'),false)
+ const state=albumReplyState({result:sent.result,publishRequested:false})
+ assert.equal(state.chat_image_display,'attachment_queued');assert.equal(state.published,false)
+ const viewed=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'view',asset_ids:[1]}})
+ assert.equal(viewed.attachments,undefined)
+})
+
+test('history re-sign uses recorded message owner and live album permission, never generated bucket',async()=>{
+ const {signGeneratedAttachmentDownload}=await import('../lib/generatedFiles.js')
+ const attachment={id:'album-1',album_asset_id:1,type:'shared_album_image',name:'photo.jpg',mime_type:'image/jpeg',size:0,storage_path:'owner/photo.jpg'}
+ const filters=[];let allowed=true;let signs=0
+ const db={from(table){const q={select(){return q},eq(k,v){filters.push([table,k,v]);return q},is(k,v){return q.eq(k,v)},async maybeSingle(){return {data:table==='messages'?{metadata:{attachments:[attachment]}}:allowed?{storage_path:'owner/photo.jpg'}:null}}};return q},storage:{from(bucket){assert.equal(bucket,'album-images');return {async createSignedUrl(path){signs++;assert.equal(path,'owner/photo.jpg');return {data:{signedUrl:'https://fixture.invalid/signed'}}}}}}}
+ const args={supabase:db,user_id:'owner',conversation_id:'chat',message_id:'message',attachment_id:'album-1'}
+ assert.equal((await signGeneratedAttachmentDownload(args)).url,'https://fixture.invalid/signed')
+ assert.ok(filters.some(([t,k,v])=>t==='messages'&&k==='user_id'&&v==='owner'))
+ assert.ok(filters.some(([t,k,v])=>t==='album_assets'&&k==='user_id'&&v==='owner'))
+ assert.ok(filters.some(([t,k,v])=>t==='album_assets'&&k==='enabled'&&v===true))
+ allowed=false
+ await assert.rejects(signGeneratedAttachmentDownload(args),{code:'ATTACHMENT_NOT_FOUND'})
+ assert.equal(signs,1)
+})
