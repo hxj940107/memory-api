@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {associationShadow,generateAssociationCues,parseAssociationCues,cosine} from '../lib/memoryAssociationShadow.js'
+import {associationShadow,generateAssociationCues,parseAssociationCues,cosine,verifiedAssociationSources} from '../lib/memoryAssociationShadow.js'
 const identity={providerId:'test',modelId:'test',version:'1',preprocessorVersion:'v1',dimension:2}
 const memory={id:'m1',user_id:'owner',canonical_content:'private memory body',content_hash:'a'.repeat(64),origin_system:'xiaoc_native',category:'meaningful_experience',lifecycle_status:'active',provenance_status:'verified_user',authority_tier:'native_verified',retrieval_tier:null}
 const quote='这是可以逐字核验的真实原话'
@@ -50,4 +50,19 @@ test('maintenance claim prevents repeated paid calls and validates exact evidenc
  assert.equal(saved.status,'ready');assert.equal(saved.cues[0].quote,quote)
  assert.equal((await generateAssociationCues(args)).reason,'already_attempted')
  assert.equal(calls,1);assert.equal(embeds,1)
+})
+
+test('manual confirmed body stays distinct from message quotations and requires a successful owner operation',()=>{
+ const m={...memory,provenance_status:'manual_confirmed'}
+ const source={id:'s',source_kind:'manual_user',source_operation_id:'op',evidence_text:'original manual evidence'}
+ const op={id:'op',actor_type:'user',result_status:'success',affected_memory_ids:['m1']}
+ const found=verifiedAssociationSources(m,[source],[],[op])
+ assert.equal(found[0].source_kind,'manual_memory');assert.equal(found[0].evidence_text,m.canonical_content)
+ assert.notEqual(found[0].id,source.id)
+ for(const invalid of [{...op,result_status:'failed'},{...op,affected_memory_ids:['other']},{...op,actor_type:'system'}])assert.deepEqual(verifiedAssociationSources(m,[source],[],[invalid]),[])
+ assert.deepEqual(verifiedAssociationSources(memory,[source],[],[op]),[])
+ assert.deepEqual(verifiedAssociationSources(m,[source],[],[]),[])
+ const parsed=parseAssociationCues(JSON.stringify({cues:[{cue:'a specific experience',source_id:found[0].id,quote:'private memory body'}]}),found)
+ assert.equal(parsed[0].source_kind,'manual_memory')
+ assert.notEqual(verifiedAssociationSources({...m,content_hash:'b'.repeat(64)},[source],[],[op])[0].id,found[0].id)
 })
