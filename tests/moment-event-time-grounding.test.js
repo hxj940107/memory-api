@@ -203,3 +203,11 @@ test("Moment admission validates selected provenance and saves the real user sou
   assert.match(source, /metadata\?\.imageDescription/)
   assert.match(source, /\.order\("last_used_at", \{ ascending: true, nullsFirst: true \}\)\s*\.order\("created_at", \{ ascending: false \}\)/)
 })
+
+test("overnight waiting states expire while retrospective and fresh material remain valid", () => {
+  const candidate = { event_time: '2026-11-11T20:00:00+08:00', share_mode: 'delayed', text: '双十一加班到八点还要耗着，这班上得真是没什么盼头，等她下班了再说吧。' }
+  assert.equal(normalizeMomentCandidateForPublish(candidate, new Date('2026-11-12T09:20:00+08:00')).requiresDelayedVoice, true)
+  assert.equal(normalizeMomentCandidateForPublish(candidate, new Date('2026-11-11T20:20:00+08:00')).requiresDelayedVoice, false)
+  assert.equal(normalizeMomentCandidateForPublish({ ...candidate, text: '昨晚她加班还要耗着，等她下班了再说。' }, new Date('2026-11-12T09:20:00+08:00')).requiresDelayedVoice, false)
+  assert.equal(normalizeMomentCandidateForPublish({ ...candidate, text: '她做的意面，值得夸。' }, new Date('2026-11-12T09:20:00+08:00')).requiresDelayedVoice, false)
+})

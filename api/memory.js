@@ -1,3 +1,5 @@
+import { generateAssociationCues } from "../lib/memoryAssociationShadow.js"
+import { normalizeMomentCandidateForPublish } from "../lib/momentEventTime.js"
 import { albumMomentMode, processAlbumMomentUploads } from "../lib/albumMomentUpload.js"
 import { buildMomentCommentPrompt } from "../lib/momentCommentPrompt.js"
 import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
@@ -4712,6 +4714,9 @@ function isMomentCandidateTimeConsistent(candidate, publishTime = new Date()) {
   const eventLocalDate = getMomentLocalTime(eventTime).date
   const publishLocalDate = getMomentLocalTime(publishTime).date
   const requiresDelayedVoice = eventLocalDate !== publishLocalDate || ageMs > 3 * 60 * 60 * 1000
+  if (normalizeMomentCandidateForPublish(candidate, publishTime).requiresDelayedVoice) {
+    return { valid: false, reason: "历史素材包含过时的即时或等待状态" }
+  }
   const stalePerspectivePattern = /(刚刚|这会儿|此刻|现在才|刚结束|刚回到|今晚正在|待会儿|等会儿|一会儿|明天)/
 
   if (requiresDelayedVoice && stalePerspectivePattern.test(candidate.text || "")) {
@@ -4872,6 +4877,7 @@ async function insertAutonomousMomentCandidate({ userId, candidate, material, im
     .select("id")
     .single()
 
+  if (error?.message?.includes("MOMENT_DUPLICATE_SOURCE")) return { created: false, reason: "duplicate_source" }
   if (error) throw error
   return { created: Boolean(data?.id), candidateId: data?.id || null, reason: "candidate_created" }
 }
@@ -5401,6 +5407,14 @@ async function checkPendingMomentCandidates() {
       published += 1
       break
     } catch (candidateError) {
+      if (candidateError?.message?.includes("MOMENT_DUPLICATE_SOURCE")) {
+        const { error: skipError } = await supabase.from("moment_candidates")
+          .update({ status: "skipped", skip_reason: "duplicate_source", updated_at: new Date().toISOString() })
+          .eq("id", candidate.id).eq("status", "processing")
+        if (skipError) throw skipError
+        skipped += 1
+        continue
+      }
       failed += 1
       console.error("moment candidate publish failed:", candidateError)
       const failurePlan = planBackgroundFailure({
@@ -5807,6 +5821,15 @@ async function handleMemoryEmbeddingMaintenance(req, res) {
     rejectMaintenanceOwnerOverride(req)
     configuredPrivateAuthUserUuid(process.env)
     const provider = createXiaoCMemoryEmbeddingProvider({ env: process.env })
+    if (req.method === "POST" && req.body.action === "association_build") {
+      if (req.body.confirm_count !== 1 || !/^[0-9a-f-]{36}$/i.test(String(req.body.memory_id || ""))) {
+        return res.status(400).json({error:"ASSOCIATION_EXPLICIT_SINGLE_ID_REQUIRED"})
+      }
+      const result = await generateAssociationCues({client:supabase,userId:APP_USER.defaultUserId,
+        memoryId:req.body.memory_id,provider,
+        generate:messages=>callSmallLLM(messages,{requestPurpose:"memory_association_index",max_tokens:500,temperature:0,response_format:{type:"json_object"}})})
+      return res.status(200).json(result)
+    }
     if (req.method === "GET" && String(req.query.action || "inventory") === "inventory") {
       const scope = String(req.query.scope || "")
       if (!XIAOC_MEMORY_EMBEDDING_MAINTENANCE_SCOPES.includes(scope)) {
