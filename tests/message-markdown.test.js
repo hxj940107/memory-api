@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
+  normalizeMessageLineBreaks,
   parseInlineMarkdown,
   parseMarkdownBlocks,
 } from "../mobile/XiaoC/src/lib/messageMarkdown.ts"
@@ -69,3 +70,10 @@ test("favorites only applies Markdown rendering to assistant messages", () => {
   assert.match(source, /<MessageMarkdown text=\{selectedFavorite\.text\} variant="detail" \/>/)
   assert.match(source, /<Text style=\{styles\.detailText\}>\{selectedFavorite\?\.text \|\| ""\}<\/Text>/)
 })
+
+test("HTML breaks become whitespace rather than visible bubble content", () => {
+  const value = normalizeMessageLineBreaks("对\n我在\n<br>\n不一样的<br/>继续<BR />说");
+  assert.deepEqual(value.split(/\n+/).filter(Boolean), ["对", "我在", "不一样的", "继续", "说"]);
+  assert.equal(normalizeMessageLineBreaks("普通正文"), "普通正文");
+  assert.equal(normalizeMessageLineBreaks("`<br>`\n```html\n<br/>\n```"), "`<br>`\n```html\n<br/>\n```");
+});

@@ -1,3 +1,9 @@
+// Only normalize presentation tags outside literal Markdown code.
+export function normalizeMessageLineBreaks(text: string): string {
+  return text.replace(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)|<br\s*\/?\s*>/gi,
+    (match, code) => code ? match : "\n");
+}
+
 export type InlineMarkdownToken = {
   type: "text" | "strong" | "emphasis" | "code";
   text: string;

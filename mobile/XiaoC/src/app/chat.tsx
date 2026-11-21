@@ -93,6 +93,7 @@ import {
   InlineMarkdown,
   MessageMarkdown,
 } from "../components/MessageMarkdown";
+import { normalizeMessageLineBreaks } from "../lib/messageMarkdown";
 import { stageSharedAlbumImport } from "../lib/sharedAlbumImportDraft";
 import {
   formatVoiceDuration,
@@ -447,7 +448,7 @@ const getDisplayAiText = (text: string) =>
     : text.replace(/\s*\n\s*/g, "\n");
 
 const getChatBubbleSegments = (text: string) => {
-  return getDisplayAiText(text)
+  return getDisplayAiText(normalizeMessageLineBreaks(text))
     .split(/\n+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
