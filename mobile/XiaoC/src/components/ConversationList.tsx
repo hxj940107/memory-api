@@ -403,13 +403,26 @@ export default function ConversationList({
             style: "destructive",
 
             onPress: async () => {
-              await postJson("/api/conversation-title", {
-                user_id: APP_USER_ID,
-                conversation_id: item.id,
-                action: "delete",
-              });
-
-              await restoreAfterDelete();
+              try {
+                const result = await postJson<{ ok: boolean }>("/api/conversation-title", {
+                  user_id: APP_USER_ID,
+                  conversation_id: item.id,
+                  action: "delete",
+                });
+                if (!result?.ok) throw new Error("删除未完成，请稍后重试。");
+              } catch (error) {
+                const code = (error as { code?: string })?.code;
+                Alert.alert("删除失败", code === "CONVERSATION_HAS_MEMORY_EVIDENCE"
+                  ? "这段聊天仍是长期记忆的来源，暂时无法直接删除。聊天和记忆均已保留。"
+                  : "未能完成删除，请检查网络后重试。");
+                return;
+              }
+              setList(current => current.filter(conversation => conversation.id !== item.id));
+              try {
+                await restoreAfterDelete();
+              } catch {
+                Alert.alert("聊天已删除", "列表刷新失败，请重新打开侧栏。");
+              }
             },
           },
         ],

@@ -19,3 +19,10 @@ test('current request controls delivery and quantity independently of viewing',(
 test('send without current-turn request is blocked before database access',async()=>{
  await assert.rejects(executeSharedAlbumTool({client:null,owner:'user',seen:new Map(),args:{action:'send',asset_ids:[49]}}),/ALBUM_SEND_NOT_REQUESTED_THIS_TURN/)
 })
+
+test('unrelated chat and declined topics cannot browse or view photos', async () => {
+ for (const text of ['有什么？','我问你有什么能给我的','你想聊什么','不给看 换一个','我都说了不要聊照片','不要看相册']) {
+  assert.equal(isRealAlbumRequest(text),false,text)
+  for(const action of ['browse','view']) await assert.rejects(executeSharedAlbumTool({client:null,owner:'user',seen:new Map(),requestText:text,args:{action,asset_ids:[1]}}), /ALBUM_TOPIC_NOT_REQUESTED/)
+ }
+})

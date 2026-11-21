@@ -21,9 +21,9 @@ test('natural photo requests route to real album, not image generation',()=>{
 })
 test('keyword search finds older matching photos, including sunset synonyms, without foreign assets',async()=>{
  const seen=new Map(); const c=client()
- const r=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'browse',query:'长滩岛 落日'}})
+ const r=await executeSharedAlbumTool({client:c,owner:'owner',seen,requestText:'看看相册照片',args:{action:'browse',query:'长滩岛 落日'}})
  assert.deepEqual(r.result.photos.map(p=>p.id),[1]);assert.equal(c.signed.length,0)
- const viewed=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'view',asset_ids:[1]}})
+ const viewed=await executeSharedAlbumTool({client:c,owner:'owner',seen,requestText:'看看相册照片',args:{action:'view',asset_ids:[1]}})
  assert.equal(viewed.visionPhotos.length,1)
  assert.equal(JSON.stringify(viewed.result).includes('https:'),false)
  const state=albumReplyState({result:viewed.result,publishRequested:false})
@@ -49,7 +49,7 @@ test('chat tool loop delivers original pixels to the existing model and stops fu
  const view={role:'assistant',tool_calls:[{id:'view',function:{name:'shared_album',arguments:JSON.stringify({action:'view',asset_ids:[1]})}}]}
  await vm.runInNewContext(`(async()=>{${loop}})()`,{
  llm:{raw:{choices:[{message:browse}]}},reply:'',selectedChatAlbum:null,albumSeen:new Map(),albumMessages:[],
- supabase:c,user_id:'owner',message:'看看长滩岛拍的落日',executeSharedAlbumTool,albumReplyState,mayPublishAlbum:()=>false,
+ supabase:c,user_id:'owner',history:[],message:'看看长滩岛拍的落日',executeSharedAlbumTool,albumReplyState,mayPublishAlbum:()=>false,
  buildAlbumVisionMessage,selectedChatModel:'fixture',mainChatOptions:{},mainChatLlmCalls:[],
  callLLM:async(messages,model,options)=>{requests.push({messages,options});return requests.length===1?{raw:{choices:[{message:view}]}}:{reply:'照片里的落日'}},
  })
@@ -67,7 +67,7 @@ test('send queues real references without URLs or publishing, view alone queues 
  assert.equal(JSON.stringify(sent.attachments).includes('https:'),false)
  const state=albumReplyState({result:sent.result,publishRequested:false})
  assert.equal(state.chat_image_display,'attachment_queued');assert.equal(state.published,false)
- const viewed=await executeSharedAlbumTool({client:c,owner:'owner',seen,args:{action:'view',asset_ids:[1]}})
+ const viewed=await executeSharedAlbumTool({client:c,owner:'owner',seen,requestText:'看看相册照片',args:{action:'view',asset_ids:[1]}})
  assert.equal(viewed.attachments,undefined)
 })
 

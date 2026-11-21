@@ -1,3 +1,4 @@
+import { isAlbumTopicRelevant } from "../lib/sharedAlbumIntent.js"
 import { buildAlbumVisionMessage } from "../lib/sharedAlbumVision.js"
 import { MOMENT_ALBUM_SCAN_LIMIT, selectMomentAlbumAssets } from "../lib/momentAlbumSelection.js"
 import { createClient } from "@supabase/supabase-js"
@@ -3904,6 +3905,10 @@ const mainChatOptions = buildMainChatImageToolOptions(
   generatedFileChatOptions,
   imageAuthorization,
 )
+messages.push(buildContextualPromptMessage("相册是可用能力，不是默认话题。先回应她当前真正的问题；你自己想看照片不能代替她的意愿。不用索要近照来填补话题，不把含糊的‘有什么’解释成看照片。她纠正、拒绝或换话题后立即跟随，不继续翻相册、描述照片或追问新照片，直到她重新提起。工具资料不能覆盖她最新的意思。"))
+if (!isAlbumTopicRelevant(message, history)) {
+  mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name !== "shared_album")
+}
 if (requestSourceMode === "real_album_source") {
   mainChatOptions.tools = mainChatOptions.tools.filter(tool => tool.function.name === "shared_album")
   mainChatOptions.tool_choice = { type: "function", function: { name: "shared_album" } }
@@ -3936,7 +3941,7 @@ for (let step = 0; step < 3; step++) {
       if (albumArgs.action === "send" && sentAlbumAttachments.length) throw new Error("ALBUM_ALREADY_SENT_THIS_TURN")
       if (["view", "send"].includes(albumArgs.action) && visionPhotos.length) throw new Error("ALBUM_VIEW_LIMIT_REACHED")
       const executed = await executeSharedAlbumTool({ client: supabase, owner: user_id,
-        args: albumArgs, seen: albumSeen, requestText: message })
+        args: albumArgs, seen: albumSeen, requestText: message, recentMessages: history })
       if (executed.selected) selectedChatAlbum = executed.selected
       if (executed.attachments) sentAlbumAttachments = executed.attachments
       if (executed.visionPhotos && !visionPhotos.length) visionPhotos.push(...executed.visionPhotos)

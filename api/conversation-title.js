@@ -53,41 +53,20 @@ export default async function handler(req, res) {
     */
 
     if (action === "delete") {
-      const { error: messageError } = await supabase
-
-        .from("messages")
-
-        .delete()
-
-        .eq("conversation_id", conversation_id)
-
-        .eq("user_id", user_id);
-
-      if (messageError) {
-        return res.status(500).json({
-          error: messageError.message,
-        });
-      }
-
-      const { error: conversationError } = await supabase
-
-        .from("conversations")
-
-        .delete()
-
-        .eq("conversation_id", conversation_id)
-
-        .eq("user_id", user_id);
-
-      if (conversationError) {
-        return res.status(500).json({
-          error: conversationError.message,
-        });
-      }
-
-      return res.json({
-        ok: true,
+      const { data, error } = await supabase.rpc("xiaoc_delete_conversation", {
+        p_user_id: user_id,
+        p_conversation_id: conversation_id,
       });
+      if (error) {
+        const protectedMemory = error.message?.includes("CONVERSATION_HAS_MEMORY_EVIDENCE");
+        return res.status(protectedMemory ? 409 : 500).json({
+          error: protectedMemory
+            ? "这段聊天仍是长期记忆的来源，暂时无法直接删除。聊天和记忆均已保留。"
+            : "删除失败，请稍后重试。",
+          code: protectedMemory ? "CONVERSATION_HAS_MEMORY_EVIDENCE" : "CONVERSATION_DELETE_FAILED",
+        });
+      }
+      return res.json(data);
     }
 
     /*

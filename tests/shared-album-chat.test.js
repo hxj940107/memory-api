@@ -22,7 +22,7 @@ test("real authorized album only; private, disabled, archived and foreign assets
   await assert.rejects(readSharedAlbum(null, null))
 })
 test("selection requires observed ID and rechecks permission", async () => {
-  const seen=new Map(); const base={ client:client(), owner:"fixture", seen }
+  const seen=new Map(); const base={ client:client(), owner:"fixture", seen, requestText:"查看共享相册照片" }
   await assert.rejects(executeSharedAlbumTool({ ...base, args:{ action:"select", asset_id:999 } }))
   const browse=await executeSharedAlbumTool({ ...base, args:{ action:"browse" } })
   assert.equal(browse.result.visual_access,"metadata_only")
